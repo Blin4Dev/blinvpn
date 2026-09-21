@@ -332,10 +332,17 @@ export async function fetchMe(): Promise<AppUser | null> {
   }
 }
 
-export async function updateEmail(email: string): Promise<AppUser> {
+export async function requestBindEmailCode(email: string): Promise<EmailRequestResult> {
+  return appFetch<EmailRequestResult>("/me/email/request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function updateEmail(email: string, code: string): Promise<AppUser> {
   const b = await appFetch<{ user: AppUser }>("/me/email", {
     method: "PUT",
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, code }),
   });
   return b.user;
 }

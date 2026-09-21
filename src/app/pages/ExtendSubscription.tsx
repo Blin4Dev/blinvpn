@@ -1,23 +1,21 @@
-﻿import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BackCircleButton, MSIcon } from "../components/ui";
+import { Btn, MSIcon, PageHeader, Screen, Surface, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
-import { fetchPlans, plansToPriceMap } from "../utils/api";
+import { appFetch, fetchPlans, plansToPriceMap } from "../utils/api";
+import { deviceWord, estimateDevicePrice, splitDevices } from "../utils/devices";
 
 const FALLBACK_OPTIONS = [1, 2, 3, 5];
-const FALLBACK_PRICES: Record<number, number> = {
-  1: 99,
-  2: 169,
-  3: 229,
-  5: 349,
-};
+const FALLBACK_PRICES: Record<number, number> = { 1: 99, 2: 169, 3: 229, 5: 349 };
+const MAX_DEVICES = 15;
 
 export default function ExtendSubscription() {
   const navigate = useNavigate();
   const goBack = useSmartBack("/subscription");
-  const [deviceOptions, setDeviceOptions] = useState<number[]>(FALLBACK_OPTIONS);
   const [priceMap, setPriceMap] = useState<Record<number, number>>(FALLBACK_PRICES);
-  const [devices, setDevices] = useState<number>(1);
+  const [extraPrice, setExtraPrice] = useState(40);
+  const [devices, setDevices] = useState(1);
+  const [daysLeft, setDaysLeft] = useState<number | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -27,253 +25,126 @@ export default function ExtendSubscription() {
           data.plans.length > 0
             ? data.plans.map((p) => p.devices).sort((a, b) => a - b)
             : FALLBACK_OPTIONS;
-        setDeviceOptions(opts);
         setPriceMap(plansToPriceMap(data.plans));
+        setExtraPrice(data.extra_device_price || 40);
         setDevices((prev) => (opts.includes(prev) ? prev : opts[0] ?? 1));
       } catch {
         /* keep fallbacks */
       }
+      try {
+        const sub = await appFetch<{ key?: { days_left?: number | null } | null }>("/subscription");
+        const dl = Number(sub?.key?.days_left);
+        if (Number.isFinite(dl)) setDaysLeft(Math.max(0, Math.floor(dl)));
+      } catch {
+        /* ignore */
+      }
     })();
   }, []);
 
-  const pillStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    height: "44px",
-    background: active ? "#FF6B1A" : "#352E26",
-    borderRadius: "22px",
-    border: "none",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "1px",
-    transition: "background 0.15s ease",
-  });
-
-  const price = priceMap[devices] ?? 99;
-  const deviceLabel =
-    devices === 1 ? "устройство" : devices < 5 ? "устройства" : "устройств";
+  const planSizes = useMemo(() => Object.keys(priceMap).map(Number).sort((a, b) => a - b), [priceMap]);
+  const { plan, extra } = splitDevices(devices, planSizes);
+  const price = estimateDevicePrice(devices, priceMap, extraPrice, 1);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "#14110E",
-        fontFamily: "'Outfit', system-ui, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          width: "402px",
-          height: "803px",
-          background: "#14110E",
-          overflow: "hidden",
-        }}
-      >
-        <BackCircleButton onClick={goBack} />
+    <Screen>
+      <PageHeader title="Продлить" onBack={goBack} />
 
+      <Surface padded style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", color: T.textDim }}>
+          Осталось
+        </div>
+        <div style={{ fontSize: 32, fontWeight: 700, color: T.orange, marginTop: 4, letterSpacing: "-0.02em" }}>
+          {daysLeft == null ? "—" : `${daysLeft} дн`}
+        </div>
+        <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>
+          Выберите число устройств для продления на 1 месяц
+        </div>
+      </Surface>
+
+      <Surface padded style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Количество устройств</div>
         <div
           style={{
-            position: "absolute",
-            left: "73px",
-            top: "28px",
-            fontWeight: 600,
-            fontSize: "27px",
-            lineHeight: "33px",
-            color: "#FFFFFF",
-          }}
-        >
-          Продлить подписку
-        </div>
-
-        {/* Карточка: остаток времени */}
-        <div
-          style={{
-            position: "absolute",
-            width: "350px",
-            left: "26px",
-            top: "87px",
-            background: "#2A241E",
-            borderRadius: "30px",
-            padding: "16px 27px 18px",
-            boxSizing: "border-box",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "13px",
-              fontWeight: 500,
-              color: "#FFFFFF",
-              opacity: 0.53,
-              marginBottom: "4px",
-              letterSpacing: "0.04em",
-            }}
-          >
-            ОСТАЛОСЬ
-          </div>
-          <div
-            style={{
-              fontSize: "32px",
-              fontWeight: 700,
-              lineHeight: "39px",
-              color: "#FF6B1A",
-            }}
-          >
-            —
-          </div>
-          <div
-            style={{
-              fontSize: "13px",
-              fontWeight: 500,
-              color: "#FFFFFF",
-              opacity: 0.53,
-              marginTop: "4px",
-            }}
-          >
-            Выберите тариф для продления
-          </div>
-        </div>
-
-        {/* Карточка: выбор устройств + итог */}
-        <div
-          style={{
-            position: "absolute",
-            width: "350px",
-            left: "26px",
-            top: "232px",
-            background: "#2A241E",
-            borderRadius: "30px",
-            padding: "22px 27px 24px",
-            boxSizing: "border-box",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-          }}
-        >
-          <div
-            style={{
-              fontSize: "13px",
-              fontWeight: 500,
-              color: "#FFFFFF",
-              opacity: 0.53,
-            }}
-          >
-            Продление · 1 месяц
-          </div>
-
-          <div>
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.53,
-                marginBottom: "8px",
-              }}
-            >
-              Количество устройств:
-            </div>
-            <div style={{ display: "flex", gap: "6px" }}>
-              {deviceOptions.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setDevices(n)}
-                  style={pillStyle(devices === n)}
-                >
-                  <span
-                    style={{
-                      fontSize: "17px",
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      color: "#FFFFFF",
-                    }}
-                  >
-                    {n}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: 500,
-                      color: "#FFFFFF",
-                      opacity: devices === n ? 0.85 : 0.45,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {priceMap[n] ?? "—"} ₽
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div
-            style={{
-              height: "1px",
-              background: "rgba(255,255,255,0.08)",
-            }}
-          />
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <div style={{ fontSize: "15px", fontWeight: 500, color: "#FFFFFF", opacity: 0.6 }}>
-              {devices} {deviceLabel} · 1 месяц
-            </div>
-            <div
-              style={{
-                fontSize: "24px",
-                fontWeight: 700,
-                color: "#FF6B1A",
-                transition: "opacity 0.15s ease",
-              }}
-            >
-              {price} ₽
-            </div>
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => navigate(`/payment?devices=${devices}`)}
-          style={{
-            position: "absolute",
-            width: "330px",
-            height: "50px",
-            left: "36px",
-            top: "717px",
-            background: "#FF6B1A",
-            borderRadius: "30px",
-            border: "none",
-            padding: 0,
-            cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
+            gap: 12,
+            background: T.surfaceRaised,
+            borderRadius: T.radius.lg,
+            padding: "10px 12px",
           }}
         >
-          <span
+          <button
+            type="button"
+            aria-label="Меньше"
+            className="blin-press"
+            onClick={() => setDevices((v) => Math.max(1, v - 1))}
             style={{
-              fontSize: "17px",
-              fontWeight: 600,
-              color: "#FFFFFF",
+              ...btnReset,
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              color: T.text,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            Продлить за {price} ₽
-          </span>
-          <MSIcon name="chevron_right" style={{ fontSize: 22, color: "#E3E3E3" }} />
-        </button>
-      </div>
-    </div>
+            <MSIcon name="remove" />
+          </button>
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: T.text }}>
+              {devices} {deviceWord(devices)}
+            </div>
+            {extra > 0 ? (
+              <div style={{ fontSize: 12, color: T.textDim, marginTop: 2 }}>
+                тариф {plan} + {extra} доп.
+              </div>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            aria-label="Больше"
+            className="blin-press"
+            onClick={() => setDevices((v) => Math.min(MAX_DEVICES, v + 1))}
+            style={{
+              ...btnReset,
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              color: T.text,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <MSIcon name="add" />
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: 16,
+            paddingTop: 14,
+            borderTop: `1px solid ${T.border}`,
+          }}
+        >
+          <div style={{ fontSize: 14, color: T.textMuted }}>1 месяц</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: T.orange }}>{price} ₽</div>
+        </div>
+      </Surface>
+
+      <Btn onClick={() => navigate(`/payment?devices=${devices}&purpose=extend`)}>
+        Продлить за {price} ₽
+      </Btn>
+    </Screen>
   );
 }

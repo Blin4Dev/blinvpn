@@ -2,6 +2,7 @@
 import { MSIcon as MS } from "../components/ui";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { fetchAppLink, fetchPlans, openDeepLink, plansToPriceMap } from "../utils/api";
+import { deviceWord, estimateDevicePrice } from "../utils/devices";
 
 // ─── Платформа и ссылки Happ (всё в одном файле) ─────────────────────────────
 
@@ -319,7 +320,7 @@ export default function GetStarted() {
     3: 229,
     5: 349,
   });
-  const [deviceOptions, setDeviceOptions] = useState<number[]>([1, 2, 3, 5]);
+  const [extraPrice, setExtraPrice] = useState(40);
   const [appChooser, setAppChooser] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
   const [linkErr, setLinkErr] = useState("");
@@ -353,12 +354,12 @@ export default function GetStarted() {
     void (async () => {
       try {
         const data = await fetchPlans();
+        setPriceMap(plansToPriceMap(data.plans));
+        setExtraPrice(data.extra_device_price || 40);
         const opts =
           data.plans.length > 0
             ? data.plans.map((p) => p.devices).sort((a, b) => a - b)
             : [1, 2, 3, 5];
-        setDeviceOptions(opts);
-        setPriceMap(plansToPriceMap(data.plans));
         setDevices((prev) => (opts.includes(prev) ? prev : opts[0] ?? 1));
       } catch {
         /* keep fallbacks */
@@ -861,21 +862,7 @@ export default function GetStarted() {
   }
 
   // ─── Step 4 — оплата (только purchase + уже был триал) ───────────────────
-  const step4Price = priceMap[devices] ?? 99;
-  const step4PillStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    height: "44px",
-    background: active ? "#FF6B1A" : "#352E26",
-    borderRadius: "22px",
-    border: "none",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "1px",
-    transition: "background 0.15s ease",
-  });
+  const step4Price = estimateDevicePrice(devices, priceMap, extraPrice, 1);
 
   if (step === 4) {
     return (
@@ -949,30 +936,53 @@ export default function GetStarted() {
             >
               Устройств в подписке:
             </div>
-            <div style={{ display: "flex", gap: "6px" }}>
-              {deviceOptions.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setDevices(n)}
-                  style={step4PillStyle(devices === n)}
-                >
-                  <span style={{ fontSize: "17px", fontWeight: 700, lineHeight: 1, color: "#FFFFFF" }}>
-                    {n}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: 500,
-                      color: "#FFFFFF",
-                      opacity: devices === n ? 0.85 : 0.45,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {priceMap[n] ?? "—"} ₽
-                  </span>
-                </button>
-              ))}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                background: "#352E26",
+                borderRadius: 22,
+                padding: "8px 10px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setDevices((v) => Math.max(1, v - 1))}
+                style={{
+                  ...btnReset,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  background: "#2A241E",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <MS name="remove" style={{ color: "#E3E3E3" }} />
+              </button>
+              <div style={{ flex: 1, textAlign: "center", color: "#fff", fontWeight: 600, fontSize: 17 }}>
+                {devices} {deviceWord(devices)} · {step4Price} ₽
+              </div>
+              <button
+                type="button"
+                onClick={() => setDevices((v) => Math.min(15, v + 1))}
+                style={{
+                  ...btnReset,
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  background: "#2A241E",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <MS name="add" style={{ color: "#E3E3E3" }} />
+              </button>
             </div>
           </div>
 

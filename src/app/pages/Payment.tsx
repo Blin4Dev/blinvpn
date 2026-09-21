@@ -1,6 +1,6 @@
-﻿import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { BackCircleButton, MSIcon } from "../components/ui";
+import { Btn, MSIcon, PageHeader, Screen, Surface, T, btnReset } from "../components/ui";
 import { useAppError } from "../components/ErrorModal";
 import { useSmartBack } from "../utils/navigation";
 import {
@@ -17,8 +17,10 @@ import {
   plansToStarsMap,
   type PaymentQuote,
 } from "../utils/api";
+import { deviceWord, estimateDevicePrice, splitDevices } from "../utils/devices";
 
 const FALLBACK_OPTIONS = [1, 2, 3, 5];
+const MAX_DEVICES = 15;
 
 type PaymentMethod = "sbp" | "card" | "tg_stars";
 
@@ -30,19 +32,14 @@ const METHODS: { id: PaymentMethod; label: string; icon: React.ReactNode }[] = [
       <img
         src="https://i.imgur.com/pu9w7tE.png"
         alt=""
-        style={{ width: 32, height: 33, objectFit: "contain" }}
+        style={{ width: 28, height: 28, objectFit: "contain" }}
       />
     ),
   },
   {
     id: "card",
     label: "Банковская карта",
-    icon: (
-      <MSIcon
-        name="credit_card"
-        style={{ fontSize: 32, color: "#E3E3E3", width: 32, height: 32 }}
-      />
-    ),
+    icon: <MSIcon name="credit_card" style={{ fontSize: 26, color: T.text }} />,
   },
   {
     id: "tg_stars",
@@ -51,7 +48,7 @@ const METHODS: { id: PaymentMethod; label: string; icon: React.ReactNode }[] = [
       <img
         src="https://i.imgur.com/Yu8PZ7N.png"
         alt=""
-        style={{ width: 32, height: 32, objectFit: "contain" }}
+        style={{ width: 28, height: 28, objectFit: "contain" }}
       />
     ),
   },
@@ -64,7 +61,7 @@ export default function Payment() {
 
   const [searchParams] = useSearchParams();
   const initialDevices = Math.min(
-    5,
+    MAX_DEVICES,
     Math.max(1, parseInt(searchParams.get("devices") || "1", 10)),
   );
   const months = Math.max(1, parseInt(searchParams.get("months") || "1", 10));
@@ -77,11 +74,11 @@ export default function Payment() {
     : isDevicesFlow
       ? "devices"
       : "subscription";
-  const extraDevices = isDevicesFlow
+  const extraDevicesParam = isDevicesFlow
     ? Math.max(0, parseInt(searchParams.get("count") || "0", 10))
     : 0;
-  const [devices, setDevices] = useState<number>(initialDevices);
-  const [deviceOptions, setDeviceOptions] = useState<number[]>(FALLBACK_OPTIONS);
+
+  const [devices, setDevices] = useState(initialDevices);
   const [rubMap, setRubMap] = useState<Record<number, number>>({
     1: 99,
     2: 169,
@@ -94,28 +91,35 @@ export default function Payment() {
     3: 229,
     5: 349,
   });
+  const [extraPrice, setExtraPrice] = useState(40);
   const [method, setMethod] = useState<PaymentMethod>("sbp");
-  const [saveCard, setSaveCard] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payInfo, setPayInfo] = useState("");
   const [discount, setDiscount] = useState(0);
   const [refBalance, setRefBalance] = useState(0);
-  const [providerMin, setProviderMin] = useState<Record<string, number>>({ card: 50, sberpay: 50, sbp: 10 });
+  const [providerMin, setProviderMin] = useState<Record<string, number>>({
+    card: 50,
+    sberpay: 50,
+    sbp: 10,
+  });
   const [useRef, setUseRef] = useState(false);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
+
+  const planSizes = useMemo(
+    () => Object.keys(rubMap).map(Number).sort((a, b) => a - b),
+    [rubMap],
+  );
+  const split = splitDevices(devices, planSizes.length ? planSizes : FALLBACK_OPTIONS);
+  const extraDevices = isDevicesFlow ? extraDevicesParam : split.extra;
+  const planDevices = isDevicesFlow ? 1 : split.plan;
 
   useEffect(() => {
     void (async () => {
       try {
         const data = await fetchPlans();
-        const options =
-          data.plans.length > 0
-            ? data.plans.map((p) => p.devices).sort((a, b) => a - b)
-            : FALLBACK_OPTIONS;
-        setDeviceOptions(options);
         setRubMap(plansToPriceMap(data.plans));
         setStarsMap(plansToStarsMap(data.plans));
-        setDevices((prev) => (options.includes(prev) ? prev : options[0] ?? 1));
+        setExtraPrice(data.extra_device_price || 40);
       } catch {
         /* keep fallbacks */
       }
@@ -145,13 +149,11 @@ export default function Payment() {
   const isStars = method === "tg_stars";
   const pMin = Number(providerMin[method] ?? (method === "sbp" ? 10 : 50));
 
-  // Актуальная цена с сервера (важно для докупки по остатку дней и сброса трафика,
-  // а также чтобы списание с баланса совпадало 1-в-1). Обновляем при изменениях.
   useEffect(() => {
     let alive = true;
     void (async () => {
       const q = await fetchQuote({
-        plan_devices: devices,
+        plan_devices: planDevices,
         months,
         method,
         extra_devices: extraDevices,
@@ -164,16 +166,14 @@ export default function Payment() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [devices, method, extraDevices, useRef, purpose, subParam, months]);
+  }, [planDevices, method, extraDevices, useRef, purpose, subParam, months]);
 
-  // Клиентский расчёт (запасной, для мгновенного отклика тарифного экрана).
-  const baseRub = rubMap[devices] ?? 99;
-  const baseStars = starsMap[devices] ?? baseRub;
+  const clientRub = estimateDevicePrice(devices, rubMap, extraPrice, months);
+  const baseRub = isDevicesFlow ? clientRub : clientRub;
+  const baseStars = starsMap[planDevices] ?? baseRub;
   const cRub = applyDiscount(baseRub, discount);
   const cStars = applyDiscount(baseStars, discount);
 
-  // Полная цена (до списания баланса): с сервера, иначе клиентская.
   const fullRub = quote ? Math.round(quote.price) : cRub;
   const stars = quote ? quote.stars : cStars;
   const hasDiscount = discount > 0 && purpose !== "traffic_reset";
@@ -181,7 +181,6 @@ export default function Payment() {
   const refApplied = quote && !isStars ? Math.round(quote.referral_applied) : 0;
   const charge = quote && !isStars ? Math.round(quote.charge) : fullRub;
   const canUseRef = !isStars && refBalance > 0 && fullRub > 0;
-  // Ниже минимума провайдера — только если что-то платится провайдеру (charge>0).
   const belowMin = !isStars && charge > 0 && charge < pMin;
 
   const displayBase = isStars ? `${baseStars} ⭐` : `${fullRub} ₽`;
@@ -201,7 +200,7 @@ export default function Payment() {
     setPayInfo("");
     try {
       const result = await createPayment({
-        plan_devices: devices,
+        plan_devices: planDevices,
         months,
         method,
         extra_devices: extraDevices,
@@ -216,8 +215,6 @@ export default function Payment() {
             `&provider=${result.provider}${extra}`,
         );
 
-      // Полностью оплачено реферальным балансом — уже выдано, идём на экран ожидания
-      // (он сразу увидит статус paid).
       if (result.provider === "balance" || (result as { paid?: boolean }).paid) {
         setPayInfo("Оплачено с баланса…");
         goWaiting();
@@ -241,229 +238,128 @@ export default function Payment() {
     }
   };
 
-  const rowStyle = (active: boolean): React.CSSProperties => ({
-    position: "relative",
-    width: "330px",
-    height: "50px",
-    background: active ? "rgba(255, 107, 26, 0.7)" : "#352E26",
-    borderRadius: "30px",
-    border: "none",
-    padding: 0,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    paddingLeft: "14px",
-    boxSizing: "border-box",
-    transition: "background 0.15s ease",
-  });
-
-  const pillStyle = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    height: "44px",
-    background: active ? "#FF6B1A" : "#352E26",
-    borderRadius: "22px",
-    border: "none",
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "1px",
-    transition: "background 0.15s ease",
-  });
-
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "#14110E",
-        fontFamily: "'Outfit', system-ui, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          width: "402px",
-          height: "803px",
-          background: "#14110E",
-          overflow: "hidden",
-          boxSizing: "border-box",
-        }}
-      >
-        <BackCircleButton onClick={goBack} />
+    <Screen>
+      <PageHeader title="Оплата" onBack={goBack} />
 
-        <div
-          style={{
-            position: "absolute",
-            left: "73px",
-            top: "28px",
-            fontWeight: 600,
-            fontSize: "27px",
-            lineHeight: "33px",
-            color: "#FFFFFF",
-          }}
-        >
-          Оплата
+      <Surface padded style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 4 }}>К оплате</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <span style={{ fontSize: 32, fontWeight: 700, color: T.orange, letterSpacing: "-0.02em" }}>
+            {displayPrice}
+          </span>
+          {hasDiscount ? (
+            <span style={{ fontSize: 18, fontWeight: 600, color: T.textDim, textDecoration: "line-through" }}>
+              {displayBase}
+            </span>
+          ) : null}
         </div>
+        <div style={{ fontSize: 13, color: T.textDim, marginTop: 4 }}>
+          {isTrafficReset
+            ? "Досрочный сброс трафика"
+            : isDevicesFlow
+              ? `Докупка устройств: +${extraDevices}`
+              : `${months} мес · ${devices} ${deviceWord(devices)}`}
+        </div>
+      </Surface>
 
-        <div
-          style={{
-            position: "absolute",
-            left: "26px",
-            top: "87px",
-            width: "350px",
-            background: "#2A241E",
-            borderRadius: "30px",
-            padding: "22px 27px 24px",
-            boxSizing: "border-box",
-            display: "flex",
-            flexDirection: "column",
-            gap: "20px",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.53,
-                marginBottom: "2px",
-              }}
-            >
-              К оплате:
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: "10px",
-                transition: "opacity 0.15s ease",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: "32px",
-                  fontWeight: 700,
-                  lineHeight: "39px",
-                  color: "#FF6B1A",
-                }}
-              >
-                {displayPrice}
-              </span>
-              {hasDiscount && (
-                <span
-                  style={{
-                    fontSize: "20px",
-                    fontWeight: 600,
-                    color: "#FFFFFF",
-                    opacity: 0.4,
-                    textDecoration: "line-through",
-                  }}
-                >
-                  {displayBase}
-                </span>
-              )}
-            </div>
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.4,
-                marginTop: "2px",
-              }}
-            >
-              {isTrafficReset
-                ? "Досрочный сброс трафика"
-                : isDevicesFlow
-                  ? `Докупка устройств: +${extraDevices}`
-                  : `${months} мес · ${devices} ${devices === 1 ? "устройство" : devices < 5 ? "устройства" : "устройств"}`}
-            </div>
-          </div>
-
-          {purpose === "subscription" && (
-          <div>
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.53,
-                marginBottom: "8px",
-              }}
-            >
-              Количество устройств:
-            </div>
-            <div style={{ display: "flex", gap: "6px" }}>
-              {deviceOptions.map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setDevices(n)}
-                  style={pillStyle(devices === n)}
-                >
-                  <span
-                    style={{
-                      fontSize: "17px",
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      color: "#FFFFFF",
-                    }}
-                  >
-                    {n}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: 500,
-                      color: "#FFFFFF",
-                      opacity: devices === n ? 0.85 : 0.45,
-                      lineHeight: 1,
-                    }}
-                  >
-                    {rubMap[n] ?? "—"} ₽
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-          )}
-
+      {purpose === "subscription" && (
+        <Surface padded style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Количество устройств</div>
           <div
             style={{
-              height: "1px",
-              background: "rgba(255,255,255,0.08)",
-              margin: "0 -4px",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              background: T.surfaceRaised,
+              borderRadius: T.radius.lg,
+              padding: "10px 12px",
             }}
-          />
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <div
+          >
+            <button
+              type="button"
+              aria-label="Меньше"
+              className="blin-press"
+              onClick={() => setDevices((v) => Math.max(1, v - 1))}
               style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.53,
+                ...btnReset,
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
-              Способ оплаты:
+              <MSIcon name="remove" style={{ color: T.text }} />
+            </button>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: T.text }}>
+                {devices} {deviceWord(devices)}
+              </div>
+              {split.extra > 0 ? (
+                <div style={{ fontSize: 12, color: T.textDim, marginTop: 2 }}>
+                  тариф {split.plan} + {split.extra} доп.
+                </div>
+              ) : null}
             </div>
-            {METHODS.map((m) => (
+            <button
+              type="button"
+              aria-label="Больше"
+              className="blin-press"
+              onClick={() => setDevices((v) => Math.min(MAX_DEVICES, v + 1))}
+              style={{
+                ...btnReset,
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <MSIcon name="add" style={{ color: T.text }} />
+            </button>
+          </div>
+        </Surface>
+      )}
+
+      <Surface padded style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 10 }}>Способ оплаты</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {METHODS.map((m) => {
+            const active = method === m.id;
+            return (
               <button
                 key={m.id}
                 type="button"
                 onClick={() => setMethod(m.id)}
-                style={rowStyle(method === m.id)}
+                className="blin-press"
+                style={{
+                  ...btnReset,
+                  width: "100%",
+                  minHeight: 50,
+                  padding: "0 14px",
+                  borderRadius: T.radius.lg,
+                  background: active ? "rgba(255, 107, 26, 0.7)" : T.surfaceRaised,
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  boxSizing: "border-box",
+                }}
               >
                 <span
                   style={{
-                    width: 32,
-                    height: 32,
+                    width: 28,
+                    height: 28,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -472,196 +368,83 @@ export default function Payment() {
                 >
                   {m.icon}
                 </span>
-                <span
-                  style={{
-                    fontSize: "17px",
-                    fontWeight: 600,
-                    color: "#FFFFFF",
-                  }}
-                >
+                <span style={{ flex: 1, textAlign: "left", fontSize: 16, fontWeight: 600, color: T.text }}>
                   {m.label}
                 </span>
-                {method === m.id && (
-                  <MSIcon
-                    name="check_circle"
-                    style={{
-                      marginLeft: "auto",
-                      marginRight: "12px",
-                      fontSize: 22,
-                      color: "#FFFFFF",
-                      opacity: 0.9,
-                    }}
-                  />
-                )}
+                {active ? (
+                  <MSIcon name="check_circle" style={{ fontSize: 22, color: "#fff", opacity: 0.9 }} />
+                ) : null}
               </button>
-            ))}
-
-            {method !== "tg_stars" && (
-              <button
-                type="button"
-                onClick={() => setSaveCard((v) => !v)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  width: "100%",
-                  background: "none",
-                  border: "none",
-                  padding: "4px 4px 0",
-                  cursor: "pointer",
-                  boxSizing: "border-box",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: "15px",
-                    fontWeight: 500,
-                    color: "#FFFFFF",
-                    opacity: 0.7,
-                  }}
-                >
-                  Сохранить карту
-                </span>
-
-                <span
-                  style={{
-                    position: "relative",
-                    display: "inline-block",
-                    width: "44px",
-                    height: "26px",
-                    flexShrink: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      height: "100%",
-                      background: saveCard ? "#FF6B1A" : "rgba(255,255,255,0.15)",
-                      borderRadius: "13px",
-                      transition: "background 0.2s ease",
-                    }}
-                  />
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: "3px",
-                      left: saveCard ? "21px" : "3px",
-                      width: "20px",
-                      height: "20px",
-                      background: "#FFFFFF",
-                      borderRadius: "50%",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
-                      transition: "left 0.2s ease",
-                    }}
-                  />
-                </span>
-              </button>
-            )}
-
-            {canUseRef && (
-              <button
-                type="button"
-                onClick={() => setUseRef((v) => !v)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  width: "100%",
-                  background: "none",
-                  border: "none",
-                  padding: "2px 4px 0",
-                  cursor: "pointer",
-                  boxSizing: "border-box",
-                }}
-              >
-                <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                  <span style={{ fontSize: "15px", fontWeight: 500, color: "#FFFFFF", opacity: 0.7 }}>
-                    Списать с реф. баланса
-                  </span>
-                  <span style={{ fontSize: "11px", fontWeight: 500, color: "#FF6B1A", opacity: 0.9 }}>
-                    {useRef && refApplied > 0
-                      ? `−${refApplied} ₽ · останется ${Math.max(0, Math.floor(refBalance) - refApplied)} ₽`
-                      : `доступно ${Math.floor(refBalance)} ₽`}
-                  </span>
-                </span>
-                <span style={{ position: "relative", display: "inline-block", width: "44px", height: "26px", flexShrink: 0 }}>
-                  <span
-                    style={{
-                      display: "block", width: "100%", height: "100%",
-                      background: useRef ? "#FF6B1A" : "rgba(255,255,255,0.15)",
-                      borderRadius: "13px", transition: "background 0.2s ease",
-                    }}
-                  />
-                  <span
-                    style={{
-                      position: "absolute", top: "3px", left: useRef ? "21px" : "3px",
-                      width: "20px", height: "20px", background: "#FFFFFF", borderRadius: "50%",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.35)", transition: "left 0.2s ease",
-                    }}
-                  />
-                </span>
-              </button>
-            )}
-          </div>
+            );
+          })}
         </div>
 
-        {payInfo && (
-          <div
+        {canUseRef ? (
+          <button
+            type="button"
+            onClick={() => setUseRef((v) => !v)}
             style={{
-              position: "absolute",
-              left: "36px",
-              top: "680px",
-              width: "330px",
-              fontSize: 12,
-              color: "#AFAFAF",
-              textAlign: "center",
+              ...btnReset,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              width: "100%",
+              marginTop: 14,
+              cursor: "pointer",
             }}
           >
-            {payInfo}
-          </div>
-        )}
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+              <span style={{ fontSize: 15, fontWeight: 500, color: T.text, opacity: 0.85 }}>
+                Списать с баланса
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 500, color: T.orange }}>
+                {useRef && refApplied > 0
+                  ? `−${refApplied} ₽ · останется ${Math.max(0, Math.floor(refBalance) - refApplied)} ₽`
+                  : `доступно ${Math.floor(refBalance)} ₽`}
+              </span>
+            </span>
+            <span style={{ position: "relative", display: "inline-block", width: 44, height: 26, flexShrink: 0 }}>
+              <span
+                style={{
+                  display: "block",
+                  width: "100%",
+                  height: "100%",
+                  background: useRef ? T.orange : "rgba(255,255,255,0.15)",
+                  borderRadius: 13,
+                }}
+              />
+              <span
+                style={{
+                  position: "absolute",
+                  top: 3,
+                  left: useRef ? 21 : 3,
+                  width: 20,
+                  height: 20,
+                  background: "#fff",
+                  borderRadius: "50%",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
+                }}
+              />
+            </span>
+          </button>
+        ) : null}
+      </Surface>
 
-        <button
-          type="button"
-          onClick={() => void handlePay()}
-          disabled={paying || belowMin}
-          style={{
-            position: "absolute",
-            width: "330px",
-            height: "50px",
-            left: "36px",
-            top: "717px",
-            background: belowMin ? "#555" : "#FF6B1A",
-            borderRadius: "30px",
-            border: "none",
-            padding: 0,
-            cursor: paying ? "wait" : belowMin ? "not-allowed" : "pointer",
-            opacity: paying ? 0.7 : 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-          }}
-        >
-          <span
-            style={{
-              fontSize: "17px",
-              fontWeight: 600,
-              color: "#FFFFFF",
-            }}
-          >
-            {paying
-              ? "Создаём…"
-              : belowMin
-                ? `Минимум ${pMin} ₽`
-                : charge <= 0 && !isStars
-                  ? "Оплатить с баланса"
-                  : `Оплатить ${displayPrice}`}
-          </span>
-          <MSIcon name="chevron_right" style={{ fontSize: 22, color: "#E3E3E3" }} />
-        </button>
-      </div>
-    </div>
+      {payInfo ? (
+        <div style={{ fontSize: 12, color: T.textMuted, textAlign: "center", marginBottom: 10 }}>
+          {payInfo}
+        </div>
+      ) : null}
+
+      <Btn disabled={paying || belowMin} onClick={() => void handlePay()}>
+        {paying
+          ? "Создаём…"
+          : belowMin
+            ? `Минимум ${pMin} ₽`
+            : charge <= 0 && !isStars
+              ? "Оплатить с баланса"
+              : `Оплатить ${displayPrice}`}
+      </Btn>
+    </Screen>
   );
 }

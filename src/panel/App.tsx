@@ -775,8 +775,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activePage, setActivePage] = useState('Главная');
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [detailUserId, setDetailUserId] = useState<number | null>(null);
   const [userSearch, setUserSearch] = useState('');
   const [massActionType, setMassActionType] = useState<string | null>(null);
@@ -787,31 +785,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
     setTimeout(() => setToasts((p) => p.filter((t) => t.id !== id)), 4000);
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const tx = await apiFetch('/panel/transactions?limit=100');
-        if (!cancelled && Array.isArray(tx)) {
-          setTransactions(tx.map((t: any) => ({
-            id: t.id, user: t.user || `@user_${t.user_id}`, amount: t.amount ?? 0,
-            type: t.amount > 0 ? 'income' : 'expense', status: t.status || 'Pending', method: t.payment_method || 'Unknown',
-            date: t.created_at ? new Date(t.created_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '',
-            hash: t.hash || t.payment_id || '',
-          })));
-        }
-      } catch (e) { console.error(e); if (!cancelled) addToast('Ошибка', 'Не удалось загрузить транзакции', 'error'); }
-
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       <ToastContainer toasts={toasts} removeToast={(id) => setToasts((p) => p.filter((t) => t.id !== id))} />
 
-      {selectedTransaction && <TransactionModal transaction={selectedTransaction} onClose={() => setSelectedTransaction(null)} />}
       {massActionType && (
         <UserActionModal type={massActionType} onClose={() => setMassActionType(null)} onConfirm={async (val, notify) => {
           try {
@@ -863,7 +840,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
           ) : (
             <>
               {activePage === 'Главная' && <Dashboard />}
-              {activePage === 'Финансы' && <FinancePage transactions={transactions} onSelectTransaction={setSelectedTransaction} onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} />}
+              {activePage === 'Финансы' && <FinancePage onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} />}
               {activePage === 'Выводы' && <WithdrawalsPage onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} />}
               {activePage === 'Пользователи' && <UsersPage userSearch={userSearch} setUserSearch={setUserSearch} setSelectedUser={(u) => setDetailUserId(u.id)} setMassActionType={setMassActionType} />}
               {activePage === 'Рассылка' && <MailingPage onToast={addToast} />}
@@ -1001,7 +978,7 @@ const Dashboard = () => {
 // 8. FINANCE
 // ==========================================================
 
-const FinancePage: React.FC<{ transactions: Transaction[]; onSelectTransaction: (t: Transaction) => void; onToast: (t: string, m: string, ty?: ToastType) => void; onOpenUser: (id: number) => void }> = ({ transactions, onSelectTransaction, onToast, onOpenUser }) => {
+const FinancePage: React.FC<{ onToast: (t: string, m: string, ty?: ToastType) => void; onOpenUser: (id: number) => void }> = ({ onToast, onOpenUser }) => {
   const [stats, setStats] = useState<{ deposits: number; withdrawals: number; successfulOps: number } | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [refBusy, setRefBusy] = useState<string | null>(null);
@@ -1053,26 +1030,6 @@ const FinancePage: React.FC<{ transactions: Transaction[]; onSelectTransaction: 
                         <span className="sub">возвращён</span>
                       ) : null}
                     </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="tbl-wrap">
-        <div style={{ overflowX: 'auto' }}>
-          <table className="tbl">
-            <thead><tr><th>ID</th><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Дата</th></tr></thead>
-            <tbody>
-              {transactions.length === 0 ? <tr className="empty-row"><td colSpan={5}>Пока нет операций</td></tr>
-                : transactions.map((tx) => (
-                  <tr key={tx.id} className="click" onClick={() => onSelectTransaction(tx)}>
-                    <td className="muted mono">#{tx.id}</td>
-                    <td className="muted">{tx.user}</td>
-                    <td style={{ fontWeight: 600, color: tx.amount > 0 ? 'var(--text)' : 'var(--muted)' }}>{tx.amount > 0 ? '+' : ''}{tx.amount} ₽</td>
-                    <td className="muted">{tx.status}</td>
-                    <td className="faint">{tx.date}</td>
                   </tr>
                 ))}
             </tbody>

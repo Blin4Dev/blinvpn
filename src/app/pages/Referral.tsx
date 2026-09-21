@@ -95,7 +95,7 @@ export default function Referral() {
           <div style={{ fontWeight: 700, fontSize: 28, color: T.text, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
             {balance} ₽
           </div>
-          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Заработано</div>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Баланс</div>
         </div>
         <div>
           <div style={{ fontWeight: 700, fontSize: 28, color: T.text, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
@@ -106,7 +106,7 @@ export default function Referral() {
       </div>
 
       <Btn variant="secondary" onClick={openSheet} style={{ marginBottom: 8 }}>
-        Вывести USDT TON
+        Вывести
       </Btn>
 
       <SectionLabel>Ссылки</SectionLabel>

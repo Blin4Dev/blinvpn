@@ -373,7 +373,7 @@ def validate_oauth_login(payload: dict[str, Any]) -> dict[str, Any]:
             return payload
         raise HTTPException(503, detail={"message": "TELEGRAM_BOT_TOKEN не задан"})
 
-    data = {k: str(v) for k, v in payload.items() if k != "hash" and v is not None}
+    data = {k: str(v) for k, v in payload.items() if k != "hash" and v is not None and str(v) != ""}
     received = str(payload.get("hash") or "")
     check = _telegram_data_check_string(data)
     secret = hashlib.sha256(TELEGRAM_BOT_TOKEN.encode()).digest()
@@ -1818,14 +1818,18 @@ def panel_statistics_full(
 
 @app.get("/api/panel/finance/stats")
 def panel_finance_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
+    # Считаем по payments — той же таблице, что в списке «Финансы»,
+    # чтобы цифры не расходились с транзакциями/реф. балансом.
     deposits = db.fetchone(
-        "SELECT COALESCE(SUM(amount), 0) AS s FROM transactions WHERE amount > 0"
+        "SELECT COALESCE(SUM(amount), 0) AS s FROM payments "
+        "WHERE status IN ('paid', 'completed') AND COALESCE(amount, 0) > 0"
     )
     withdrawals = db.fetchone(
-        "SELECT COALESCE(SUM(ABS(amount)), 0) AS s FROM transactions WHERE amount < 0"
+        "SELECT COALESCE(SUM(amount), 0) AS s FROM payments "
+        "WHERE status = 'refunded' AND COALESCE(amount, 0) > 0"
     )
     successful = db.fetchone(
-        "SELECT COUNT(*) AS c FROM transactions WHERE status = 'completed'"
+        "SELECT COUNT(*) AS c FROM payments WHERE status IN ('paid', 'completed')"
     )
     return {
         "deposits": round(float(deposits["s"]) if deposits else 0, 2),
@@ -3759,11 +3763,41 @@ def app_me(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
     return {"user": serialize_app_user(fresh)}
 
 
+@app.post("/api/app/me/email/request")
+def app_me_email_request(body: UpdateEmailBody, user: dict = Depends(_app_user_from_init), request: Request = None) -> dict[str, Any]:  # type: ignore[assignment]
+    """Отправить код для привязки/смены email (нужно подтверждение кодом)."""
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, detail={"message": "Введите корректный email"})
+    clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
+    if clash:
+        raise HTTPException(409, detail={"message": "Этот email уже используется"})
+
+    allowed, retry = ratelimit.rate_limit(f"emailbind:{user['id']}", 3, 300)
+    if allowed:
+        ip = _client_ip(request)
+        if ip:
+            allowed, retry = ratelimit.rate_limit(f"emailbind_ip:{ip}", 10, 300)
+    if not allowed:
+        raise HTTPException(429, detail={"message": f"Слишком много запросов. Повторите через {retry} сек."})
+
+    code, throttled = create_email_code(email)
+    if not throttled:
+        send_login_code(email, code)
+    resp: dict[str, Any] = {"ok": True, "throttled": throttled, "resend_after": EMAIL_CODE_RESEND}
+    if ENV != "production" and not mailer.is_configured():
+        resp["dev_code"] = code
+    return resp
+
+
 @app.put("/api/app/me/email")
-def app_me_email(body: UpdateEmailBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
+def app_me_email(body: EmailVerifyBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
+    """Привязать/сменить email только после ввода кода из письма."""
     email = (body.email or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(400, detail={"message": "Некорректный email"})
+    if not verify_email_code(email, body.code or ""):
+        raise HTTPException(401, detail={"message": "Неверный или истёкший код"})
     clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
     if clash:
         raise HTTPException(409, detail={"message": "Этот email уже используется"})

@@ -1,11 +1,13 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { BrandMark, Btn, Field, LoadingScreen, T, pageFrame, pageOuter } from "../components/ui";
+import { TelegramLoginWidget } from "../components/TelegramLoginWidget";
 import {
   appFetch,
   requestEmailCode,
   setAppToken,
   verifyEmailCode,
   type AppUser,
+  type TelegramOAuthPayload,
 } from "../utils/api";
 
 type Step = "email" | "code";
@@ -18,14 +20,8 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [resendIn, setResendIn] = useState(0);
-  const [oauthBotId, setOauthBotId] = useState("");
-  const [explicitOauthUrl, setExplicitOauthUrl] = useState("");
+  const [botUsername, setBotUsername] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
-
-  const oauthReturnTo = `${window.location.origin}/`;
-  const oauthUrl = explicitOauthUrl || (oauthBotId
-    ? `https://oauth.telegram.org/auth?bot_id=${encodeURIComponent(oauthBotId)}&origin=${encodeURIComponent(window.location.origin)}&return_to=${encodeURIComponent(oauthReturnTo)}&request_access=write`
-    : "");
 
   const validEmail = useMemo(() => /\S+@\S+\.\S+/.test(email.trim()), [email]);
 
@@ -33,44 +29,42 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
     void (async () => {
       try {
         const res = await fetch("/api/app/config");
-        const body = (await res.json().catch(() => null)) as
-          | { telegramOauthBotId?: string; telegramOauthUrl?: string }
-          | null;
+        const body = (await res.json().catch(() => null)) as { botUsername?: string } | null;
         if (!res.ok || !body) return;
-        if (typeof body.telegramOauthBotId === "string") setOauthBotId(body.telegramOauthBotId.trim());
-        if (typeof body.telegramOauthUrl === "string") setExplicitOauthUrl(body.telegramOauthUrl.trim());
+        if (typeof body.botUsername === "string" && body.botUsername.trim()) {
+          setBotUsername(body.botUsername.trim().replace(/^@/, ""));
+        }
       } catch {
         /* ignore */
       }
     })();
   }, []);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (!params.get("hash") || !params.get("id")) return;
-    const FIELDS = ["id", "first_name", "last_name", "username", "photo_url", "auth_date", "hash"] as const;
-    const payload = Object.fromEntries(
-      FIELDS.flatMap((k) => {
-        const v = params.get(k);
-        return v !== null ? [[k, v]] : [];
-      }),
-    );
-    setOauthBusy(true);
-    void (async () => {
+  const finishOauth = useCallback(
+    async (payload: TelegramOAuthPayload) => {
+      setOauthBusy(true);
+      setError("");
       try {
+        const clean: Record<string, string | number> = { id: payload.id, hash: payload.hash };
+        if (payload.first_name) clean.first_name = payload.first_name;
+        if (payload.last_name) clean.last_name = payload.last_name;
+        if (payload.username) clean.username = payload.username;
+        if (payload.photo_url) clean.photo_url = payload.photo_url;
+        if (payload.auth_date != null && payload.auth_date !== "") clean.auth_date = payload.auth_date;
+
         const b = await appFetch<{ user?: AppUser; token?: string }>("/auth/oauth", {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify(clean),
         });
         if (b.token) setAppToken(b.token);
-        window.history.replaceState({}, "", window.location.pathname);
         onAuthed();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось войти через Telegram");
         setOauthBusy(false);
       }
-    })();
-  }, [onAuthed]);
+    },
+    [onAuthed],
+  );
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -180,8 +174,22 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
                   <button
                     type="button"
-                    style={{ background: "none", border: "none", color: T.orange, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: T.font, padding: 0 }}
-                    onClick={() => { setStep("email"); setCode(""); setError(""); setInfo(""); }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: T.orange,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontFamily: T.font,
+                      padding: 0,
+                    }}
+                    onClick={() => {
+                      setStep("email");
+                      setCode("");
+                      setError("");
+                      setInfo("");
+                    }}
                   >
                     Изменить почту
                   </button>
@@ -210,22 +218,16 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
           {info && <div style={{ marginTop: 16, color: T.success, fontSize: 13 }}>{info}</div>}
           {error && <div style={{ marginTop: 16, color: T.danger, fontSize: 13 }}>{error}</div>}
 
-          {oauthUrl && (
+          {botUsername && step === "email" ? (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "28px 0 20px" }}>
                 <div style={{ flex: 1, height: 1, background: T.border }} />
                 <span style={{ fontSize: 13, color: T.textDim }}>или</span>
                 <div style={{ flex: 1, height: 1, background: T.border }} />
               </div>
-              <Btn
-                variant="secondary"
-                onClick={() => window.location.assign(oauthUrl)}
-                style={{ background: "#229ED9", border: "none", color: "#fff" }}
-              >
-                Войти через Telegram
-              </Btn>
+              <TelegramLoginWidget botUsername={botUsername} onAuth={(u) => void finishOauth(u)} />
             </>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { activateTrial, applyDiscount, fetchConfig, fetchDiscount, fetchMe, fetchPlans, minPlanPrice } from "../utils/api";
+import { activateTrial, fetchConfig, fetchMe } from "../utils/api";
 import { Btn, LoadingScreen, MSIcon, T, btnReset, pageFrame, pageOuter } from "../components/ui";
 
 type SubscriptionState =
@@ -146,8 +146,6 @@ export default function BlinVPNApp() {
   const [loading, setLoading] = useState(true);
   const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>("never");
   const [subscriptionUntilText, setSubscriptionUntilText] = useState("");
-  const [minPrice, setMinPrice] = useState(99);
-  const [discount, setDiscount] = useState(0);
   const [trialEnabled, setTrialEnabled] = useState(true);
   const [trialBusy, setTrialBusy] = useState(false);
   const [supportUrl, setSupportUrl] = useState("https://t.me/blinteams");
@@ -161,11 +159,6 @@ export default function BlinVPNApp() {
   const ctaLabel = trialOff ? "Оформить подписку" : cfg.ctaLabel;
   const ctaPath = trialOff ? "/subscription/start?step=1&flow=purchase&trialUsed=1" : cfg.ctaPath;
   const isTrialCta = subscriptionState === "never" && trialEnabled;
-  const isFree = !trialOff && cfg.ctaPrice === "0 ₽";
-  const hasDiscount = discount > 0 && !isFree && !blocked;
-  const discountedMin = applyDiscount(minPrice, discount);
-  const ctaPrice = isFree ? cfg.ctaPrice : `от ${discountedMin} ₽`;
-  const ctaPriceBase = `от ${minPrice} ₽`;
   const ctaPrimary = trialOff ? true : cfg.ctaPrimary;
 
   const handleCta = async () => {
@@ -185,14 +178,6 @@ export default function BlinVPNApp() {
   useEffect(() => {
     void (async () => {
       try {
-        try {
-          const plans = await fetchPlans();
-          setMinPrice(minPlanPrice(plans.plans));
-        } catch { /* keep 99 */ }
-        try {
-          const d = await fetchDiscount();
-          if (d.active && d.percent > 0) setDiscount(d.percent);
-        } catch { /* no discount */ }
         try {
           const conf = await fetchConfig();
           if (conf && typeof conf.trialEnabled === "boolean") setTrialEnabled(conf.trialEnabled);
@@ -350,42 +335,13 @@ export default function BlinVPNApp() {
               ) : null}
             </div>
 
-            {/* История — над основной кнопкой, вне зоны кнопок TG */}
-            <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.15s both", marginBottom: 10 }}>
-              <button
-                type="button"
-                disabled={blocked}
-                onClick={() => { if (!blocked) navigate("/history"); }}
-                className="blin-press"
-                style={{
-                  ...btnReset,
-                  width: "100%",
-                  minHeight: 48,
-                  padding: "0 16px",
-                  borderRadius: T.radius.lg,
-                  background: T.surface,
-                  border: `1px solid ${T.border}`,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  cursor: blocked ? "not-allowed" : "pointer",
-                  opacity: blocked ? 0.4 : 1,
-                  color: T.text,
-                }}
-              >
-                <MSIcon name="history" style={{ color: T.orange, fontSize: 22 }} />
-                <span style={{ flex: 1, fontWeight: 600, fontSize: 15, textAlign: "left" }}>История платежей</span>
-                <MSIcon name="chevron_right" style={{ color: T.textDim, fontSize: 22 }} />
-              </button>
-            </div>
-
             <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.18s both", marginBottom: 10 }}>
               <Btn
                 variant={ctaPrimary ? "primary" : "secondary"}
                 disabled={blocked || trialBusy}
                 onClick={() => { if (!blocked && !trialBusy) void handleCta(); }}
                 style={{
-                  justifyContent: ctaPrimary ? "space-between" : "flex-start",
+                  justifyContent: "flex-start",
                   padding: "0 18px",
                 }}
               >
@@ -393,16 +349,6 @@ export default function BlinVPNApp() {
                   <MSIcon name={ctaPrimary ? "bolt" : "tune"} style={{ fontSize: 22, color: "inherit" }} />
                   <span>{trialBusy ? "Активация…" : ctaLabel}</span>
                 </span>
-                {ctaPrimary ? (
-                  <span style={{ display: "flex", alignItems: "baseline", gap: 6, fontWeight: 600, opacity: 0.85 }}>
-                    {hasDiscount && (
-                      <span style={{ opacity: 0.45, textDecoration: "line-through", fontSize: 13 }}>
-                        {ctaPriceBase}
-                      </span>
-                    )}
-                    <span style={{ fontSize: 15 }}>{ctaPrice}</span>
-                  </span>
-                ) : null}
               </Btn>
             </div>
 
