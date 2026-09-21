@@ -8,6 +8,7 @@ type Phase = "pending" | "paid" | "failed" | "error";
 export default function PaymentWaiting() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const returnTo = params.get("return") || "";
   const paymentId = params.get("payment_id") || "";
   const provider = params.get("provider") || "";
   const payUrlParam = params.get("pay_url") || "";
@@ -63,6 +64,21 @@ export default function PaymentWaiting() {
       openPayUrl(payUrl);
     }
   };
+
+  const finishSuccess = () => {
+    if (returnTo && returnTo.startsWith("/")) {
+      navigate(returnTo, { replace: true });
+    } else {
+      navigate("/subscription", { replace: true });
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== "paid" || !returnTo) return;
+    const t = window.setTimeout(() => finishSuccess(), 1200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, returnTo]);
 
   const wrap: React.CSSProperties = {
     display: "flex",
@@ -158,14 +174,16 @@ export default function PaymentWaiting() {
                 Оплата прошла!
               </div>
               <div style={{ marginTop: 10, fontSize: 14, color: "#AFAFAF", lineHeight: 1.5 }}>
-                Подписка активирована. Ключ доступен в разделе подписки.
+                {returnTo
+                  ? "Подписка активирована. Продолжаем настройку…"
+                  : "Подписка активирована. Ключ доступен в разделе подписки."}
               </div>
               <button
                 type="button"
                 style={{ ...primaryBtn, marginTop: 28 }}
-                onClick={() => navigate("/subscription", { replace: true })}
+                onClick={finishSuccess}
               >
-                Перейти к подписке
+                {returnTo ? "Продолжить настройку" : "Перейти к подписке"}
                 <MSIcon name="chevron_right" style={{ fontSize: 22, color: "#fff" }} />
               </button>
             </>

@@ -306,6 +306,8 @@ export function Screen({
             paddingRight: pad ? 26 : undefined,
             paddingBottom: pad ? 28 : undefined,
             boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
           {children}

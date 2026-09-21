@@ -20,7 +20,7 @@ import {
 import { deviceWord, estimateDevicePrice, splitDevices } from "../utils/devices";
 
 const FALLBACK_OPTIONS = [1, 2, 3, 5];
-const MAX_DEVICES = 15;
+const MAX_DEVICES = 20;
 
 type PaymentMethod = "sbp" | "card" | "tg_stars";
 
@@ -58,8 +58,9 @@ export default function Payment() {
   const { showError } = useAppError();
   const goBack = useSmartBack("/");
   const navigate = useNavigate();
-
   const [searchParams] = useSearchParams();
+
+  const returnTo = searchParams.get("return") || "";
   const initialDevices = Math.min(
     MAX_DEVICES,
     Math.max(1, parseInt(searchParams.get("devices") || "1", 10)),
@@ -102,8 +103,9 @@ export default function Payment() {
     sberpay: 50,
     sbp: 10,
   });
-  const [useRef, setUseRef] = useState(false);
+  const [useRefBal, setUseRefBal] = useState(false);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
+  const [quoteReady, setQuoteReady] = useState(false);
 
   const planSizes = useMemo(
     () => Object.keys(rubMap).map(Number).sort((a, b) => a - b),
@@ -121,27 +123,27 @@ export default function Payment() {
         setStarsMap(plansToStarsMap(data.plans));
         setExtraPrice(data.extra_device_price || 40);
       } catch {
-        /* keep fallbacks */
+        /* keep */
       }
       try {
         const d = await fetchDiscount();
         if (d.active && d.percent > 0) setDiscount(d.percent);
       } catch {
-        /* без скидки */
+        /* */
       }
       try {
         const me = await fetchMe();
         if (me && typeof me.partner_balance === "number") setRefBalance(me.partner_balance);
       } catch {
-        /* без баланса */
+        /* */
       }
       try {
         const cfg = await fetchConfig();
-        if (cfg && cfg.providerMin && typeof cfg.providerMin === "object") {
+        if (cfg?.providerMin && typeof cfg.providerMin === "object") {
           setProviderMin(cfg.providerMin as Record<string, number>);
         }
       } catch {
-        /* дефолтные минимумы */
+        /* */
       }
     })();
   }, []);
@@ -151,6 +153,7 @@ export default function Payment() {
 
   useEffect(() => {
     let alive = true;
+    setQuoteReady(false);
     void (async () => {
       const q = await fetchQuote({
         plan_devices: planDevices,
@@ -159,39 +162,57 @@ export default function Payment() {
         extra_devices: extraDevices,
         purpose,
         subscription_id: subParam ? Number(subParam) : null,
-        use_referral_balance: useRef,
+        use_referral_balance: useRefBal,
       });
-      if (alive) setQuote(q);
+      if (!alive) return;
+      setQuote(q);
+      setQuoteReady(true);
     })();
     return () => {
       alive = false;
     };
-  }, [planDevices, method, extraDevices, useRef, purpose, subParam, months]);
+  }, [planDevices, method, extraDevices, useRefBal, purpose, subParam, months]);
 
   const clientRub = estimateDevicePrice(devices, rubMap, extraPrice, months);
-  const baseRub = isDevicesFlow ? clientRub : clientRub;
-  const baseStars = starsMap[planDevices] ?? baseRub;
-  const cRub = applyDiscount(baseRub, discount);
+  const baseStars = starsMap[planDevices] ?? clientRub;
+  const cRub = applyDiscount(clientRub, discount);
   const cStars = applyDiscount(baseStars, discount);
 
   const fullRub = quote ? Math.round(quote.price) : cRub;
   const stars = quote ? quote.stars : cStars;
-  const hasDiscount = discount > 0 && purpose !== "traffic_reset";
-
+  const hasDiscount = discount > 0 && purpose !== "traffic_reset" && quoteReady && !!quote;
   const refApplied = quote && !isStars ? Math.round(quote.referral_applied) : 0;
   const charge = quote && !isStars ? Math.round(quote.charge) : fullRub;
-  const canUseRef = !isStars && refBalance > 0 && fullRub > 0;
-  const belowMin = !isStars && charge > 0 && charge < pMin;
+  const canUseRef = quoteReady && !isStars && refBalance > 0 && fullRub > 0;
+  const belowMin = quoteReady && !isStars && charge > 0 && charge < pMin;
+  const paidFromBalance = quoteReady && !isStars && charge <= 0 && fullRub > 0;
 
-  const displayBase = isStars ? `${baseStars} ⭐` : `${fullRub} ₽`;
-  const displayPrice = isStars
-    ? `${stars} ⭐`
-    : charge <= 0
-      ? "0 ₽"
-      : `${charge} ₽`;
+  const displayPrice = !quoteReady
+    ? "…"
+    : isStars
+      ? `${stars} ⭐`
+      : paidFromBalance
+        ? "0 ₽"
+        : `${charge} ₽`;
+  const strikePrice = hasDiscount ? `${cRub > fullRub ? cRub : Math.round(fullRub / Math.max(0.01, 1 - discount / 100))} ₽` : null;
+
+  const payLabel = !quoteReady
+    ? "Считаем…"
+    : paying
+      ? "Создаём…"
+      : belowMin
+        ? `Минимум ${pMin} ₽`
+        : paidFromBalance
+          ? "Оплатить с баланса"
+          : `Оплатить ${displayPrice}`;
+
+  const waitingQs = (extra = "") => {
+    const ret = returnTo ? `&return=${encodeURIComponent(returnTo)}` : "";
+    return ret + extra;
+  };
 
   const handlePay = async () => {
-    if (paying) return;
+    if (paying || !quoteReady) return;
     if (belowMin) {
       showError(`Минимальная сумма оплаты этим способом — ${pMin} ₽`);
       return;
@@ -206,13 +227,13 @@ export default function Payment() {
         extra_devices: extraDevices,
         purpose,
         subscription_id: subParam ? Number(subParam) : null,
-        use_referral_balance: canUseRef && useRef,
+        use_referral_balance: canUseRef && useRefBal,
       });
 
       const goWaiting = (extra = "") =>
         navigate(
           `/payment/waiting?payment_id=${encodeURIComponent(result.payment_id)}` +
-            `&provider=${result.provider}${extra}`,
+            `&provider=${result.provider}${waitingQs(extra)}`,
         );
 
       if (result.provider === "balance" || (result as { paid?: boolean }).paid) {
@@ -230,9 +251,8 @@ export default function Payment() {
         goWaiting();
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Ошибка оплаты";
+      showError(e instanceof Error ? e.message : "Ошибка оплаты");
       setPayInfo("");
-      showError(msg);
     } finally {
       setPaying(false);
     }
@@ -242,19 +262,19 @@ export default function Payment() {
     <Screen>
       <PageHeader title="Оплата" onBack={goBack} />
 
-      <Surface padded style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 4 }}>К оплате</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ fontSize: 32, fontWeight: 700, color: T.orange, letterSpacing: "-0.02em" }}>
+      <Surface padded style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 6 }}>К оплате</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 32, fontWeight: 700, color: T.orange, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
             {displayPrice}
           </span>
-          {hasDiscount ? (
-            <span style={{ fontSize: 18, fontWeight: 600, color: T.textDim, textDecoration: "line-through" }}>
-              {displayBase}
+          {hasDiscount && strikePrice ? (
+            <span style={{ fontSize: 16, fontWeight: 600, color: T.textDim, textDecoration: "line-through" }}>
+              {strikePrice}
             </span>
           ) : null}
         </div>
-        <div style={{ fontSize: 13, color: T.textDim, marginTop: 4 }}>
+        <div style={{ fontSize: 13, color: T.textDim, marginTop: 8, lineHeight: 1.4 }}>
           {isTrafficReset
             ? "Досрочный сброс трафика"
             : isDevicesFlow
@@ -263,8 +283,8 @@ export default function Payment() {
         </div>
       </Surface>
 
-      {purpose === "subscription" && (
-        <Surface padded style={{ marginBottom: 14 }}>
+      {purpose === "subscription" ? (
+        <Surface padded style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Количество устройств</div>
           <div
             style={{
@@ -292,12 +312,13 @@ export default function Payment() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                flexShrink: 0,
               }}
             >
               <MSIcon name="remove" style={{ color: T.text }} />
             </button>
-            <div style={{ flex: 1, textAlign: "center" }}>
-              <div style={{ fontSize: 18, fontWeight: 600, color: T.text }}>
+            <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
+              <div style={{ fontSize: 17, fontWeight: 600, color: T.text }}>
                 {devices} {deviceWord(devices)}
               </div>
               {split.extra > 0 ? (
@@ -322,17 +343,18 @@ export default function Payment() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                flexShrink: 0,
               }}
             >
               <MSIcon name="add" style={{ color: T.text }} />
             </button>
           </div>
         </Surface>
-      )}
+      ) : null}
 
-      <Surface padded style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 10 }}>Способ оплаты</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Surface padded style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Способ оплаты</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {METHODS.map((m) => {
             const active = method === m.id;
             return (
@@ -344,35 +366,26 @@ export default function Payment() {
                 style={{
                   ...btnReset,
                   width: "100%",
-                  minHeight: 50,
-                  padding: "0 14px",
+                  minHeight: 52,
+                  padding: "10px 14px",
                   borderRadius: T.radius.lg,
-                  background: active ? "rgba(255, 107, 26, 0.7)" : T.surfaceRaised,
+                  background: active ? "rgba(255, 107, 26, 0.55)" : T.surfaceRaised,
                   border: "none",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
-                  gap: 10,
+                  gap: 12,
                   boxSizing: "border-box",
                 }}
               >
-                <span
-                  style={{
-                    width: 28,
-                    height: 28,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
+                <span style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   {m.icon}
                 </span>
                 <span style={{ flex: 1, textAlign: "left", fontSize: 16, fontWeight: 600, color: T.text }}>
                   {m.label}
                 </span>
                 {active ? (
-                  <MSIcon name="check_circle" style={{ fontSize: 22, color: "#fff", opacity: 0.9 }} />
+                  <MSIcon name="check_circle" style={{ fontSize: 22, color: "#fff", flexShrink: 0 }} />
                 ) : null}
               </button>
             );
@@ -382,34 +395,33 @@ export default function Payment() {
         {canUseRef ? (
           <button
             type="button"
-            onClick={() => setUseRef((v) => !v)}
+            onClick={() => setUseRefBal((v) => !v)}
             style={{
               ...btnReset,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
               width: "100%",
-              marginTop: 14,
+              marginTop: 16,
+              gap: 12,
               cursor: "pointer",
             }}
           >
-            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-              <span style={{ fontSize: 15, fontWeight: 500, color: T.text, opacity: 0.85 }}>
-                Списать с баланса
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 500, color: T.orange }}>
-                {useRef && refApplied > 0
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", minWidth: 0 }}>
+              <span style={{ fontSize: 15, fontWeight: 500, color: T.text }}>Списать с баланса</span>
+              <span style={{ fontSize: 12, fontWeight: 500, color: T.orange, marginTop: 2 }}>
+                {useRefBal && refApplied > 0
                   ? `−${refApplied} ₽ · останется ${Math.max(0, Math.floor(refBalance) - refApplied)} ₽`
                   : `доступно ${Math.floor(refBalance)} ₽`}
               </span>
             </span>
-            <span style={{ position: "relative", display: "inline-block", width: 44, height: 26, flexShrink: 0 }}>
+            <span style={{ position: "relative", width: 44, height: 26, flexShrink: 0 }}>
               <span
                 style={{
                   display: "block",
                   width: "100%",
                   height: "100%",
-                  background: useRef ? T.orange : "rgba(255,255,255,0.15)",
+                  background: useRefBal ? T.orange : "rgba(255,255,255,0.15)",
                   borderRadius: 13,
                 }}
               />
@@ -417,12 +429,11 @@ export default function Payment() {
                 style={{
                   position: "absolute",
                   top: 3,
-                  left: useRef ? 21 : 3,
+                  left: useRefBal ? 21 : 3,
                   width: 20,
                   height: 20,
                   background: "#fff",
                   borderRadius: "50%",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.35)",
                 }}
               />
             </span>
@@ -431,19 +442,11 @@ export default function Payment() {
       </Surface>
 
       {payInfo ? (
-        <div style={{ fontSize: 12, color: T.textMuted, textAlign: "center", marginBottom: 10 }}>
-          {payInfo}
-        </div>
+        <div style={{ fontSize: 12, color: T.textMuted, textAlign: "center", marginBottom: 10 }}>{payInfo}</div>
       ) : null}
 
-      <Btn disabled={paying || belowMin} onClick={() => void handlePay()}>
-        {paying
-          ? "Создаём…"
-          : belowMin
-            ? `Минимум ${pMin} ₽`
-            : charge <= 0 && !isStars
-              ? "Оплатить с баланса"
-              : `Оплатить ${displayPrice}`}
+      <Btn disabled={paying || !quoteReady || belowMin} onClick={() => void handlePay()}>
+        {payLabel}
       </Btn>
     </Screen>
   );

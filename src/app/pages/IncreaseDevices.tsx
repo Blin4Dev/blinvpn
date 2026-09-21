@@ -5,7 +5,7 @@ import { useSmartBack } from "../utils/navigation";
 import { fetchPlans, fetchQuote, fetchSubscription } from "../utils/api";
 import { deviceWord } from "../utils/devices";
 
-const MAX_DEVICES = 15;
+const MAX_DEVICES = 20;
 
 export default function IncreaseDevices() {
   const navigate = useNavigate();

@@ -7,7 +7,7 @@ import { deviceWord, estimateDevicePrice, splitDevices } from "../utils/devices"
 
 const FALLBACK_OPTIONS = [1, 2, 3, 5];
 const FALLBACK_PRICES: Record<number, number> = { 1: 99, 2: 169, 3: 229, 5: 349 };
-const MAX_DEVICES = 15;
+const MAX_DEVICES = 20;
 
 export default function ExtendSubscription() {
   const navigate = useNavigate();

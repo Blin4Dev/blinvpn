@@ -656,8 +656,16 @@ def subscription_status_for_user(u: dict[str, Any]) -> str:
     return "active"
 
 
-def serialize_user(u: dict[str, Any]) -> dict[str, Any]:
+def serialize_user(u: dict[str, Any], *, revenue: Optional[float] = None) -> dict[str, Any]:
     banned = bool(u.get("is_banned"))
+    uid = int(u["id"])
+    if revenue is None:
+        row = db.fetchone(
+            "SELECT COALESCE(SUM(amount), 0) AS s FROM payments "
+            "WHERE user_id = ? AND status IN ('paid', 'completed') AND COALESCE(amount, 0) > 0",
+            (uid,),
+        )
+        revenue = float(row["s"]) if row else 0.0
     return {
         "id": u["id"],
         "telegram_id": u.get("telegram_id"),
@@ -670,12 +678,13 @@ def serialize_user(u: dict[str, Any]) -> dict[str, Any]:
         "in_blacklist": banned,
         "is_banned": banned,
         "registration_date": u.get("created_at"),
-        "paid_until": paid_until_for_user(int(u["id"])),
+        "paid_until": paid_until_for_user(uid),
         "referral_code": u.get("referral_code"),
         "is_partner": bool(u.get("is_partner")),
         "partner_balance": u.get("partner_balance", 0),
         "partner_rate": u.get("partner_rate", 25),
-        "referrals": referrals_count(int(u["id"])),
+        "referrals": referrals_count(uid),
+        "revenue": round(float(revenue or 0), 2),
     }
 
 
@@ -1859,12 +1868,13 @@ def panel_payments(
     offset: int = Query(0),
     _: dict = Depends(require_panel),
 ) -> list[dict[str, Any]]:
-    """Список платежей для раздела «Финансы» (с возможностью возврата)."""
+    """Только успешные платежи (paid/completed) — в панели и статистике."""
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     rows = db.fetchall(
         "SELECT p.*, u.username AS u_username, u.telegram_id AS u_tg "
         "FROM payments p LEFT JOIN users u ON u.id = p.user_id "
+        "WHERE p.status IN ('paid', 'completed') "
         "ORDER BY p.id DESC LIMIT ? OFFSET ?",
         (limit, offset),
     )
@@ -1930,8 +1940,25 @@ def panel_users(
 ) -> dict[str, Any]:
     items = _filter_users(search or q, status)
     page_data = paginate(items, limit, offset if offset else (page - 1) * limit)
+    page_items = page_data["items"]
+    # Сумма успешных платежей пачкой, чтобы не N+1
+    revenue_map: dict[int, float] = {}
+    if page_items:
+        ids = [int(u["id"]) for u in page_items]
+        placeholders = ",".join("?" * len(ids))
+        rows = db.fetchall(
+            f"SELECT user_id, COALESCE(SUM(amount), 0) AS s FROM payments "
+            f"WHERE user_id IN ({placeholders}) AND status IN ('paid', 'completed') "
+            f"AND COALESCE(amount, 0) > 0 GROUP BY user_id",
+            tuple(ids),
+        )
+        for r in rows:
+            revenue_map[int(r["user_id"])] = float(r["s"] or 0)
     return {
-        "items": [serialize_user(u) for u in page_data["items"]],
+        "items": [
+            serialize_user(u, revenue=revenue_map.get(int(u["id"]), 0.0))
+            for u in page_items
+        ],
         "total": page_data["total"],
     }
 
@@ -1989,10 +2016,14 @@ def panel_user_payments(user_id: int, _: dict = Depends(require_panel)) -> list[
     if not get_user(user_id):
         raise HTTPException(404, detail="User not found")
     rows = db.fetchall(
-        "SELECT * FROM payments WHERE user_id = ? ORDER BY id DESC LIMIT 100", (user_id,)
+        "SELECT * FROM payments WHERE user_id = ? AND status IN ('paid', 'completed') "
+        "ORDER BY id DESC LIMIT 100",
+        (user_id,),
     )
     txs = db.fetchall(
-        "SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 100", (user_id,)
+        "SELECT * FROM transactions WHERE user_id = ? AND status = 'completed' "
+        "ORDER BY id DESC LIMIT 100",
+        (user_id,),
     )
     paid_ids = {p.get("payment_id") for p in rows}
     result = [

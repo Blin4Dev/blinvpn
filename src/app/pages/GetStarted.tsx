@@ -1,12 +1,13 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
-import { MSIcon as MS } from "../components/ui";
+﻿import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { Btn, MSIcon, PageHeader, Screen, Surface, T, btnReset } from "../components/ui";
 import { fetchAppLink, fetchPlans, openDeepLink, plansToPriceMap } from "../utils/api";
 import { deviceWord, estimateDevicePrice } from "../utils/devices";
 
-// ─── Платформа и ссылки Happ (всё в одном файле) ─────────────────────────────
-
 type DeviceKind = "android" | "ios" | "windows" | "macos" | "linux" | "android_tv";
+type AppKind = "incy" | "happ" | "other";
+
+const MAX_DEVICES = 20;
 
 const DEVICE_TITLE: Record<DeviceKind, string> = {
   android: "Android",
@@ -17,334 +18,65 @@ const DEVICE_TITLE: Record<DeviceKind, string> = {
   android_tv: "Android TV",
 };
 
-const HAPP_INSTALL_URL: Record<DeviceKind, string> = {
+const HAPP_INSTALL: Record<DeviceKind, string> = {
   android: "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru",
   ios: "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
-  windows:
-    "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe",
+  windows: "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe",
   macos: "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
   linux: "https://github.com/Happ-proxy/happ-desktop/releases/latest/",
   android_tv: "https://play.google.com/store/apps/details?id=com.happproxy",
 };
 
+const INCY_INSTALL: Record<DeviceKind, string> = {
+  android: "https://play.google.com/store/apps/details?id=llc.itdev.incy",
+  ios: "https://apps.apple.com/ru/app/incy/id6756943388",
+  windows: "https://github.com/INCY-DEV/incy-platforms/releases/latest/download/incy-windows-setup.exe",
+  macos: "https://apps.apple.com/ru/app/incy/id6756943388",
+  linux: "https://github.com/INCY-DEV/incy-platforms/releases/latest/download/incy-linux-x64.deb",
+  android_tv: "https://play.google.com/store/apps/details?id=llc.itdev.incy",
+};
+
+const APP_META: Record<AppKind, { title: string; sub: string; img?: string; icon?: string; recommended?: boolean }> = {
+  incy: { title: "Incy", sub: "Рекомендуем", img: "/assets/incy.png", recommended: true },
+  happ: { title: "Happ", sub: "Популярное", img: "/assets/happ.png" },
+  other: { title: "Другое приложение", sub: "Ссылка на подписку", icon: "link" },
+};
+
 function detectDeviceKind(): DeviceKind {
   if (typeof navigator === "undefined") return "linux";
-  const ua = navigator.userAgent.toLowerCase();
-  if (
-    /android tv|androidtv|googletv|aftb|aftm|afts|aftt|crkey|bravia|hisense|tizen|smart-tv|tv;/.test(
-      ua,
-    )
-  ) {
-    return "android_tv";
-  }
-  if (ua.includes("android")) return "android";
-  const isIOS =
-    /iphone|ipad|ipod/.test(ua) ||
-    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  if (isIOS) return "ios";
-  if (ua.includes("win")) return "windows";
-  if (ua.includes("mac")) return "macos";
-  if (ua.includes("linux")) return "linux";
+  const ua = navigator.userAgent || "";
+  if (/Android/i.test(ua) && /TV|AFT|BRAVIA|GoogleTV/i.test(ua)) return "android_tv";
+  if (/Android/i.test(ua)) return "android";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  if (/Win/i.test(ua)) return "windows";
+  if (/Mac/i.test(ua)) return "macos";
   return "linux";
 }
 
-/** Мягкое свечение лого — один лёгкий слой вместо тяжёлых multi drop-shadow */
-const LOGO_GLOW: Record<number, string | undefined> = {
-  1: undefined,
-  2: "drop-shadow(0 0 18px rgba(255,107,26,0.35))",
-  3: "drop-shadow(0 0 28px rgba(255,107,26,0.45))",
-  4: "drop-shadow(0 0 22px rgba(255,107,26,0.4))",
-  5: "drop-shadow(0 0 26px rgba(255,107,26,0.42))",
-};
-
-const btnReset: React.CSSProperties = {
-  boxSizing: "border-box",
-  WebkitTapHighlightColor: "transparent",
-  touchAction: "manipulation",
-};
-
-const pageShell: React.CSSProperties = {
-  position: "relative",
-  boxSizing: "border-box",
-  width: "402px",
-  height: "803px",
-  margin: "0 auto",
-  background: "#14110E",
-  fontFamily: "'Outfit', system-ui, sans-serif",
-  overflow: "hidden",
-  flexShrink: 0,
-  WebkitFontSmoothing: "antialiased",
-};
-
-/** Нижний блок 350×135: два ряда кнопок 330×50 */
-function BottomCardTwoRows(props: {
-  topOrange: React.ReactNode;
-  topOrangeOnClick?: () => void;
-  bottomGray: React.ReactNode;
-  bottomGrayOnClick?: () => void;
-}) {
-  return (
-    <>
-      <div
-        style={{
-          position: "absolute",
-          width: "350px",
-          height: "135px",
-          left: "26px",
-          top: "628px",
-          background: "#2A241E",
-          borderRadius: "30px",
-        }}
-      />
-      <button
-        type="button"
-        onClick={props.topOrangeOnClick}
-        style={{
-          ...btnReset,
-          position: "absolute",
-          width: "330px",
-          height: "50px",
-          left: "36px",
-          top: "642px",
-          background: "#FF6B1A",
-          borderRadius: "30px",
-          border: "none",
-          cursor: "pointer",
-        }}
-      >
-        <span style={{ position: "relative", display: "block", width: "100%", height: "100%" }}>
-          {props.topOrange}
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={props.bottomGrayOnClick}
-        style={{
-          ...btnReset,
-          position: "absolute",
-          width: "330px",
-          height: "50px",
-          left: "36px",
-          top: "699px",
-          background: "#352E26",
-          borderRadius: "30px",
-          border: "none",
-          cursor: "pointer",
-        }}
-      >
-        <span style={{ position: "relative", display: "block", width: "100%", height: "100%" }}>
-          {props.bottomGray}
-        </span>
-      </button>
-    </>
-  );
-}
-
-/** Финальный экран: один оранжевый ряд внутри 350×78 */
-function BottomCardOneRow(props: { children: React.ReactNode; onClick?: () => void }) {
-  return (
-    <>
-      <div
-        style={{
-          position: "absolute",
-          width: "350px",
-          height: "78px",
-          left: "26px",
-          top: "685px",
-          background: "#2A241E",
-          borderRadius: "30px",
-        }}
-      />
-      <button
-        type="button"
-        onClick={props.onClick}
-        style={{
-          ...btnReset,
-          position: "absolute",
-          width: "330px",
-          height: "50px",
-          left: "36px",
-          top: "699px",
-          background: "#FF6B1A",
-          borderRadius: "30px",
-          border: "none",
-          cursor: "pointer",
-        }}
-      >
-        <span style={{ position: "relative", display: "block", width: "100%", height: "100%" }}>
-          {props.children}
-        </span>
-      </button>
-    </>
-  );
-}
-
-/** Выбор приложения для добавления подписки (incy / happ / другое) */
-function AppChooser(props: {
-  linking: string | null;
-  error: string;
-  onPick: (app: "incy" | "happ" | "other") => void;
-  onClose: () => void;
-}) {
-  const { linking, error, onPick, onClose } = props;
-
-  const Row = (opts: {
-    app: "incy" | "happ" | "other";
-    title: string;
-    subtitle: string;
-    recommended?: boolean;
-    img?: string;
-    icon?: string;
-  }) => {
-    const busy = linking === opts.app;
-    return (
-      <button
-        type="button"
-        disabled={!!linking}
-        onClick={() => onPick(opts.app)}
-        style={{
-          ...btnReset,
-          display: "flex",
-          alignItems: "center",
-          gap: "14px",
-          width: "330px",
-          height: "64px",
-          padding: "0 16px",
-          background: "#352E26",
-          borderRadius: "22px",
-          border: opts.recommended ? "1px solid rgba(255, 107, 26,0.6)" : "none",
-          cursor: linking ? "wait" : "pointer",
-          opacity: linking && !busy ? 0.5 : 1,
-        }}
-      >
-        <span
-          style={{
-            width: 40,
-            height: 40,
-            borderRadius: 10,
-            background: "#352E26",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
-            flexShrink: 0,
-          }}
-        >
-          {opts.img ? (
-            <img
-              src={opts.img}
-              alt=""
-              style={{ width: 40, height: 40, objectFit: "cover" }}
-              onError={(e) => { e.currentTarget.style.display = "none"; }}
-            />
-          ) : (
-            <MS name={opts.icon || "link"} style={{ fontSize: 22, color: "#E3E3E3" }} />
-          )}
-        </span>
-        <span style={{ flex: 1, textAlign: "left" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontWeight: 600, fontSize: 16, color: "#FFFFFF" }}>{opts.title}</span>
-            {opts.recommended && (
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "#FF6B1A",
-                  background: "rgba(255, 107, 26,0.15)",
-                  borderRadius: 8,
-                  padding: "2px 6px",
-                }}
-              >
-                рекомендуем
-              </span>
-            )}
-          </span>
-          <span style={{ display: "block", fontSize: 12, color: "#A89B8C", marginTop: 2 }}>
-            {busy ? "Открываем…" : opts.subtitle}
-          </span>
-        </span>
-        <MS name="chevron_right" style={{ fontSize: 22, color: "#FF6B1A" }} />
-      </button>
-    );
-  };
-
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: "absolute",
-        inset: 0,
-        background: "rgba(0,0,0,0.55)",
-        display: "flex",
-        alignItems: "flex-end",
-        zIndex: 50,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "100%",
-          background: "#14110E",
-          borderTopLeftRadius: "30px",
-          borderTopRightRadius: "30px",
-          padding: "18px 26px 28px",
-          boxSizing: "border-box",
-          borderTop: "1px solid rgba(255,255,255,0.06)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <span style={{ fontWeight: 600, fontSize: 18, color: "#FFFFFF" }}>Выберите приложение</span>
-          <button type="button" onClick={onClose} style={{ ...btnReset, cursor: "pointer" }}>
-            <MS name="close" style={{ fontSize: 24, color: "#A89B8C" }} />
-          </button>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {Row({ app: "incy", title: "Incy", subtitle: "Быстрое подключение", recommended: true, img: "/assets/incy.png" })}
-          {Row({ app: "happ", title: "Happ", subtitle: "Популярное приложение", img: "/assets/happ.png" })}
-          {Row({ app: "other", title: "Другое приложение", subtitle: "Получить ссылку на подписку", icon: "link" })}
-        </div>
-        {error && <div style={{ marginTop: 12, color: "#FF8F8F", fontSize: 13 }}>{error}</div>}
-      </div>
-    </div>
-  );
+function installUrl(app: AppKind, device: DeviceKind): string | null {
+  if (app === "happ") return HAPP_INSTALL[device];
+  if (app === "incy") return INCY_INSTALL[device];
+  return null;
 }
 
 export default function GetStarted() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [device, setDevice] = useState<DeviceKind>("linux");
-  const [devices, setDevices] = useState<number>(1);
-  const [priceMap, setPriceMap] = useState<Record<number, number>>({
-    1: 99,
-    2: 169,
-    3: 229,
-    5: 349,
-  });
+  const [devices, setDevices] = useState(1);
+  const [priceMap, setPriceMap] = useState<Record<number, number>>({ 1: 99, 2: 169, 3: 229, 5: 349 });
   const [extraPrice, setExtraPrice] = useState(40);
-  const [appChooser, setAppChooser] = useState(false);
-  const [linking, setLinking] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
   const [linkErr, setLinkErr] = useState("");
 
-  const pickApp = async (which: "incy" | "happ" | "other") => {
-    if (linking) return;
-    setLinking(which);
-    setLinkErr("");
-    try {
-      const res = await fetchAppLink(which);
-      openDeepLink(res);
-      setAppChooser(false);
-    } catch (e) {
-      setLinkErr(e instanceof Error ? e.message : "Не удалось получить ссылку");
-    } finally {
-      setLinking(null);
-    }
-  };
-
-  const step = Math.min(5, Math.max(1, parseInt(searchParams.get("step") || "1", 10)));
+  const step = Math.min(6, Math.max(1, parseInt(searchParams.get("step") || "1", 10)));
   const flow = (searchParams.get("flow") || "trial") as "trial" | "purchase";
   const trialUsed = searchParams.get("trialUsed") || "0";
+  const appParam = searchParams.get("app") as AppKind | null;
+  const selectedApp: AppKind | null =
+    appParam === "incy" || appParam === "happ" || appParam === "other" ? appParam : null;
 
-  const needsPaymentStep = flow === "purchase" && trialUsed === "1";
+  const needsPayment = flow === "purchase" && trialUsed === "1";
 
   useEffect(() => {
     setDevice(detectDeviceKind());
@@ -356,35 +88,31 @@ export default function GetStarted() {
         const data = await fetchPlans();
         setPriceMap(plansToPriceMap(data.plans));
         setExtraPrice(data.extra_device_price || 40);
-        const opts =
-          data.plans.length > 0
-            ? data.plans.map((p) => p.devices).sort((a, b) => a - b)
-            : [1, 2, 3, 5];
-        setDevices((prev) => (opts.includes(prev) ? prev : opts[0] ?? 1));
       } catch {
-        /* keep fallbacks */
+        /* keep */
       }
     })();
   }, []);
 
+  // Пропуск оплаты, если не нужна; без выбранного приложения — назад к выбору
   useEffect(() => {
-    if (step === 4 && !needsPaymentStep) {
-      setSearchParams(
-        { step: "3", flow, trialUsed },
-        { replace: true },
-      );
+    if (step === 4 && !needsPayment) {
+      setSearchParams({ step: "5", flow, trialUsed, ...(selectedApp ? { app: selectedApp } : {}) }, { replace: true });
     }
-  }, [step, needsPaymentStep, flow, trialUsed, setSearchParams]);
+  }, [step, needsPayment, flow, trialUsed, selectedApp, setSearchParams]);
 
-  const deviceLabel = useMemo(() => DEVICE_TITLE[device], [device]);
-
-  const installUrl = HAPP_INSTALL_URL[device];
+  useEffect(() => {
+    if ((step === 3 || step === 5) && !selectedApp) {
+      setSearchParams({ step: "2", flow, trialUsed }, { replace: true });
+    }
+  }, [step, selectedApp, flow, trialUsed, setSearchParams]);
 
   const setStep = (n: number, extra?: Record<string, string>) => {
     setSearchParams({
       step: String(n),
       flow,
       trialUsed,
+      ...(selectedApp ? { app: selectedApp } : {}),
       ...extra,
     });
   };
@@ -394,702 +122,304 @@ export default function GetStarted() {
       navigate("/");
       return;
     }
-    if (step === 5) {
-      setStep(needsPaymentStep ? 4 : 3);
+    if (step === 5 && !needsPayment) {
+      setStep(3);
       return;
     }
-    if (step === 4) {
-      setStep(3);
+    if (step === 5 && needsPayment) {
+      setStep(4);
       return;
     }
     setStep(step - 1);
   };
 
-  const logoFilter = LOGO_GLOW[step];
+  const price = estimateDevicePrice(devices, priceMap, extraPrice, 1);
+  const deviceLabel = DEVICE_TITLE[device];
+  const appTitle = selectedApp ? APP_META[selectedApp].title : "приложение";
 
-  const logo = (
-    <div
-      style={{
-        position: "absolute",
-        width: "346px",
-        height: "346px",
-        left: "28px",
-        top: "200px",
-        pointerEvents: "none",
-      }}
-    >
-      <img
-        src="/assets/logo.png"
-        width={346}
-        height={346}
-        alt=""
-        draggable={false}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "contain",
-          filter: logoFilter,
-          transition: "filter 0.4s ease",
-        }}
-      />
-    </div>
-  );
+  const addSubscription = async () => {
+    if (!selectedApp || linking) return;
+    setLinking(true);
+    setLinkErr("");
+    try {
+      const res = await fetchAppLink(selectedApp);
+      openDeepLink(res);
+    } catch (e) {
+      setLinkErr(e instanceof Error ? e.message : "Не удалось получить ссылку");
+    } finally {
+      setLinking(false);
+    }
+  };
 
-  const backBtn = (
-    <button
-      type="button"
-      onClick={goBack}
-      style={{
-        ...btnReset,
-        position: "absolute",
-        width: "37px",
-        height: "37px",
-        left: "26px",
-        top: "26px",
-        padding: 0,
-        border: "none",
-        borderRadius: "50%",
-        background: "#2A241E",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-      }}
-      aria-label="Назад"
-    >
-      <MS name="chevron_left" style={{ fontSize: 24, color: "#FFFFFF" }} />
-    </button>
-  );
+  const openInstall = () => {
+    if (!selectedApp) return;
+    const url = installUrl(selectedApp, device);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
+  };
 
-  const headerTitle = (
-    <div
-      style={{
-        position: "absolute",
-        width: "303px",
-        height: "33px",
-        left: "73px",
-        top: "28px",
-        display: "flex",
-        alignItems: "center",
-        fontWeight: 600,
-        fontSize: "27px",
-        lineHeight: "33px",
-        color: "#FFFFFF",
-      }}
-    >
-      Давайте начнём!
-    </div>
-  );
-
-  /** Иконка справа на серой кнопке «Далее» */
-  const nextRowIcon = (
-    <span style={{ position: "absolute", left: "181px", top: "13px", color: "#E3E3E3" }}>
-      <MS name="chevron_right" style={{ fontSize: 24 }} />
-    </span>
-  );
-
-  // ─── Step 1 ───────────────────────────────────────────────────────────────
+  // ─── Step 1: welcome ─────────────────────────────────────────────────────
   if (step === 1) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          boxSizing: "border-box",
-          minHeight: "100vh",
-          background: "#14110E",
-          fontFamily: "'Outfit', system-ui, sans-serif",
-        }}
-      >
-        <div style={pageShell}>
-          {backBtn}
-          <div
-            style={{
-              position: "absolute",
-              width: "280px",
-              height: "33px",
-              left: "73px",
-              top: "28px",
-              display: "flex",
-              alignItems: "center",
-              fontWeight: 600,
-              fontSize: "27px",
-              lineHeight: "33px",
-              color: "#FFFFFF",
-            }}
-          >
+      <Screen>
+        <PageHeader title="Настройка" onBack={goBack} />
+        <div style={{ textAlign: "center", marginTop: 24 }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: T.text, letterSpacing: "-0.02em" }}>
             Давайте начнём!
           </div>
-          <div
-            style={{
-              position: "absolute",
-              left: "26px",
-              right: "26px",
-              top: "87px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              textAlign: "center",
-              fontWeight: 500,
-              fontSize: "27px",
-              lineHeight: "33px",
-              color: "#FFFFFF",
-            }}
-          >
-            Настройка на {deviceLabel}
+          <div style={{ fontSize: 16, color: T.textMuted, marginTop: 10, lineHeight: 1.45 }}>
+            Настройка на {deviceLabel} займёт не больше пары минут
           </div>
-          <div
-            style={{
-              position: "absolute",
-              width: "197px",
-              height: "36px",
-              left: "102px",
-              top: "132px",
-              display: "flex",
-              alignItems: "center",
-              textAlign: "center",
-              fontWeight: 500,
-              fontSize: "15px",
-              lineHeight: "18px",
-              color: "#FFFFFF",
-              opacity: 0.5,
-            }}
-          >
-            Настройка VPN займёт не более 5 минут
-          </div>
-          {logo}
-          <div
-            style={{
-              position: "absolute",
-              width: "350px",
-              height: "135px",
-              left: "26px",
-              top: "628px",
-              background: "#2A241E",
-              borderRadius: "30px",
-            }}
+          <img
+            src="/assets/logo.png"
+            alt=""
+            draggable={false}
+            style={{ width: 180, height: 180, objectFit: "contain", margin: "36px auto 0", display: "block" }}
           />
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            style={{
-              ...btnReset,
-              position: "absolute",
-              width: "330px",
-              height: "50px",
-              left: "36px",
-              top: "642px",
-              background: "#FF6B1A",
-              borderRadius: "30px",
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            <span style={{ position: "relative", display: "block", width: "100%", height: "100%" }}>
-              <span
-                style={{
-                  position: "absolute",
-                  width: "165px",
-                  height: "21px",
-                  left: "82px",
-                  top: "14px",
-                  display: "flex",
-                  alignItems: "center",
-                  fontWeight: 600,
-                  fontSize: "17px",
-                  lineHeight: "21px",
-                  color: "#FFFFFF",
-                }}
-              >
-                Начать настройку!
-              </span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            style={{
-              ...btnReset,
-              position: "absolute",
-              width: "330px",
-              height: "50px",
-              left: "36px",
-              top: "699px",
-              background: "#352E26",
-              borderRadius: "30px",
-              border: "none",
-              cursor: "pointer",
-            }}
-          >
-            <span style={{ position: "relative", display: "block", width: "100%", height: "100%" }}>
-              <span
-                style={{
-                  position: "absolute",
-                  width: "285px",
-                  height: "21px",
-                  left: "22px",
-                  top: "14px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 600,
-                  fontSize: "17px",
-                  lineHeight: "21px",
-                  color: "#FFFFFF",
-                }}
-              >
-                Настроить на другом устройстве
-              </span>
-            </span>
-          </button>
         </div>
-      </div>
+        <div style={{ marginTop: "auto", paddingTop: 32 }}>
+          <Btn onClick={() => setStep(2)}>Начать настройку</Btn>
+        </div>
+      </Screen>
     );
   }
 
-  // ─── Step 2 — установка приложения ────────────────────────────────────────
+  // ─── Step 2: choose app ──────────────────────────────────────────────────
   if (step === 2) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-          background: "#14110E",
-          fontFamily: "'Outfit', system-ui, sans-serif",
-        }}
-      >
-        <div style={pageShell}>
-          {backBtn}
-          {headerTitle}
-          <div
-            style={{
-              position: "absolute",
-              width: "175px",
-              height: "33px",
-              left: "113px",
-              top: "87px",
-              display: "flex",
-              alignItems: "center",
-              fontWeight: 500,
-              fontSize: "27px",
-              lineHeight: "33px",
-              color: "#FFFFFF",
-            }}
-          >
-            Приложение
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              width: "236px",
-              height: "36px",
-              left: "83px",
-              top: "132px",
-              display: "flex",
-              alignItems: "center",
-              textAlign: "center",
-              fontWeight: 500,
-              fontSize: "15px",
-              lineHeight: "18px",
-              color: "#FFFFFF",
-              opacity: 0.5,
-            }}
-          >
-            Установите приложение Happ, а затем возвращайтесь
-          </div>
-          {logo}
-          <BottomCardTwoRows
-            topOrangeOnClick={() => {
-              window.open(installUrl, "_blank", "noopener,noreferrer");
-            }}
-            topOrange={
-              <>
-                <span style={{ position: "absolute", left: "45px", top: "13px", color: "#E3E3E3" }}>
-                  <MS name="download" style={{ fontSize: 24 }} />
-                </span>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "74px",
-                    top: "14px",
-                    fontWeight: 600,
-                    fontSize: "17px",
-                    lineHeight: "21px",
-                    color: "#FFFFFF",
-                  }}
-                >
-                  Установить приложение
-                </span>
-              </>
-            }
-            bottomGrayOnClick={() => setStep(3)}
-            bottomGray={
-              <>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "125px",
-                    top: "14px",
-                    fontWeight: 600,
-                    fontSize: "17px",
-                    lineHeight: "21px",
-                    color: "#FFFFFF",
-                  }}
-                >
-                  Далее
-                </span>
-                {nextRowIcon}
-              </>
-            }
-          />
+      <Screen>
+        <PageHeader title="Настройка" onBack={goBack} />
+        <div style={{ fontSize: 22, fontWeight: 600, color: T.text, marginBottom: 8 }}>Приложение</div>
+        <div style={{ fontSize: 14, color: T.textMuted, marginBottom: 20, lineHeight: 1.45 }}>
+          Выберите клиент — дальше установим его и добавим подписку
         </div>
-      </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(["incy", "happ", "other"] as const).map((app) => {
+            const m = APP_META[app];
+            const active = selectedApp === app;
+            return (
+              <button
+                key={app}
+                type="button"
+                className="blin-press"
+                onClick={() => setStep(3, { app })}
+                style={{
+                  ...btnReset,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  width: "100%",
+                  minHeight: 64,
+                  padding: "12px 16px",
+                  borderRadius: T.radius.lg,
+                  border: active || m.recommended ? `1px solid ${T.orange}` : `1px solid ${T.border}`,
+                  background: T.surface,
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <span
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: T.surfaceRaised,
+                    flexShrink: 0,
+                  }}
+                >
+                  {m.img ? (
+                    <img src={m.img} alt="" style={{ width: 40, height: 40, objectFit: "cover" }} />
+                  ) : (
+                    <MSIcon name={m.icon || "link"} style={{ color: T.text }} />
+                  )}
+                </span>
+                <span style={{ flex: 1 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 16, color: T.text }}>{m.title}</span>
+                    {m.recommended ? (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>рекомендуем</span>
+                    ) : null}
+                  </span>
+                  <span style={{ display: "block", fontSize: 12, color: T.textMuted, marginTop: 2 }}>{m.sub}</span>
+                </span>
+                <MSIcon name="chevron_right" style={{ color: T.orange }} />
+              </button>
+            );
+          })}
+        </div>
+      </Screen>
     );
   }
 
-  // ─── Step 3 — подписка в Happ ─────────────────────────────────────────────
+  // ─── Step 3: install ─────────────────────────────────────────────────────
   if (step === 3) {
+    const canInstall = selectedApp === "incy" || selectedApp === "happ";
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-          background: "#14110E",
-          fontFamily: "'Outfit', system-ui, sans-serif",
-        }}
-      >
-        <div style={pageShell}>
-          {backBtn}
-          {headerTitle}
-          <div
-            style={{
-              position: "absolute",
-              width: "138px",
-              height: "33px",
-              left: "132px",
-              top: "87px",
-              display: "flex",
-              alignItems: "center",
-              fontWeight: 500,
-              fontSize: "27px",
-              lineHeight: "33px",
-              color: "#FFFFFF",
-            }}
-          >
-            Подписка
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              width: "236px",
-              height: "36px",
-              left: "83px",
-              top: "132px",
-              display: "flex",
-              alignItems: "center",
-              textAlign: "center",
-              fontWeight: 500,
-              fontSize: "15px",
-              lineHeight: "18px",
-              color: "#FFFFFF",
-              opacity: 0.5,
-            }}
-          >
-            Добавьте подписку в Happ кнопкой ниже
-          </div>
-          {logo}
-          <BottomCardTwoRows
-            topOrangeOnClick={() => setAppChooser(true)}
-            topOrange={
-              <>
-                <span style={{ position: "absolute", left: "64px", top: "13px", color: "#E3E3E3" }}>
-                  <MS name="add" style={{ fontSize: 24 }} />
-                </span>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "93px",
-                    top: "14px",
-                    fontWeight: 600,
-                    fontSize: "17px",
-                    lineHeight: "21px",
-                    color: "#FFFFFF",
-                  }}
-                >
-                  Добавить подписку
-                </span>
-              </>
-            }
-            bottomGrayOnClick={() => {
-              if (needsPaymentStep) setStep(4);
-              else setStep(5);
-            }}
-            bottomGray={
-              <>
-                <span
-                  style={{
-                    position: "absolute",
-                    left: "125px",
-                    top: "14px",
-                    fontWeight: 600,
-                    fontSize: "17px",
-                    lineHeight: "21px",
-                    color: "#FFFFFF",
-                  }}
-                >
-                  Далее
-                </span>
-                {nextRowIcon}
-              </>
-            }
-          />
-          {appChooser && (
-            <AppChooser
-              linking={linking}
-              error={linkErr}
-              onPick={pickApp}
-              onClose={() => { setAppChooser(false); setLinkErr(""); }}
-            />
-          )}
+      <Screen>
+        <PageHeader title="Настройка" onBack={goBack} />
+        <div style={{ fontSize: 22, fontWeight: 600, color: T.text, marginBottom: 8 }}>Установка</div>
+        <div style={{ fontSize: 14, color: T.textMuted, marginBottom: 20, lineHeight: 1.45 }}>
+          {canInstall
+            ? `Установите ${appTitle} на ${deviceLabel}, затем нажмите «Далее»`
+            : "Установите любое VPN-приложение с поддержкой подписки, затем нажмите «Далее»"}
         </div>
-      </div>
+        <img
+          src="/assets/logo.png"
+          alt=""
+          draggable={false}
+          style={{ width: 160, height: 160, objectFit: "contain", margin: "12px auto", display: "block", opacity: 0.9 }}
+        />
+        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 10, paddingTop: 24 }}>
+          {canInstall ? (
+            <Btn onClick={openInstall}>Скачать {appTitle}</Btn>
+          ) : null}
+          <Btn
+            variant={canInstall ? "secondary" : "primary"}
+            onClick={() => setStep(needsPayment ? 4 : 5)}
+          >
+            Далее
+          </Btn>
+        </div>
+      </Screen>
     );
   }
 
-  // ─── Step 4 — оплата (только purchase + уже был триал) ───────────────────
-  const step4Price = estimateDevicePrice(devices, priceMap, extraPrice, 1);
-
+  // ─── Step 4: payment (purchase only) ─────────────────────────────────────
   if (step === 4) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100vh",
-          background: "#14110E",
-          fontFamily: "'Outfit', system-ui, sans-serif",
-        }}
-      >
-        <div style={pageShell}>
-          {backBtn}
-          {headerTitle}
-          <div
-            style={{
-              position: "absolute",
-              left: "73px",
-              top: "87px",
-              fontWeight: 500,
-              fontSize: "27px",
-              lineHeight: "33px",
-              color: "#FFFFFF",
-            }}
-          >
-            Оплата
+      <Screen>
+        <PageHeader title="Настройка" onBack={goBack} />
+        <div style={{ textAlign: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 22, fontWeight: 600, color: T.text }}>Оплата</div>
+          <div style={{ fontSize: 14, color: T.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+            Оформите подписку — после оплаты добавим её в приложение
           </div>
-          <div
-            style={{
-              position: "absolute",
-              width: "293px",
-              left: "54px",
-              top: "132px",
-              textAlign: "center",
-              fontWeight: 500,
-              fontSize: "15px",
-              lineHeight: "18px",
-              color: "#FFFFFF",
-              opacity: 0.5,
-            }}
-          >
-            Вы уже использовали пробный период, оплатите для использования
-          </div>
-          {logo}
+        </div>
 
-          {/* Карточка с пилюлями и суммой */}
+        <Surface padded style={{ marginTop: 20 }}>
+          <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Количество устройств</div>
           <div
             style={{
-              position: "absolute",
-              left: "26px",
-              top: "570px",
-              width: "350px",
-              background: "#2A241E",
-              borderRadius: "30px",
-              padding: "18px 20px 20px",
-              boxSizing: "border-box",
-              display: "flex",
-              flexDirection: "column",
-              gap: "14px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                color: "#FFFFFF",
-                opacity: 0.53,
-              }}
-            >
-              Устройств в подписке:
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                background: "#352E26",
-                borderRadius: 22,
-                padding: "8px 10px",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setDevices((v) => Math.max(1, v - 1))}
-                style={{
-                  ...btnReset,
-                  width: 40,
-                  height: 40,
-                  borderRadius: 12,
-                  background: "#2A241E",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <MS name="remove" style={{ color: "#E3E3E3" }} />
-              </button>
-              <div style={{ flex: 1, textAlign: "center", color: "#fff", fontWeight: 600, fontSize: 17 }}>
-                {devices} {deviceWord(devices)} · {step4Price} ₽
-              </div>
-              <button
-                type="button"
-                onClick={() => setDevices((v) => Math.min(15, v + 1))}
-                style={{
-                  ...btnReset,
-                  width: 40,
-                  height: 40,
-                  borderRadius: 12,
-                  background: "#2A241E",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <MS name="add" style={{ color: "#E3E3E3" }} />
-              </button>
-            </div>
-          </div>
-
-          {/* Кнопка оплаты */}
-          <button
-            type="button"
-            onClick={() => navigate(`/payment?devices=${devices}`)}
-            style={{
-              position: "absolute",
-              width: "330px",
-              height: "50px",
-              left: "36px",
-              top: "717px",
-              background: "#FF6B1A",
-              borderRadius: "30px",
-              border: "none",
-              padding: 0,
-              cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
+              gap: 12,
+              background: T.surfaceRaised,
+              borderRadius: T.radius.lg,
+              padding: "10px 12px",
             }}
           >
-            <span style={{ fontSize: "17px", fontWeight: 600, color: "#FFFFFF" }}>
-              Оплатить {step4Price} ₽
-            </span>
-            <MS name="chevron_right" style={{ fontSize: 22, color: "#E3E3E3" }} />
-          </button>
+            <button
+              type="button"
+              aria-label="Меньше"
+              className="blin-press"
+              onClick={() => setDevices((v) => Math.max(1, v - 1))}
+              style={{
+                ...btnReset,
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <MSIcon name="remove" style={{ color: T.text }} />
+            </button>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 18, fontWeight: 600, color: T.text }}>
+                {devices} {deviceWord(devices)}
+              </div>
+              <div style={{ fontSize: 13, color: T.orange, marginTop: 2 }}>{price} ₽ / мес</div>
+            </div>
+            <button
+              type="button"
+              aria-label="Больше"
+              className="blin-press"
+              onClick={() => setDevices((v) => Math.min(MAX_DEVICES, v + 1))}
+              style={{
+                ...btnReset,
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <MSIcon name="add" style={{ color: T.text }} />
+            </button>
+          </div>
+        </Surface>
+
+        <div style={{ marginTop: "auto", paddingTop: 24 }}>
+          <Btn
+            onClick={() => {
+              const ret = encodeURIComponent(
+                `/subscription/start?step=5&flow=${flow}&trialUsed=${trialUsed}${selectedApp ? `&app=${selectedApp}` : ""}`,
+              );
+              navigate(`/payment?devices=${devices}&return=${ret}`);
+            }}
+          >
+            Оплатить {price} ₽
+          </Btn>
         </div>
-      </div>
+      </Screen>
     );
   }
 
-  // ─── Step 5 — готово ─────────────────────────────────────────────────────
+  // ─── Step 5: add subscription (no app picker) ─────────────────────────────
+  if (step === 5) {
+    return (
+      <Screen>
+        <PageHeader title="Настройка" onBack={goBack} />
+        <div style={{ fontSize: 22, fontWeight: 600, color: T.text, marginBottom: 8 }}>Подписка</div>
+        <div style={{ fontSize: 14, color: T.textMuted, marginBottom: 20, lineHeight: 1.45 }}>
+          Добавьте подписку в {appTitle} одной кнопкой
+        </div>
+        <img
+          src="/assets/logo.png"
+          alt=""
+          draggable={false}
+          style={{ width: 160, height: 160, objectFit: "contain", margin: "12px auto", display: "block", opacity: 0.9 }}
+        />
+        {linkErr ? (
+          <div style={{ color: T.danger, fontSize: 13, textAlign: "center", marginTop: 12 }}>{linkErr}</div>
+        ) : null}
+        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 10, paddingTop: 24 }}>
+          <Btn disabled={linking || !selectedApp} onClick={() => void addSubscription()}>
+            {linking ? "Открываем…" : "Добавить подписку"}
+          </Btn>
+          <Btn variant="secondary" onClick={() => setStep(6)}>
+            Далее
+          </Btn>
+        </div>
+      </Screen>
+    );
+  }
+
+  // ─── Step 6: done ────────────────────────────────────────────────────────
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "#14110E",
-        fontFamily: "'Outfit', system-ui, sans-serif",
-      }}
-    >
-      <div style={pageShell}>
-        {backBtn}
-        {headerTitle}
-        <div
-          style={{
-            position: "absolute",
-            width: "104px",
-            height: "33px",
-            left: "149px",
-            top: "87px",
-            display: "flex",
-            alignItems: "center",
-            fontWeight: 500,
-            fontSize: "27px",
-            lineHeight: "33px",
-            color: "#FFFFFF",
-          }}
-        >
-          Готово!
+    <Screen>
+      <PageHeader title="Настройка" onBack={() => navigate("/")} />
+      <div style={{ textAlign: "center", marginTop: 48 }}>
+        <MSIcon name="check_circle" style={{ fontSize: 64, color: T.orange }} />
+        <div style={{ fontSize: 22, fontWeight: 600, color: T.text, marginTop: 16 }}>Готово!</div>
+        <div style={{ fontSize: 14, color: T.textMuted, marginTop: 8, lineHeight: 1.45 }}>
+          Подписка настроена. Можно пользоваться VPN.
         </div>
-        <div
-          style={{
-            position: "absolute",
-            width: "293px",
-            height: "36px",
-            left: "54px",
-            top: "132px",
-            display: "flex",
-            alignItems: "center",
-            textAlign: "center",
-            fontWeight: 500,
-            fontSize: "15px",
-            lineHeight: "18px",
-            color: "#FFFFFF",
-            opacity: 0.5,
-          }}
-        >
-          Вы успешно подключили и запустили VPN. Приятного пользования!
-        </div>
-        {logo}
-        <BottomCardOneRow onClick={() => navigate("/")}>
-          <span
-            style={{
-              position: "absolute",
-              width: "189px",
-              height: "21px",
-              left: "70px",
-              top: "14px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 600,
-              fontSize: "17px",
-              lineHeight: "21px",
-              color: "#FFFFFF",
-            }}
-          >
-            Завершить настройку
-          </span>
-        </BottomCardOneRow>
       </div>
-    </div>
+      <div style={{ marginTop: "auto", paddingTop: 32 }}>
+        <Btn onClick={() => navigate("/", { replace: true })}>На главную</Btn>
+      </div>
+    </Screen>
   );
 }

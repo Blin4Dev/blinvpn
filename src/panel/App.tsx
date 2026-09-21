@@ -200,7 +200,7 @@ interface User {
   id: number; telegramId: number; username: string; balance: number; status: UserStatus;
   regDate: string; paidUntil: string; refCode: string; isPartner: boolean;
   partnerBalance: number; partnerRate: number;
-  referrals: number; inBlacklist: boolean;
+  referrals: number; inBlacklist: boolean; revenue: number;
 }
 
 interface KeyItem {
@@ -527,6 +527,7 @@ function mapApiUser(u: any): User {
     partnerRate: u.partner_rate ?? 25,
     referrals: u.referrals ?? 0,
     inBlacklist: !!u.in_blacklist,
+    revenue: Number(u.revenue ?? 0),
   };
 }
 
@@ -1121,15 +1122,16 @@ const UsersPage: React.FC<{
       <div className="tbl-wrap">
         <div style={{ overflowX: 'auto' }}>
           <table className="tbl">
-            <thead><tr><th>Пользователь</th><th>Баланс</th><th>Подписка</th><th>Статус</th><th style={{ textAlign: 'right' }}></th></tr></thead>
+            <thead><tr><th>Пользователь</th><th>Принёс</th><th>Баланс</th><th>Подписка</th><th>Статус</th><th style={{ textAlign: 'right' }}></th></tr></thead>
             <tbody>
-              {loading && users.length === 0 ? <tr className="empty-row"><td colSpan={5}><Spinner size={18} className="inline-block mr-2" />Загрузка…</td></tr>
-                : users.length === 0 ? <tr className="empty-row"><td colSpan={5}>Ничего не найдено</td></tr>
+              {loading && users.length === 0 ? <tr className="empty-row"><td colSpan={6}><Spinner size={18} className="inline-block mr-2" />Загрузка…</td></tr>
+                : users.length === 0 ? <tr className="empty-row"><td colSpan={6}>Ничего не найдено</td></tr>
                 : users.map((user: User) => {
                     const st = userStatusBadge(user.status, user.inBlacklist);
                     return (
                       <tr key={user.id} className="click" onClick={() => setSelectedUser(user)}>
                         <td><span className="flex items-center gap-3"><span className="avatar" style={{ width: 32, height: 32, fontSize: 12 }}>{user.username.replace('@', '').slice(0, 2).toUpperCase()}</span><span style={{ fontWeight: 500 }}>{user.username}</span></span></td>
+                        <td style={{ fontWeight: 600 }}>{fmtMoney(user.revenue || 0)}</td>
                         <td style={{ fontWeight: 600 }}>{user.balance} ₽</td>
                         <td className="muted">{user.paidUntil}</td>
                         <td><span className={`badge ${st.cls}`}>{st.label}</span>{user.isPartner && <span className="badge mute" style={{ marginLeft: 6 }}>Партнёр</span>}</td>
