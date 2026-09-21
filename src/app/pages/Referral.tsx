@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BackCircleButton, MSIcon } from "../components/ui";
+import { MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, requestWithdraw } from "../utils/api";
 
@@ -13,6 +13,7 @@ type ReferralData = {
   partner_rate?: number;
   referrals_count?: number;
   referrals?: RefUser[];
+  min_withdraw?: number;
 };
 
 const MIN_WITHDRAW = 100;
@@ -20,7 +21,7 @@ const MIN_WITHDRAW = 100;
 export default function Referral() {
   const goBack = useSmartBack("/");
   const [data, setData] = useState<ReferralData | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"" | "tg" | "web">("");
 
   // Вывод средств
   const [sheet, setSheet] = useState(false);
@@ -43,9 +44,13 @@ export default function Referral() {
   const hasReferrals = (data?.referrals_count || 0) > 0;
   const balance = Number(data?.partner_balance || 0);
   const count = Number(data?.referrals_count || 0);
-  const rate = Number(data?.partner_rate || 20);
   const refs = data?.referrals || [];
-  const minWithdraw = Number((data as { min_withdraw?: number } | null)?.min_withdraw || MIN_WITHDRAW);
+  const minWithdraw = Number(data?.min_withdraw || MIN_WITHDRAW);
+  const code = data?.code || "";
+
+  const tgLink = data?.link || "";
+  // «Ссылка для сайта» — публичный веб-адрес приложения с реф-кодом.
+  const webLink = code ? `${window.location.origin}/?ref=${code}` : "";
 
   const openSheet = () => {
     setWErr(""); setWOk(false);
@@ -75,399 +80,178 @@ export default function Referral() {
     }
   };
 
-  const copyLink = async () => {
-    const link = data?.link || "";
-    if (!link) return;
+  const copy = async (text: string, which: "tg" | "web") => {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
-    }
+      await navigator.clipboard.writeText(text);
+      setCopied(which);
+      setTimeout(() => setCopied(""), 1800);
+    } catch { /* ignore */ }
   };
+
+  const card: React.CSSProperties = { background: "#2E2E2E", borderRadius: 24 };
+  const caption: React.CSSProperties = { fontWeight: 600, fontSize: 13, color: "#7D7D7D", margin: "18px 8px 8px" };
+
+  const LinkField = ({ label, url, which }: { label: string; url: string; which: "tg" | "web" }) => (
+    <div style={{ padding: "14px 16px", borderBottom: which === "tg" && webLink ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+      <div style={{ fontWeight: 600, fontSize: 13, color: "#7D7D7D", marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+          style={{
+            flex: 1, minWidth: 0, background: "#1E1E1E", borderRadius: 12, padding: "11px 14px",
+            color: "#E3E3E3", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}
+        >
+          {url || "—"}
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy(url, which)}
+          style={{
+            flex: "0 0 auto", height: 40, padding: "0 16px", borderRadius: 12, border: "none",
+            background: copied === which ? "#3D8B4E" : "#F18726", color: "#fff", fontWeight: 600,
+            fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+          }}
+        >
+          <MSIcon name={copied === which ? "check" : "content_copy"} style={{ color: "#fff", fontSize: 18 }} />
+          {copied === which ? "Скоп." : "Копир."}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div
       style={{
+        minHeight: "100vh",
+        background: "#212121",
+        fontFamily: "'Inter', sans-serif",
         display: "flex",
         justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
       }}
     >
       <div
         style={{
-          position: "relative",
-          width: "402px",
-          height: "803px",
-          background: "#212121",
-          overflow: "hidden",
+          width: "100%",
+          maxWidth: 402,
+          minHeight: "100vh",
+          padding: "20px 20px 32px",
           boxSizing: "border-box",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
-        <BackCircleButton onClick={goBack} />
-
-        <div
-          style={{
-            position: "absolute",
-            width: "280px",
-            height: "33px",
-            left: "73px",
-            top: "28px",
-            fontWeight: 600,
-            fontSize: "27px",
-            lineHeight: "33px",
-            display: "flex",
-            alignItems: "center",
-            color: "#FFFFFF",
-          }}
-        >
-          Друзья
-        </div>
-
-        <div
-          style={{
-            position: "absolute",
-            width: "350px",
-            height: "139px",
-            left: "26px",
-            top: "87px",
-            background: "#333333",
-            borderRadius: "30px",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            width: "56px",
-            height: "56px",
-            left: "42px",
-            top: "103px",
-            background: "#484848",
-            borderRadius: "12px",
-          }}
-        />
-        <MSIcon
-          name="group"
-          style={{
-            position: "absolute",
-            width: "36px",
-            height: "36px",
-            left: "52px",
-            top: "113px",
-            opacity: 0.5,
-            color: "#FFFFFF",
-            fontSize: 36,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "108px",
-            top: "119px",
-            fontWeight: 600,
-            fontSize: "20px",
-            lineHeight: "24px",
-            color: "#FFFFFF",
-          }}
-        >
-          Друзья
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            width: "310px",
-            left: "42px",
-            top: "169px",
-            fontWeight: 500,
-            fontSize: "13px",
-            lineHeight: "16px",
-            color: "#FFFFFF",
-            opacity: 0.53,
-          }}
-        >
-          Приглашайте друзей и зарабатывайте. Комиссия: {rate}%
-        </div>
-
-        <button
-          type="button"
-          onClick={() => void copyLink()}
-          style={{
-            position: "absolute",
-            left: "250px",
-            top: "103px",
-            height: "36px",
-            padding: "0 12px",
-            background: "#484848",
-            borderRadius: "12px",
-            border: "none",
-            color: "#FFFFFF",
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-            zIndex: 2,
-          }}
-        >
-          {copied ? "OK" : "Ссылка"}
-        </button>
-
-        <div
-          onClick={openSheet}
-          style={{
-            position: "absolute",
-            width: "170px",
-            height: "93px",
-            left: "26px",
-            top: "236px",
-            background: "#333333",
-            borderRadius: "30px",
-            cursor: "pointer",
-          }}
-        />
-        <MSIcon
-          name="arrow_outward"
-          onClick={openSheet}
-          style={{
-            position: "absolute",
-            left: "158px",
-            top: "246px",
-            fontSize: 22,
-            color: "#F18726",
-            cursor: "pointer",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            width: "170px",
-            height: "93px",
-            left: "206px",
-            top: "236px",
-            background: "#333333",
-            borderRadius: "30px",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: "42px",
-            top: "252px",
-            fontWeight: 500,
-            fontSize: "28px",
-            lineHeight: "34px",
-            color: "#FFFFFF",
-          }}
-        >
-          {balance} ₽
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            left: "222px",
-            top: "252px",
-            fontWeight: 500,
-            fontSize: "28px",
-            lineHeight: "34px",
-            color: "#FFFFFF",
-          }}
-        >
-          {count} чел
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            left: "42px",
-            top: "297px",
-            fontWeight: 500,
-            fontSize: "13px",
-            color: "#FFFFFF",
-            opacity: 0.53,
-          }}
-        >
-          Заработано
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            left: "222px",
-            top: "297px",
-            fontWeight: 500,
-            fontSize: "13px",
-            color: "#FFFFFF",
-            opacity: 0.53,
-          }}
-        >
-          Приглашено
-        </div>
-
-        <MSIcon
-          name="info"
-          style={{
-            position: "absolute",
-            left: "26px",
-            top: "339px",
-            opacity: 0.53,
-            color: "#E3E3E3",
-            fontSize: 24,
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            width: "320px",
-            left: "56px",
-            top: "339px",
-            fontWeight: 500,
-            fontSize: "13px",
-            lineHeight: "16px",
-            color: "#FFFFFF",
-            opacity: 0.53,
-          }}
-        >
-          Вы получаете {rate}% от каждой траты своего приглашённого. Нажмите на баланс, чтобы вывести (USDT TON).
-          {copied ? " Ссылка скопирована." : data?.code ? ` Код: ${data.code}` : ""}
-        </div>
-
-        <div
-          style={{
-            position: "absolute",
-            width: "350px",
-            height: hasReferrals ? "381px" : "139px",
-            left: "26px",
-            top: "402px",
-            background: "#333333",
-            borderRadius: "30px",
-          }}
-        />
-
-        {hasReferrals ? (
-          <div
+        {/* Шапка */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+          <button
+            type="button"
+            onClick={goBack}
+            aria-label="Назад"
             style={{
-              position: "absolute",
-              width: "338px",
-              height: "361px",
-              left: "36px",
-              top: "412px",
-              overflowY: "auto",
-              WebkitOverflowScrolling: "touch",
-              overscrollBehavior: "contain",
-              paddingRight: "8px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "6px",
+              flex: "0 0 auto", width: 40, height: 40, borderRadius: "50%",
+              background: "#313131", border: "none", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
-            {refs.map((u) => {
-              const label = u.name
-                || (u.username ? `@${u.username}` : u.telegram_id ? `id${u.telegram_id}` : `Пользователь #${u.id}`);
-              const initial = (u.initial || label.replace(/^[@#]/, "").charAt(0) || "?").toUpperCase();
-              return (
-                <div
-                  key={u.id}
-                  style={{
-                    position: "relative",
-                    width: "330px",
-                    height: "68px",
-                    flexShrink: 0,
-                    background: "#3D3D3D",
-                    borderRadius: "30px",
-                  }}
-                >
-                  <div
-                    style={{
-                      position: "absolute",
-                      width: "34px",
-                      height: "34px",
-                      left: "12px",
-                      top: "17px",
-                      borderRadius: "50%",
-                      background:
-                        "radial-gradient(circle at 35% 30%, #ffb879 0%, #f18726 45%, #8e4f12 100%)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "#fff",
-                      fontWeight: 700,
-                      fontSize: "16px",
-                    }}
-                  >
-                    {initial}
-                  </div>
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: "56px",
-                      top: "24px",
-                      right: "16px",
-                      fontWeight: 600,
-                      fontSize: "16px",
-                      color: "#FFFFFF",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {label}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <>
-            <MSIcon
-              name="link"
-              style={{
-                position: "absolute",
-                left: "189px",
-                top: "448px",
-                color: "#E3E3E3",
-                fontSize: 24,
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                left: "56px",
-                right: "56px",
-                top: "486px",
-                textAlign: "center",
-                fontWeight: 500,
-                fontSize: "13px",
-                color: "#FFFFFF",
-                opacity: 0.53,
-              }}
-            >
-              Пока нет приглашённых. Нажмите «Ссылка», чтобы скопировать приглашение.
+            <MSIcon name="chevron_left" style={{ color: "#FFFFFF", fontSize: 24 }} />
+          </button>
+          <div style={{ fontWeight: 700, fontSize: 26, color: "#FFFFFF" }}>Друзья</div>
+        </div>
+
+        {/* Баланс / статистика */}
+        <div style={{ ...card, padding: 18 }}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFFFFF" }}>{balance} ₽</div>
+              <div style={{ fontWeight: 500, fontSize: 13, color: "#7D7D7D", marginTop: 2 }}>Заработано</div>
             </div>
-          </>
-        )}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFFFFF" }}>{count} чел</div>
+              <div style={{ fontWeight: 500, fontSize: 13, color: "#7D7D7D", marginTop: 2 }}>Приглашено</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={openSheet}
+            style={{
+              width: "100%", marginTop: 16, height: 46, borderRadius: 14, border: "none",
+              background: "#3D3D3D", color: "#FFFFFF", fontWeight: 600, fontSize: 15, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}
+          >
+            <MSIcon name="arrow_outward" style={{ color: "#F18726", fontSize: 20 }} />
+            Вывести (USDT TON)
+          </button>
+        </div>
+
+        {/* Ссылки для приглашения */}
+        <div style={caption}>Ваши ссылки</div>
+        <div style={card}>
+          <LinkField label="Ссылка Telegram" url={tgLink} which="tg" />
+          {webLink && <LinkField label="Ссылка для сайта" url={webLink} which="web" />}
+        </div>
+
+        {/* Приглашённые */}
+        <div style={caption}>Приглашённые</div>
+        <div style={{ ...card, padding: hasReferrals ? 10 : 24, flex: hasReferrals ? "0 0 auto" : "1 0 auto" }}>
+          {hasReferrals ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {refs.map((u) => {
+                const label = u.name
+                  || (u.username ? `@${u.username}` : u.telegram_id ? `id${u.telegram_id}` : `Пользователь #${u.id}`);
+                const initial = (u.initial || label.replace(/^[@#]/, "").charAt(0) || "?").toUpperCase();
+                return (
+                  <div
+                    key={u.id}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      background: "#3D3D3D", borderRadius: 16, padding: "12px 14px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        flex: "0 0 auto", width: 34, height: 34, borderRadius: "50%",
+                        background: "radial-gradient(circle at 35% 30%, #ffb879 0%, #f18726 45%, #8e4f12 100%)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        color: "#fff", fontWeight: 700, fontSize: 15,
+                      }}
+                    >
+                      {initial}
+                    </div>
+                    <div style={{ minWidth: 0, fontWeight: 600, fontSize: 15, color: "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12, padding: "24px 8px" }}>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#3D3D3D", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <MSIcon name="group_add" style={{ color: "#7D7D7D", fontSize: 30 }} />
+              </div>
+              <div style={{ fontWeight: 600, fontSize: 16, color: "#FFFFFF" }}>Пока нет приглашённых</div>
+              <div style={{ fontSize: 14, color: "#7D7D7D", maxWidth: 260, lineHeight: "20px" }}>
+                Отправьте свою ссылку друзьям — за их покупки вы получаете вознаграждение.
+              </div>
+            </div>
+          )}
+        </div>
 
         {sheet && (
           <div
             onClick={() => !submitting && setSheet(false)}
             style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(0,0,0,0.55)",
-              display: "flex",
-              alignItems: "flex-end",
-              zIndex: 50,
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+              display: "flex", alignItems: "flex-end", zIndex: 50,
             }}
           >
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
-                width: "100%",
-                background: "#212121",
-                borderTopLeftRadius: 28,
-                borderTopRightRadius: 28,
-                padding: "22px 24px 28px",
-                boxSizing: "border-box",
-                borderTop: "1px solid #333",
+                width: "100%", maxWidth: 402, margin: "0 auto", background: "#212121",
+                borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "22px 24px 28px",
+                boxSizing: "border-box", borderTop: "1px solid #333",
               }}
             >
               <div style={{ width: 44, height: 5, borderRadius: 3, background: "#444", margin: "0 auto 18px" }} />

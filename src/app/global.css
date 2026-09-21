@@ -27,26 +27,38 @@ html, body {
   margin: 0;
   padding: 0;
   width: 100%;
-  min-height: 100%;
-  background: #111;
-  overflow-x: hidden;
+  height: 100%;
+  background: #212121;              /* цвет «экрана» — без видимого шва по краям */
+  overflow: hidden;                 /* нельзя утащить интерфейс за пределы экрана */
+  overscroll-behavior: none;
+}
+
+/* Кнопки/поля НЕ наследуют шрифт по умолчанию — принудительно ставим Inter. */
+button, input, textarea, select {
+  font-family: 'Inter', sans-serif;
+}
+input::placeholder, textarea::placeholder {
+  color: #6E6E6E;
+  opacity: 1;
 }
 
 /*
- * Макет мини-приложения свёрстан под ширину 402px. Чтобы он аккуратно
- * вписывался в ЛЮБОЙ экран телефона (не «уезжал», без горизонтального скролла,
- * с точным попаданием по кнопкам), масштабируем весь #root так, чтобы 402px
- * заняли всю доступную ширину. Значение --blin-scale выставляет JS по ширине
- * окна (см. initStageScale в utils/telegram.ts).
+ * Макет свёрстан под ширину 402px. Масштабируем весь #root так, чтобы 402px
+ * заняли всю ширину экрана телефона: интерфейс вписывается целиком, без
+ * горизонтального скролла, кнопки попадают точно, привязка — к ВЕРХУ экрана.
+ * --blin-scale выставляет JS по ширине окна (initStageScale в utils/telegram.ts).
+ * padding-top учитывает «чёлку» в полноэкранном режиме Telegram.
  */
 :root { --blin-scale: 1; }
 #root {
   margin: 0;
-  background: #111;
+  background: #212121;
   transform: scale(var(--blin-scale));
   transform-origin: top left;
   width: calc(100% / var(--blin-scale));
-  min-height: calc(100vh / var(--blin-scale));
+  height: calc((100% - env(safe-area-inset-top, 0px)) / var(--blin-scale));
+  margin-top: env(safe-area-inset-top, 0px);
+  overflow: hidden;
 }
 
 * {

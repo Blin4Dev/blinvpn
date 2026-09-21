@@ -91,7 +91,7 @@ function AnimatedLayout() {
       style={{
         minHeight: "100vh",
         overflow: "clip",
-        background: "#111",
+        background: "#212121",
         isolation: "isolate",
       }}
     >

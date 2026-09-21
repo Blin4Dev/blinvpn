@@ -38,6 +38,19 @@ const SettingsIcon = () => (
   </svg>
 );
 
+const ClockIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10"/>
+    <polyline points="12 6 12 12 16 14"/>
+  </svg>
+);
+
+const MessageIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+  </svg>
+);
+
 // Логотип BlinVPN (PNG)
 const BlinVPNLogo = () => (
   <img
@@ -207,9 +220,9 @@ const S = {
   wrapper: {
     display: "flex",
     justifyContent: "center",
-    alignItems: "center",
+    alignItems: "flex-start",
     minHeight: "100vh",
-    background: "#111",
+    background: "#212121",
     fontFamily: "'Inter', sans-serif",
   } as React.CSSProperties,
   greetingName: {
@@ -262,6 +275,7 @@ export default function BlinVPNApp() {
   const [discount, setDiscount] = useState(0);
   const [trialEnabled, setTrialEnabled] = useState(true);
   const [trialBusy, setTrialBusy] = useState(false);
+  const [supportUrl, setSupportUrl] = useState("https://t.me/blinteams");
 
   const cfg = STATE_CONFIGS[subscriptionState];
   const blocked = subscriptionState === "blocked";
@@ -315,6 +329,7 @@ export default function BlinVPNApp() {
       try {
         const conf = await fetchConfig();
         if (conf && typeof conf.trialEnabled === "boolean") setTrialEnabled(conf.trialEnabled);
+        if (conf && typeof conf.supportUrl === "string" && conf.supportUrl) setSupportUrl(conf.supportUrl as string);
       } catch {
         /* по умолчанию пробный включён */
       }
@@ -367,12 +382,9 @@ export default function BlinVPNApp() {
       width: "402px",
       height: "803px",
       background: "#212121",
-      borderRadius: "40px",
       overflow: "hidden",
-      boxShadow: "0 30px 80px rgba(0,0,0,0.7)",
       opacity: visible ? 1 : 0,
-      transform: visible ? "translateY(0) scale(1)" : "translateY(30px) scale(0.96)",
-      transition: "opacity 0.6s ease, transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
+      transition: "opacity 0.5s ease",
     },
 
     // Шапка
@@ -424,7 +436,7 @@ export default function BlinVPNApp() {
     subSection: {
       position: "absolute",
       left: "26px",
-      top: "478px",
+      top: "420px",
       opacity: visible ? 1 : 0,
       transform: visible ? "translateY(0)" : "translateY(15px)",
       transition: "opacity 0.5s ease 0.35s, transform 0.5s ease 0.35s",
@@ -448,7 +460,7 @@ export default function BlinVPNApp() {
       width: "52px",
       height: "52px",
       right: "26px",
-      top: "478px",
+      top: "420px",
       background: "#313131",
       borderRadius: "15px",
       display: "flex",
@@ -515,15 +527,15 @@ export default function BlinVPNApp() {
         <button
           type="button"
           style={{ ...styles.clockBtn, opacity: blocked ? 0.4 : styles.clockBtn.opacity, cursor: blocked ? "not-allowed" : "pointer" }}
-          onClick={() => { if (!blocked) navigate("/settings"); }}
+          onClick={() => { if (!blocked) navigate("/history"); }}
           disabled={blocked}
-          aria-label="Настройки"
+          aria-label="История"
         >
-          <SettingsIcon />
+          <ClockIcon />
         </button>
 
         {/* Основная кнопка */}
-        <div style={styles.btnRow(550, 0.45)}>
+        <div style={styles.btnRow(492, 0.45)}>
           <button
             type="button"
             style={{ ...styles.btnFull, opacity: blocked || trialBusy ? 0.4 : 1, cursor: blocked ? "not-allowed" : "pointer" }}
@@ -541,8 +553,8 @@ export default function BlinVPNApp() {
           </button>
         </div>
 
-        {/* Друзья + промокоды */}
-        <div style={styles.btnRow(608, 0.5)}>
+        {/* Реф. Система + Промокоды */}
+        <div style={styles.btnRow(550, 0.5)}>
           <div style={S.rowPair}>
             <button
               type="button"
@@ -551,7 +563,7 @@ export default function BlinVPNApp() {
               disabled={blocked}
             >
               <UsersIcon />
-              <span style={S.btnLabelSm}>Друзья</span>
+              <span style={S.btnLabelSm}>Реф. Система</span>
             </button>
             <button
               type="button"
@@ -561,6 +573,30 @@ export default function BlinVPNApp() {
             >
               <GiftIcon />
               <span style={S.btnLabelSm}>Промокоды</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Настройки + Поддержка */}
+        <div style={styles.btnRow(608, 0.55)}>
+          <div style={S.rowPair}>
+            <button
+              type="button"
+              style={{ ...S.btnHalf, opacity: blocked ? 0.4 : 1, cursor: blocked ? "not-allowed" : "pointer" }}
+              onClick={() => { if (!blocked) navigate("/settings"); }}
+              disabled={blocked}
+            >
+              <SettingsIcon />
+              <span style={S.btnLabelSm}>Настройки</span>
+            </button>
+            <button
+              type="button"
+              style={{ ...S.btnHalf, opacity: blocked ? 0.4 : 1, cursor: blocked ? "not-allowed" : "pointer" }}
+              onClick={() => { if (!blocked) window.open(supportUrl, "_blank", "noopener,noreferrer"); }}
+              disabled={blocked}
+            >
+              <MessageIcon />
+              <span style={S.btnLabelSm}>Поддержка</span>
             </button>
           </div>
         </div>

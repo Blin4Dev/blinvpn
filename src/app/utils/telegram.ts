@@ -83,19 +83,25 @@ export function initTelegramViewport(): void {
   if (!tg) return;
 
   try { tg.ready?.(); } catch { /* noop */ }
-  // Разворачиваем на всю высоту (fullsize). НЕ используем requestFullscreen:
-  // edge-to-edge режим заводит контент под чёлку/статус-бар и системные кнопки
-  // Telegram, из-за чего вёрстка «съезжает» сверху. expand() оставляет обычную
-  // безопасную область с шапкой Telegram.
   try { tg.expand?.(); } catch { /* noop */ }
 
   // Цвета шапки/фона под тёмную тему приложения.
-  try { tg.setBackgroundColor?.("#111111"); } catch { /* noop */ }
-  try { tg.setHeaderColor?.("#111111"); } catch { /* noop */ }
+  try { tg.setBackgroundColor?.("#212121"); } catch { /* noop */ }
+  try { tg.setHeaderColor?.("#212121"); } catch { /* noop */ }
 
   const platform = String(tg.platform || "").toLowerCase();
   const isMobile = MOBILE_PLATFORMS.has(platform);
   if (isMobile) {
+    // Полноэкранный режим на телефоне (Bot API 8.0+). «Чёлку» учитывает
+    // padding-top: env(safe-area-inset-top) в global.css, поэтому контент не
+    // залезает под статус-бар. Если клиент не умеет fullscreen — expand().
+    const canFullscreen =
+      typeof tg.requestFullscreen === "function" &&
+      (typeof tg.isVersionAtLeast !== "function" || tg.isVersionAtLeast("8.0"));
+    if (canFullscreen) {
+      try { tg.onEvent?.("fullscreenFailed", () => { try { tg.expand?.(); } catch { /* noop */ } }); } catch { /* noop */ }
+      try { if (!tg.isFullscreen) tg.requestFullscreen?.(); } catch { try { tg.expand?.(); } catch { /* noop */ } }
+    }
     // Отключаем свайп-вниз, чтобы приложение не закрывалось случайно при скролле.
     try { tg.disableVerticalSwipes?.(); } catch { /* noop */ }
   }
