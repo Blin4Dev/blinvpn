@@ -145,12 +145,14 @@ export function Screen({
       <div style={pageFrame({ overflow: "hidden", ...style })}>
         <div className="blin-ambient" aria-hidden />
         <div
-          className={scroll ? "blin-scroll" : undefined}
+          className={scroll ? "blin-scroll blin-tg-safe" : "blin-tg-safe"}
           style={{
             position: "relative",
             zIndex: 1,
             height: "100%",
-            padding: pad ? "22px 26px 32px" : undefined,
+            paddingLeft: pad ? 26 : undefined,
+            paddingRight: pad ? 26 : undefined,
+            paddingBottom: pad ? 32 : undefined,
             boxSizing: "border-box",
           }}
         >

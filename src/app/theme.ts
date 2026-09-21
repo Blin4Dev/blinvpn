@@ -64,9 +64,9 @@ export function pageOuter(extra?: CSSProperties): CSSProperties {
   return {
     display: "flex",
     justifyContent: "center",
-    alignItems: "flex-start",
+    alignItems: "stretch",
+    width: "100%",
     height: "100%",
-    minHeight: "100%",
     background: T.bg,
     fontFamily: T.font,
     ...extra,

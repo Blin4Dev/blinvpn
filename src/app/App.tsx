@@ -89,7 +89,7 @@ function AnimatedLayout() {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        height: "100%",
         overflow: "clip",
         background: "#14110E",
         isolation: "isolate",
@@ -98,7 +98,7 @@ function AnimatedLayout() {
       <div
         key={location.pathname}
         style={{
-          minHeight: "100vh",
+          height: "100%",
           animation,
           backfaceVisibility: "hidden",
           ...(animate ? { willChange: "opacity, transform" } : {}),

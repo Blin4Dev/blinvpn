@@ -56,6 +56,7 @@ html, body {
   padding: 0;
   width: 100%;
   height: 100%;
+  height: 100dvh;
   background: var(--bg-outer);
   overflow: hidden;
   overscroll-behavior: none;
@@ -79,12 +80,20 @@ input::placeholder, textarea::placeholder {
   transform: scale(var(--blin-scale));
   transform-origin: top left;
   width: calc(100% / var(--blin-scale));
-  /* Полная высота — без чёрной полосы снизу. TG-отступ — внутренний padding. */
   height: calc(100% / var(--blin-scale));
-  /* --blin-tg-pad-top в экранных px; делим на scale, т.к. #root сам масштабируется */
-  padding-top: calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale));
+  /* Отступ TG кладём на контент, не на #root — иначе сверху «чёрная полоса» */
+  padding-top: 0;
   box-sizing: border-box;
   overflow: hidden;
+}
+
+#root > * {
+  height: 100%;
+}
+
+/* Контентные оболочки учитывают TG fullscreen inset */
+.blin-tg-safe {
+  padding-top: calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale));
 }
 
 * {

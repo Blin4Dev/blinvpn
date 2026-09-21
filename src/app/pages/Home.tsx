@@ -247,13 +247,17 @@ export default function BlinVPNApp() {
         <div className="blin-ambient" aria-hidden />
 
         <div
+          className="blin-tg-safe"
           style={{
             position: "relative",
             zIndex: 1,
             height: "100%",
-            padding: "16px 26px 28px",
+            paddingLeft: 26,
+            paddingRight: 26,
+            paddingBottom: 20,
             display: "flex",
             flexDirection: "column",
+            boxSizing: "border-box",
           }}
         >
           {/* История — справа сверху */}
@@ -261,6 +265,7 @@ export default function BlinVPNApp() {
             style={{
               display: "flex",
               justifyContent: "flex-end",
+              flexShrink: 0,
               animation: "blinvpnRise 0.45s var(--ease-out) both",
             }}
           >
@@ -288,10 +293,10 @@ export default function BlinVPNApp() {
             </button>
           </div>
 
-          {/* Logo visual */}
+          {/* Logo — занимает свободное место по центру */}
           <div
             style={{
-              flex: 1,
+              flex: "1 1 auto",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -302,8 +307,10 @@ export default function BlinVPNApp() {
             <div
               style={{
                 position: "relative",
-                width: 220,
-                height: 220,
+                width: "min(200px, 42vh)",
+                height: "min(200px, 42vh)",
+                maxWidth: 200,
+                maxHeight: 200,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -330,8 +337,8 @@ export default function BlinVPNApp() {
                 draggable={false}
                 style={{
                   position: "relative",
-                  width: 200,
-                  height: 200,
+                  width: "100%",
+                  height: "100%",
                   objectFit: "contain",
                   userSelect: "none",
                 }}
@@ -339,103 +346,103 @@ export default function BlinVPNApp() {
             </div>
           </div>
 
-          {/* Status */}
-          <div
-            style={{
-              marginBottom: 18,
-              animation: "blinvpnRise 0.5s var(--ease-out) 0.12s both",
-            }}
-          >
+          {/* Низ: статус + CTA + сетка — прижаты к низу экрана */}
+          <div style={{ flexShrink: 0, paddingBottom: 4 }}>
             <div
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "7px 12px 7px 10px",
-                borderRadius: T.radius.pill,
-                background: tone.bg,
-                marginBottom: 10,
+                marginBottom: 14,
+                animation: "blinvpnRise 0.5s var(--ease-out) 0.12s both",
               }}
             >
-              <span
+              <div
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: tone.dot,
-                  animation: cfg.statusTone === "ok" ? "blinvpnPulse 2.2s ease-in-out infinite" : undefined,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "7px 12px 7px 10px",
+                  borderRadius: T.radius.pill,
+                  background: tone.bg,
+                  marginBottom: 8,
+                }}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: tone.dot,
+                    animation: cfg.statusTone === "ok" ? "blinvpnPulse 2.2s ease-in-out infinite" : undefined,
+                  }}
+                />
+                <span style={{ fontWeight: 600, fontSize: 13, color: tone.text }}>{statusTitle}</span>
+              </div>
+              {subtitle ? (
+                <div style={{ fontSize: 14, color: T.textMuted, fontWeight: 500, lineHeight: 1.35 }}>
+                  {subtitle}
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.18s both", marginBottom: 10 }}>
+              <Btn
+                variant={ctaPrimary ? "primary" : "secondary"}
+                disabled={blocked || trialBusy}
+                onClick={() => { if (!blocked && !trialBusy) void handleCta(); }}
+                style={{ justifyContent: "space-between", padding: "0 18px" }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <MSIcon name={ctaPrimary ? "bolt" : "tune"} style={{ fontSize: 22, color: "inherit" }} />
+                  <span>{trialBusy ? "Активация…" : ctaLabel}</span>
+                </span>
+                <span style={{ display: "flex", alignItems: "baseline", gap: 6, fontWeight: 600, opacity: 0.85 }}>
+                  {hasDiscount && (
+                    <span style={{ opacity: 0.45, textDecoration: "line-through", fontSize: 13 }}>
+                      {ctaPriceBase}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 15 }}>{ctaPrice}</span>
+                </span>
+              </Btn>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+              }}
+            >
+              <ActionTile
+                icon="group"
+                label="Рефералы"
+                disabled={blocked}
+                delay={0.22}
+                onClick={() => { if (!blocked) navigate("/referral"); }}
+              />
+              <ActionTile
+                icon="redeem"
+                label="Промокод"
+                disabled={blocked}
+                delay={0.26}
+                onClick={() => { if (!blocked) navigate("/promocode"); }}
+              />
+              <ActionTile
+                icon="settings"
+                label="Настройки"
+                disabled={blocked}
+                delay={0.3}
+                onClick={() => { if (!blocked) navigate("/settings"); }}
+              />
+              <ActionTile
+                icon="chat"
+                label="Поддержка"
+                disabled={blocked}
+                delay={0.34}
+                onClick={() => {
+                  if (!blocked) window.open(supportUrl, "_blank", "noopener,noreferrer");
                 }}
               />
-              <span style={{ fontWeight: 600, fontSize: 13, color: tone.text }}>{statusTitle}</span>
             </div>
-            {subtitle ? (
-              <div style={{ fontSize: 14, color: T.textMuted, fontWeight: 500, lineHeight: 1.35 }}>
-                {subtitle}
-              </div>
-            ) : null}
-          </div>
-
-          {/* Primary CTA */}
-          <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.18s both", marginBottom: 12 }}>
-            <Btn
-              variant={ctaPrimary ? "primary" : "secondary"}
-              disabled={blocked || trialBusy}
-              onClick={() => { if (!blocked && !trialBusy) void handleCta(); }}
-              style={{ justifyContent: "space-between", padding: "0 18px" }}
-            >
-              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <MSIcon name={ctaPrimary ? "bolt" : "tune"} style={{ fontSize: 22, color: "inherit" }} />
-                <span>{trialBusy ? "Активация…" : ctaLabel}</span>
-              </span>
-              <span style={{ display: "flex", alignItems: "baseline", gap: 6, fontWeight: 600, opacity: 0.85 }}>
-                {hasDiscount && (
-                  <span style={{ opacity: 0.45, textDecoration: "line-through", fontSize: 13 }}>
-                    {ctaPriceBase}
-                  </span>
-                )}
-                <span style={{ fontSize: 15 }}>{ctaPrice}</span>
-              </span>
-            </Btn>
-          </div>
-
-          {/* Action grid */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 10,
-            }}
-          >
-            <ActionTile
-              icon="group"
-              label="Рефералы"
-              disabled={blocked}
-              delay={0.22}
-              onClick={() => { if (!blocked) navigate("/referral"); }}
-            />
-            <ActionTile
-              icon="redeem"
-              label="Промокод"
-              disabled={blocked}
-              delay={0.26}
-              onClick={() => { if (!blocked) navigate("/promocode"); }}
-            />
-            <ActionTile
-              icon="settings"
-              label="Настройки"
-              disabled={blocked}
-              delay={0.3}
-              onClick={() => { if (!blocked) navigate("/settings"); }}
-            />
-            <ActionTile
-              icon="chat"
-              label="Поддержка"
-              disabled={blocked}
-              delay={0.34}
-              onClick={() => {
-                if (!blocked) window.open(supportUrl, "_blank", "noopener,noreferrer");
-              }}
-            />
           </div>
         </div>
       </div>
