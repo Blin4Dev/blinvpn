@@ -349,26 +349,8 @@ create_env_file() {
     prompt "  ${BOLD}Username бота${NC} (без @, по умолч. blinvpn_bot): " BOT_USERNAME_INPUT
     BOT_USERNAME="${BOT_USERNAME_INPUT:-blinvpn_bot}"
 
-    section "Форум-группа для служебных уведомлений"
-    echo -e "  Создайте группу-форум в Telegram, добавьте бота и получите ID группы."
-    echo -e "  Оставьте пустым — уведомления пойдут в личку админа.\n"
-    prompt "  ${BOLD}ID форум-группы${NC}  (например -1001234567890, или Enter): " NOTIFY_GROUP_ID
-    if [[ -n "$NOTIFY_GROUP_ID" ]]; then
-        prompt "  ${BOLD}ID ветки «Пополнения»${NC}: " NOTIFY_THREAD_DEPOSITS
-        prompt "  ${BOLD}ID ветки «Ошибки»${NC}: " NOTIFY_THREAD_ERRORS
-        prompt "  ${BOLD}ID ветки «Выводы»${NC}: " NOTIFY_THREAD_WITHDRAWALS
-    else
-        NOTIFY_GROUP_ID=""
-        NOTIFY_THREAD_DEPOSITS=""
-        NOTIFY_THREAD_ERRORS=""
-        NOTIFY_THREAD_WITHDRAWALS=""
-    fi
-
-    section "Бот поддержки"
-    prompt "  ${BOLD}Токен бота поддержки${NC}: " SUPPORT_BOT_TOKEN
-    prompt "  ${BOLD}ID группы поддержки${NC}: " SUPPORT_GROUP_ID
-    prompt "  ${BOLD}Юзернеймы админов${NC} (без @, по умолч. blin4icks): " SUPPORT_ADMIN_USERNAME_INPUT
-    SUPPORT_ADMIN_USERNAME="${SUPPORT_ADMIN_USERNAME_INPUT:-blin4icks}"
+    # Форум-группа для служебных уведомлений настраивается в ПАНЕЛИ
+    # (Настройки → Форум), а не здесь.
 
     section "Remnawave · панель VPN"
     prompt "  ${BOLD}Panel URL${NC}  (по умолч. http://localhost:3000): " REMWAVE_PANEL_URL_INPUT
@@ -403,16 +385,9 @@ TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
 BOT_USERNAME=${BOT_USERNAME}
 VITE_BOT_USERNAME=${BOT_USERNAME}
 
-# Форум-группа уведомлений
-NOTIFY_GROUP_ID=${NOTIFY_GROUP_ID}
-NOTIFY_THREAD_DEPOSITS=${NOTIFY_THREAD_DEPOSITS}
-NOTIFY_THREAD_ERRORS=${NOTIFY_THREAD_ERRORS}
-NOTIFY_THREAD_WITHDRAWALS=${NOTIFY_THREAD_WITHDRAWALS}
+# Форум-группа уведомлений настраивается в панели (Настройки → Форум).
 
-# Бот поддержки
-SUPPORT_BOT_TOKEN=${SUPPORT_BOT_TOKEN}
-SUPPORT_GROUP_ID=${SUPPORT_GROUP_ID}
-SUPPORT_ADMIN_USERNAME=${SUPPORT_ADMIN_USERNAME}
+# Ссылка на поддержку
 SUPPORT_URL=https://t.me/blinteams
 VITE_SUPPORT_URL=https://t.me/blinteams
 
