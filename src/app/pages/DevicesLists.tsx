@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
@@ -51,8 +51,8 @@ export default function DevicesLists() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
+        background: "#0C0A08",
+        fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >
       <div
@@ -60,7 +60,7 @@ export default function DevicesLists() {
           position: "relative",
           width: "402px",
           height: "803px",
-          background: "#212121",
+          background: "#14110E",
           overflow: "hidden",
         }}
       >
@@ -71,7 +71,7 @@ export default function DevicesLists() {
             height: "33px",
             left: "73px",
             top: "28px",
-            fontFamily: "'Inter', sans-serif",
+            fontFamily: "'Outfit', system-ui, sans-serif",
             fontWeight: 600,
             fontSize: "27px",
             lineHeight: "33px",
@@ -92,7 +92,7 @@ export default function DevicesLists() {
               left: "26px",
               top: "68px",
               fontSize: 13,
-              color: "#7D7D7D",
+              color: "#A89B8C",
             }}
           >
             {devices.length} / {limit}
@@ -109,9 +109,9 @@ export default function DevicesLists() {
             overflowY: "auto",
           }}
         >
-          {loading && <p style={{ color: "#7D7D7D", fontSize: 15 }}>Загрузка…</p>}
+          {loading && <p style={{ color: "#A89B8C", fontSize: 15 }}>Загрузка…</p>}
           {!loading && devices.length === 0 && (
-            <p style={{ color: "#7D7D7D", fontSize: 15, lineHeight: 1.4 }}>
+            <p style={{ color: "#A89B8C", fontSize: 15, lineHeight: 1.4 }}>
               Пока нет активных устройств.
               <br />
               Они появятся после подключения к VPN.
@@ -127,7 +127,7 @@ export default function DevicesLists() {
                   position: "relative",
                   width: "350px",
                   height: "68px",
-                  background: "#333333",
+                  background: "#2A241E",
                   borderRadius: "30px",
                   marginBottom: "7px",
                 }}
@@ -153,7 +153,7 @@ export default function DevicesLists() {
                     fontWeight: 500,
                     fontSize: "13px",
                     lineHeight: "16px",
-                    color: "#7D7D7D",
+                    color: "#A89B8C",
                   }}
                 >
                   {last}
@@ -205,7 +205,7 @@ export default function DevicesLists() {
               height: "21px",
               left: "49px",
               top: "14px",
-              fontFamily: "'Inter', sans-serif",
+              fontFamily: "'Outfit', system-ui, sans-serif",
               fontWeight: 600,
               fontSize: "16px",
               lineHeight: "19px",

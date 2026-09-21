@@ -23,36 +23,57 @@
   -webkit-font-smoothing: antialiased;
 }
 
+:root {
+  --blin-scale: 1;
+  --bg: #14110E;
+  --bg-outer: #0C0A08;
+  --surface: #1E1A16;
+  --surface-raised: #2A241E;
+  --surface-hover: #352E26;
+  --border: rgba(255, 248, 240, 0.08);
+  --border-strong: rgba(255, 248, 240, 0.14);
+  --orange: #FF6B1A;
+  --orange-bright: #FF8A3D;
+  --orange-deep: #C44E0A;
+  --orange-soft: rgba(255, 107, 26, 0.16);
+  --text: #FFF8F0;
+  --text-muted: #A89B8C;
+  --text-dim: #6F6458;
+  --danger: #FF5C5C;
+  --success: #6BCB8A;
+  --font: 'Outfit', system-ui, sans-serif;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
-  background: #212121;              /* цвет «экрана» — без видимого шва по краям */
-  overflow: hidden;                 /* нельзя утащить интерфейс за пределы экрана */
+  background: var(--bg-outer);
+  overflow: hidden;
   overscroll-behavior: none;
+  font-family: var(--font);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Кнопки/поля НЕ наследуют шрифт по умолчанию — принудительно ставим Inter. */
 button, input, textarea, select {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font);
 }
+
 input::placeholder, textarea::placeholder {
-  color: #6E6E6E;
+  color: var(--text-dim);
   opacity: 1;
 }
 
-/*
- * Макет свёрстан под ширину 402px. Масштабируем весь #root так, чтобы 402px
- * заняли всю ширину экрана телефона: интерфейс вписывается целиком, без
- * горизонтального скролла, кнопки попадают точно, привязка — к ВЕРХУ экрана.
- * --blin-scale выставляет JS по ширине окна (initStageScale в utils/telegram.ts).
- * padding-top учитывает «чёлку» в полноэкранном режиме Telegram.
- */
-:root { --blin-scale: 1; }
 #root {
   margin: 0;
-  background: #212121;
+  background: var(--bg);
   transform: scale(var(--blin-scale));
   transform-origin: top left;
   width: calc(100% / var(--blin-scale));
@@ -65,29 +86,57 @@ input::placeholder, textarea::placeholder {
   box-sizing: border-box;
 }
 
+/* Ambient background wash — один слой, без тяжёлых filter */
+.blin-ambient {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -8%, rgba(255, 107, 26, 0.22) 0%, transparent 58%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(196, 78, 10, 0.08) 0%, transparent 50%),
+    var(--bg);
+  z-index: 0;
+}
+
+.blin-scroll {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.blin-scroll::-webkit-scrollbar { display: none; }
+
+/* Press feedback without layout thrash */
+.blin-press {
+  transition: transform 0.18s var(--ease-out), opacity 0.18s ease, background 0.18s ease;
+}
+.blin-press:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
 @keyframes blinvpnPageInForward {
   from {
     opacity: 0;
-    transform: translate3d(22px, 0, 0) scale(0.992);
-    filter: blur(3px);
+    transform: translate3d(18px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-    filter: blur(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
 @keyframes blinvpnPageInBackward {
   from {
     opacity: 0;
-    transform: translate3d(-16px, 0, 0) scale(0.996);
-    filter: blur(2px);
+    transform: translate3d(-14px, 0, 0);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-    filter: blur(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -99,7 +148,32 @@ input::placeholder, textarea::placeholder {
 @keyframes blinvpnSheetUp {
   from {
     opacity: 0;
-    transform: translate3d(0, 28px, 0);
+    transform: translate3d(0, 24px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes blinvpnSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blinvpnPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.92); }
+}
+
+@keyframes blinvpnBreathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
+@keyframes blinvpnRise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
   }
   to {
     opacity: 1;

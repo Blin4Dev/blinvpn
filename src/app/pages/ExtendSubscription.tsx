@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
@@ -39,7 +39,7 @@ export default function ExtendSubscription() {
   const pillStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
     height: "44px",
-    background: active ? "#F18726" : "#3D3D3D",
+    background: active ? "#FF6B1A" : "#352E26",
     borderRadius: "22px",
     border: "none",
     cursor: "pointer",
@@ -62,8 +62,8 @@ export default function ExtendSubscription() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
+        background: "#0C0A08",
+        fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >
       <div
@@ -71,7 +71,7 @@ export default function ExtendSubscription() {
           position: "relative",
           width: "402px",
           height: "803px",
-          background: "#212121",
+          background: "#14110E",
           overflow: "hidden",
         }}
       >
@@ -98,7 +98,7 @@ export default function ExtendSubscription() {
             width: "350px",
             left: "26px",
             top: "87px",
-            background: "#333333",
+            background: "#2A241E",
             borderRadius: "30px",
             padding: "16px 27px 18px",
             boxSizing: "border-box",
@@ -121,7 +121,7 @@ export default function ExtendSubscription() {
               fontSize: "32px",
               fontWeight: 700,
               lineHeight: "39px",
-              color: "#F18726",
+              color: "#FF6B1A",
             }}
           >
             —
@@ -146,7 +146,7 @@ export default function ExtendSubscription() {
             width: "350px",
             left: "26px",
             top: "232px",
-            background: "#333333",
+            background: "#2A241E",
             borderRadius: "30px",
             padding: "22px 27px 24px",
             boxSizing: "border-box",
@@ -233,7 +233,7 @@ export default function ExtendSubscription() {
               style={{
                 fontSize: "24px",
                 fontWeight: 700,
-                color: "#F18726",
+                color: "#FF6B1A",
                 transition: "opacity 0.15s ease",
               }}
             >
@@ -251,7 +251,7 @@ export default function ExtendSubscription() {
             height: "50px",
             left: "36px",
             top: "717px",
-            background: "#F18726",
+            background: "#FF6B1A",
             borderRadius: "30px",
             border: "none",
             padding: 0,

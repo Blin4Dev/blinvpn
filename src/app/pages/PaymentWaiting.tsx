@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { fetchPaymentStatus, openPayUrl, openStarsInvoice } from "../utils/api";
@@ -69,14 +69,14 @@ export default function PaymentWaiting() {
     justifyContent: "center",
     alignItems: "center",
     minHeight: "100vh",
-    background: "#111",
-    fontFamily: "'Inter', sans-serif",
+    background: "#0C0A08",
+    fontFamily: "'Outfit', system-ui, sans-serif",
   };
   const card: React.CSSProperties = {
     position: "relative",
     width: "402px",
     height: "803px",
-    background: "#212121",
+    background: "#14110E",
     overflow: "hidden",
     boxSizing: "border-box",
   };
@@ -94,7 +94,7 @@ export default function PaymentWaiting() {
   const primaryBtn: React.CSSProperties = {
     width: "330px",
     height: "50px",
-    background: "#F18726",
+    background: "#FF6B1A",
     borderRadius: "30px",
     border: "none",
     cursor: "pointer",
@@ -108,7 +108,7 @@ export default function PaymentWaiting() {
   };
   const ghostBtn: React.CSSProperties = {
     ...primaryBtn,
-    background: "#3D3D3D",
+    background: "#352E26",
     marginTop: "12px",
   };
 
@@ -206,8 +206,8 @@ function Spinner() {
         width: 72,
         height: 72,
         borderRadius: "50%",
-        border: "6px solid rgba(241,135,38,0.2)",
-        borderTopColor: "#F18726",
+        border: "6px solid rgba(255, 107, 26,0.2)",
+        borderTopColor: "#FF6B1A",
         animation: "blinspin 0.9s linear infinite",
       }}
     />

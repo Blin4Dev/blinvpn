@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, requestWithdraw } from "../utils/api";
@@ -89,17 +89,17 @@ export default function Referral() {
     } catch { /* ignore */ }
   };
 
-  const card: React.CSSProperties = { background: "#2E2E2E", borderRadius: 24 };
-  const caption: React.CSSProperties = { fontWeight: 600, fontSize: 13, color: "#7D7D7D", margin: "18px 8px 8px" };
+  const card: React.CSSProperties = { background: "#1E1A16", borderRadius: 24 };
+  const caption: React.CSSProperties = { fontWeight: 600, fontSize: 13, color: "#A89B8C", margin: "18px 8px 8px" };
 
   const LinkField = ({ label, url, which }: { label: string; url: string; which: "tg" | "web" }) => (
     <div style={{ padding: "14px 16px", borderBottom: which === "tg" && webLink ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
-      <div style={{ fontWeight: 600, fontSize: 13, color: "#7D7D7D", marginBottom: 8 }}>{label}</div>
+      <div style={{ fontWeight: 600, fontSize: 13, color: "#A89B8C", marginBottom: 8 }}>{label}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <div
           style={{
-            flex: 1, minWidth: 0, background: "#1E1E1E", borderRadius: 12, padding: "11px 14px",
-            color: "#E3E3E3", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            flex: 1, minWidth: 0, background: "#2A241E", borderRadius: 12, padding: "11px 14px",
+            color: "#FFF8F0", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}
         >
           {url || "—"}
@@ -109,11 +109,11 @@ export default function Referral() {
           onClick={() => void copy(url, which)}
           style={{
             flex: "0 0 auto", height: 40, padding: "0 16px", borderRadius: 12, border: "none",
-            background: copied === which ? "#3D8B4E" : "#F18726", color: "#fff", fontWeight: 600,
+            background: copied === which ? "#3D8B4E" : "#FF6B1A", color: "#FFF8F0", fontWeight: 600,
             fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
           }}
         >
-          <MSIcon name={copied === which ? "check" : "content_copy"} style={{ color: "#fff", fontSize: 18 }} />
+          <MSIcon name={copied === which ? "check" : "content_copy"} style={{ color: "#FFF8F0", fontSize: 18 }} />
           {copied === which ? "Скоп." : "Копир."}
         </button>
       </div>
@@ -124,8 +124,8 @@ export default function Referral() {
     <div
       style={{
         minHeight: "100vh",
-        background: "#212121",
-        fontFamily: "'Inter', sans-serif",
+        background: "#14110E",
+        fontFamily: "'Outfit', system-ui, sans-serif",
         display: "flex",
         justifyContent: "center",
       }}
@@ -149,25 +149,25 @@ export default function Referral() {
             aria-label="Назад"
             style={{
               flex: "0 0 auto", width: 40, height: 40, borderRadius: "50%",
-              background: "#313131", border: "none", cursor: "pointer",
+              background: "#2A241E", border: "none", cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
-            <MSIcon name="chevron_left" style={{ color: "#FFFFFF", fontSize: 24 }} />
+            <MSIcon name="chevron_left" style={{ color: "#FFF8F0", fontSize: 24 }} />
           </button>
-          <div style={{ fontWeight: 700, fontSize: 26, color: "#FFFFFF" }}>Друзья</div>
+          <div style={{ fontWeight: 700, fontSize: 26, color: "#FFF8F0" }}>Друзья</div>
         </div>
 
         {/* Баланс / статистика */}
         <div style={{ ...card, padding: 18 }}>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFFFFF" }}>{balance} ₽</div>
-              <div style={{ fontWeight: 500, fontSize: 13, color: "#7D7D7D", marginTop: 2 }}>Заработано</div>
+              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFF8F0" }}>{balance} ₽</div>
+              <div style={{ fontWeight: 500, fontSize: 13, color: "#A89B8C", marginTop: 2 }}>Заработано</div>
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFFFFF" }}>{count} чел</div>
-              <div style={{ fontWeight: 500, fontSize: 13, color: "#7D7D7D", marginTop: 2 }}>Приглашено</div>
+              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFF8F0" }}>{count} чел</div>
+              <div style={{ fontWeight: 500, fontSize: 13, color: "#A89B8C", marginTop: 2 }}>Приглашено</div>
             </div>
           </div>
           <button
@@ -175,11 +175,11 @@ export default function Referral() {
             onClick={openSheet}
             style={{
               width: "100%", marginTop: 16, height: 46, borderRadius: 14, border: "none",
-              background: "#3D3D3D", color: "#FFFFFF", fontWeight: 600, fontSize: 15, cursor: "pointer",
+              background: "#352E26", color: "#FFF8F0", fontWeight: 600, fontSize: 15, cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
             }}
           >
-            <MSIcon name="arrow_outward" style={{ color: "#F18726", fontSize: 20 }} />
+            <MSIcon name="arrow_outward" style={{ color: "#FF6B1A", fontSize: 20 }} />
             Вывести (USDT TON)
           </button>
         </div>
@@ -205,20 +205,20 @@ export default function Referral() {
                     key={u.id}
                     style={{
                       display: "flex", alignItems: "center", gap: 12,
-                      background: "#3D3D3D", borderRadius: 16, padding: "12px 14px",
+                      background: "#352E26", borderRadius: 16, padding: "12px 14px",
                     }}
                   >
                     <div
                       style={{
                         flex: "0 0 auto", width: 34, height: 34, borderRadius: "50%",
-                        background: "radial-gradient(circle at 35% 30%, #ffb879 0%, #f18726 45%, #8e4f12 100%)",
+                        background: "radial-gradient(circle at 35% 30%, #ffb879 0%, #FF6B1A 45%, #8e4f12 100%)",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        color: "#fff", fontWeight: 700, fontSize: 15,
+                        color: "#FFF8F0", fontWeight: 700, fontSize: 15,
                       }}
                     >
                       {initial}
                     </div>
-                    <div style={{ minWidth: 0, fontWeight: 600, fontSize: 15, color: "#FFFFFF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ minWidth: 0, fontWeight: 600, fontSize: 15, color: "#FFF8F0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {label}
                     </div>
                   </div>
@@ -227,11 +227,11 @@ export default function Referral() {
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12, padding: "24px 8px" }}>
-              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#3D3D3D", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <MSIcon name="group_add" style={{ color: "#7D7D7D", fontSize: 30 }} />
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#352E26", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <MSIcon name="group_add" style={{ color: "#A89B8C", fontSize: 30 }} />
               </div>
-              <div style={{ fontWeight: 600, fontSize: 16, color: "#FFFFFF" }}>Пока нет приглашённых</div>
-              <div style={{ fontSize: 14, color: "#7D7D7D", maxWidth: 260, lineHeight: "20px" }}>
+              <div style={{ fontWeight: 600, fontSize: 16, color: "#FFF8F0" }}>Пока нет приглашённых</div>
+              <div style={{ fontSize: 14, color: "#A89B8C", maxWidth: 260, lineHeight: "20px" }}>
                 Отправьте свою ссылку друзьям — за их покупки вы получаете вознаграждение.
               </div>
             </div>
@@ -242,21 +242,21 @@ export default function Referral() {
           <div
             onClick={() => !submitting && setSheet(false)}
             style={{
-              position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+              position: "fixed", inset: 0, background: "rgba(8,6,4,0.72)",
               display: "flex", alignItems: "flex-end", zIndex: 50,
             }}
           >
             <div
               onClick={(e) => e.stopPropagation()}
               style={{
-                width: "100%", maxWidth: 402, margin: "0 auto", background: "#212121",
+                width: "100%", maxWidth: 402, margin: "0 auto", background: "#14110E",
                 borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "22px 24px 28px",
-                boxSizing: "border-box", borderTop: "1px solid #333",
+                boxSizing: "border-box", borderTop: "1px solid rgba(255,248,240,0.12)",
               }}
             >
-              <div style={{ width: 44, height: 5, borderRadius: 3, background: "#444", margin: "0 auto 18px" }} />
-              <div style={{ color: "#fff", fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Вывод средств</div>
-              <div style={{ color: "#8A8A8A", fontSize: 13, marginBottom: 18 }}>
+              <div style={{ width: 44, height: 5, borderRadius: 3, background: "#6F6458", margin: "0 auto 18px" }} />
+              <div style={{ color: "#FFF8F0", fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Вывод средств</div>
+              <div style={{ color: "#A89B8C", fontSize: 13, marginBottom: 18 }}>
                 Только USDT TON. Минимум {minWithdraw}₽. Доступно: {Math.floor(balance)}₽
               </div>
 
@@ -266,7 +266,7 @@ export default function Referral() {
                 </div>
               ) : (
                 <>
-                  <label style={{ color: "#8A8A8A", fontSize: 12 }}>Сумма, ₽</label>
+                  <label style={{ color: "#A89B8C", fontSize: 12 }}>Сумма, ₽</label>
                   <input
                     inputMode="numeric"
                     value={amount}
@@ -274,11 +274,11 @@ export default function Referral() {
                     placeholder={String(minWithdraw)}
                     style={{
                       width: "100%", boxSizing: "border-box", marginTop: 6, marginBottom: 14,
-                      background: "#333", border: "none", borderRadius: 16, padding: "14px 16px",
-                      color: "#fff", fontSize: 16, outline: "none",
+                      background: "#2A241E", border: "none", borderRadius: 16, padding: "14px 16px",
+                      color: "#FFF8F0", fontSize: 16, outline: "none",
                     }}
                   />
-                  <label style={{ color: "#8A8A8A", fontSize: 12 }}>Адрес (UQ… / EQ… / .ton / .t.me)</label>
+                  <label style={{ color: "#A89B8C", fontSize: 12 }}>Адрес (UQ… / EQ… / .ton / .t.me)</label>
                   <input
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
@@ -288,8 +288,8 @@ export default function Referral() {
                     spellCheck={false}
                     style={{
                       width: "100%", boxSizing: "border-box", marginTop: 6, marginBottom: 8,
-                      background: "#333", border: "none", borderRadius: 16, padding: "14px 16px",
-                      color: "#fff", fontSize: 15, outline: "none",
+                      background: "#2A241E", border: "none", borderRadius: 16, padding: "14px 16px",
+                      color: "#FFF8F0", fontSize: 15, outline: "none",
                     }}
                   />
                   {wErr && <div style={{ color: "#F87171", fontSize: 13, marginBottom: 8 }}>{wErr}</div>}
@@ -298,8 +298,8 @@ export default function Referral() {
                     disabled={submitting}
                     onClick={() => void submitWithdraw()}
                     style={{
-                      width: "100%", marginTop: 10, background: "#F18726", border: "none",
-                      borderRadius: 18, padding: "15px 0", color: "#fff", fontSize: 16, fontWeight: 600,
+                      width: "100%", marginTop: 10, background: "#FF6B1A", border: "none",
+                      borderRadius: 18, padding: "15px 0", color: "#FFF8F0", fontSize: 16, fontWeight: 600,
                       cursor: "pointer", opacity: submitting ? 0.6 : 1,
                     }}
                   >

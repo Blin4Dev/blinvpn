@@ -1,11 +1,7 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { fetchMembership, tgWebApp, type Membership } from "../utils/api";
+import { Btn, BrandMark, MSIcon, T, pageFrame, pageOuter } from "../components/ui";
 
-/**
- * Обязательная подписка на канал (только Telegram-вход). Полноэкранный экран,
- * который нельзя закрыть, пока пользователь не подпишется на основной канал.
- * Второй канал — необязательный.
- */
 export default function ChannelGate({
   membership,
   onPassed,
@@ -33,82 +29,54 @@ export default function ChannelGate({
     const m = await fetchMembership(true);
     setChecking(false);
     if (m.subscribed) onPassed();
-    else setErr("Мы пока не видим вашу подписку. Подпишитесь и нажмите ещё раз.");
+    else setErr("Мы пока не видим подписку. Подпишитесь и нажмите ещё раз.");
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "#111",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "'Inter', sans-serif",
-        padding: "24px",
-        boxSizing: "border-box",
-        zIndex: 2000,
-      }}
-    >
-      <div style={{ width: "100%", maxWidth: "360px", display: "flex", flexDirection: "column", alignItems: "center", gap: "18px" }}>
-        <div
-          style={{
-            width: 72, height: 72, borderRadius: "50%", background: "rgba(241,135,38,0.16)",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 38,
-          }}
-        >
-          📣
-        </div>
-        <div style={{ fontWeight: 700, fontSize: "22px", color: "#FFFFFF", textAlign: "center" }}>
-          Подпишитесь на канал
-        </div>
-        <div style={{ fontSize: "14px", lineHeight: "20px", color: "#B9B9B9", textAlign: "center" }}>
-          Чтобы пользоваться BlinVPN, подпишитесь на наш основной канал. Это займёт пару секунд.
-        </div>
-
-        {/* Обязательный канал */}
-        <button
-          type="button"
-          onClick={() => openChannel(mainUrl)}
-          style={{
-            width: "100%", height: "54px", border: "none", borderRadius: "18px",
-            background: "#F18726", color: "#FFFFFF", fontWeight: 600, fontSize: "16px",
-            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-          }}
-        >
-          Подписаться на канал
-        </button>
-
-        {/* Необязательный канал */}
-        {optUrl && (
-          <button
-            type="button"
-            onClick={() => openChannel(optUrl)}
+    <div style={{ ...pageOuter({ alignItems: "center" }), position: "fixed", inset: 0, zIndex: 2000, padding: 24 }}>
+      <div style={{ ...pageFrame({ height: "auto", minHeight: 0, overflow: "visible", width: "100%", maxWidth: 360, background: "transparent" }) }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
+          <BrandMark size="lg" />
+          <div
             style={{
-              width: "100%", height: "48px", border: "1px solid rgba(255,255,255,0.14)", borderRadius: "16px",
-              background: "transparent", color: "#E3E3E3", fontWeight: 500, fontSize: "15px",
-              cursor: "pointer",
+              width: 72,
+              height: 72,
+              borderRadius: 24,
+              background: T.orangeSoft,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginTop: 8,
             }}
           >
-            Заметки BlinVPN (по желанию)
-          </button>
-        )}
+            <MSIcon name="campaign" style={{ color: T.orange, fontSize: 36 }} />
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 24, color: T.text, letterSpacing: "-0.03em" }}>
+            Подпишитесь на канал
+          </div>
+          <div style={{ fontSize: 14, lineHeight: "21px", color: T.textMuted }}>
+            Чтобы пользоваться BlinVPN, подпишитесь на основной канал — это займёт пару секунд.
+          </div>
 
-        <button
-          type="button"
-          onClick={() => void recheck()}
-          disabled={checking}
-          style={{
-            width: "100%", height: "50px", border: "none", borderRadius: "18px",
-            background: "#2E2E2E", color: "#FFFFFF", fontWeight: 600, fontSize: "16px",
-            cursor: checking ? "wait" : "pointer", opacity: checking ? 0.7 : 1, marginTop: "2px",
-          }}
-        >
-          {checking ? "Проверяем…" : "Я подписался"}
-        </button>
+          <Btn onClick={() => openChannel(mainUrl)} style={{ marginTop: 6 }}>
+            <MSIcon name="open_in_new" style={{ fontSize: 22 }} />
+            Подписаться на канал
+          </Btn>
 
-        {err && <div style={{ fontSize: "13px", color: "#FF6B6B", textAlign: "center" }}>{err}</div>}
+          {optUrl ? (
+            <Btn variant="secondary" onClick={() => openChannel(optUrl)}>
+              Дополнительный канал
+            </Btn>
+          ) : null}
+
+          <Btn variant="ghost" disabled={checking} onClick={() => void recheck()}>
+            {checking ? "Проверяем…" : "Я подписался — проверить"}
+          </Btn>
+
+          {err ? (
+            <div style={{ fontSize: 13, color: T.danger, lineHeight: "18px" }}>{err}</div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

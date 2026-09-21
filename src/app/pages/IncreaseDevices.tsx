@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
@@ -61,8 +61,8 @@ export default function IncreaseDevices() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
+        background: "#0C0A08",
+        fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >
       <div
@@ -70,7 +70,7 @@ export default function IncreaseDevices() {
           position: "relative",
           width: "402px",
           height: "803px",
-          background: "#212121",
+          background: "#14110E",
           overflow: "hidden",
           boxSizing: "border-box",
         }}
@@ -104,7 +104,7 @@ export default function IncreaseDevices() {
             height: "330px",
             left: "26px",
             top: "87px",
-            background: "#333333",
+            background: "#2A241E",
             borderRadius: "30px",
           }}
         />
@@ -153,7 +153,7 @@ export default function IncreaseDevices() {
             height: "68px",
             left: "36px",
             top: "206px",
-            background: "#3D3D3D",
+            background: "#352E26",
             borderRadius: "30px",
           }}
         />
@@ -167,7 +167,7 @@ export default function IncreaseDevices() {
             height: "48px",
             left: "52px",
             top: "216px",
-            background: "#484848",
+            background: "#352E26",
             borderRadius: "12px",
             border: "none",
             padding: 0,
@@ -190,7 +190,7 @@ export default function IncreaseDevices() {
             height: "48px",
             left: "302px",
             top: "216px",
-            background: "#484848",
+            background: "#352E26",
             borderRadius: "12px",
             border: "none",
             padding: 0,
@@ -236,7 +236,7 @@ export default function IncreaseDevices() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#7D7D7D",
+            color: "#A89B8C",
           }}
         >
           +{extra} / {maxDevices - baseIncluded} доп.
@@ -250,7 +250,7 @@ export default function IncreaseDevices() {
             height: "68px",
             left: "36px",
             top: "286px",
-            background: "#3D3D3D",
+            background: "#352E26",
             borderRadius: "30px",
           }}
         />
@@ -263,7 +263,7 @@ export default function IncreaseDevices() {
             fontWeight: 500,
             fontSize: "13px",
             lineHeight: "16px",
-            color: "#7D7D7D",
+            color: "#A89B8C",
             display: "flex",
             alignItems: "center",
           }}
@@ -278,7 +278,7 @@ export default function IncreaseDevices() {
             fontWeight: 700,
             fontSize: "32px",
             lineHeight: "39px",
-            color: "#F18726",
+            color: "#FF6B1A",
             display: "flex",
             alignItems: "center",
           }}
@@ -297,7 +297,7 @@ export default function IncreaseDevices() {
             height: "50px",
             left: "36px",
             top: "717px",
-            background: "#F18726",
+            background: "#FF6B1A",
             borderRadius: "30px",
             border: "none",
             padding: 0,

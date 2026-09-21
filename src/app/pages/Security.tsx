@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { BackCircleButton, LoadingScreen, MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { AppUser, bindTelegram, fetchMe, logout, unbindEmail, updateEmail } from "../utils/api";
@@ -129,13 +129,13 @@ export default function Security() {
     position: "relative",
     width: "402px",
     minHeight: "803px",
-    background: "#212121",
+    background: "#14110E",
     overflow: "hidden",
     boxSizing: "border-box",
     padding: "84px 26px 40px",
   };
   const card: React.CSSProperties = {
-    background: "#333333",
+    background: "#2A241E",
     borderRadius: "30px",
     padding: "18px",
   };
@@ -143,7 +143,7 @@ export default function Security() {
     display: "flex",
     alignItems: "center",
     gap: "14px",
-    background: "#3D3D3D",
+    background: "#352E26",
     borderRadius: "22px",
     padding: "14px 16px",
   };
@@ -151,7 +151,7 @@ export default function Security() {
     width: 44,
     height: 44,
     borderRadius: 12,
-    background: "#484848",
+    background: "#352E26",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -159,10 +159,10 @@ export default function Security() {
   };
   const primaryBtn: React.CSSProperties = {
     height: 44,
-    background: "#F18726",
+    background: "#FF6B1A",
     borderRadius: 22,
     border: "none",
-    color: "#fff",
+    color: "#FFF8F0",
     fontSize: 15,
     fontWeight: 600,
     cursor: "pointer",
@@ -170,39 +170,39 @@ export default function Security() {
   };
   const ghostBtn: React.CSSProperties = {
     height: 38,
-    background: "#484848",
+    background: "#352E26",
     borderRadius: 20,
     border: "none",
-    color: "#E3E3E3",
+    color: "#FFF8F0",
     fontSize: 14,
     fontWeight: 600,
     cursor: "pointer",
     padding: "0 16px",
   };
-  const sub: React.CSSProperties = { color: "#8A8A8A", fontSize: 13, fontWeight: 500 };
+  const sub: React.CSSProperties = { color: "#A89B8C", fontSize: 13, fontWeight: 500 };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", minHeight: "100vh", background: "#111", fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", minHeight: "100vh", background: "#0C0A08", fontFamily: "'Outfit', system-ui, sans-serif" }}>
       <div style={frame}>
         <BackCircleButton onClick={goBack} />
-        <div style={{ position: "absolute", left: "73px", top: "28px", fontWeight: 600, fontSize: "27px", lineHeight: "33px", color: "#FFFFFF" }}>
+        <div style={{ position: "absolute", left: "73px", top: "28px", fontWeight: 600, fontSize: "27px", lineHeight: "33px", color: "#FFF8F0" }}>
           Безопасность
         </div>
 
         {/* Заголовочная карточка */}
         <div style={{ ...card, display: "flex", alignItems: "center", gap: 16, marginBottom: 18 }}>
           <div style={iconBox}>
-            <MSIcon name="shield" style={{ color: "#E3E3E3", fontSize: 26 }} />
+            <MSIcon name="shield" style={{ color: "#FFF8F0", fontSize: 26 }} />
           </div>
           <div>
-            <div style={{ color: "#fff", fontSize: 18, fontWeight: 700 }}>Безопасность</div>
+            <div style={{ color: "#FFF8F0", fontSize: 18, fontWeight: 700 }}>Безопасность</div>
             <div style={sub}>Способы входа и восстановление доступа</div>
           </div>
         </div>
 
         {/* Способы входа */}
         <div style={card}>
-          <div style={{ color: "#fff", fontSize: 15, fontWeight: 600, marginBottom: 14, paddingLeft: 4 }}>Способы входа</div>
+          <div style={{ color: "#FFF8F0", fontSize: 15, fontWeight: 600, marginBottom: 14, paddingLeft: 4 }}>Способы входа</div>
 
           {/* Telegram */}
           <div style={{ ...row, marginBottom: 12 }}>
@@ -210,7 +210,7 @@ export default function Security() {
               <MSIcon name="send" style={{ color: "#2AABEE", fontSize: 24 }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "#fff", fontSize: 16, fontWeight: 600 }}>Telegram</div>
+              <div style={{ color: "#FFF8F0", fontSize: 16, fontWeight: 600 }}>Telegram</div>
               <div style={sub}>{hasTelegram ? "Привязано" : "Не привязано"}</div>
             </div>
             {inTelegram ? (
@@ -225,10 +225,10 @@ export default function Security() {
           {/* Email */}
           <div style={{ ...row, flexWrap: "wrap" }}>
             <div style={iconBox}>
-              <MSIcon name="mail" style={{ color: "#E3E3E3", fontSize: 24 }} />
+              <MSIcon name="mail" style={{ color: "#FFF8F0", fontSize: 24 }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "#fff", fontSize: 16, fontWeight: 600 }}>Email</div>
+              <div style={{ color: "#FFF8F0", fontSize: 16, fontWeight: 600 }}>Email</div>
               <div style={{ ...sub, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {hasEmail ? user?.email : "Не привязано"}
               </div>
@@ -243,7 +243,7 @@ export default function Security() {
                   onChange={(e) => setEmailDraft(e.target.value)}
                   placeholder="you@mail.com"
                   autoFocus
-                  style={{ height: 44, borderRadius: 14, border: "1px solid #555", background: "#2B2B2B", color: "#fff", padding: "0 14px", fontSize: 15, outline: "none" }}
+                  style={{ height: 44, borderRadius: 14, border: "1px solid rgba(255,248,240,0.14)", background: "#2A241E", color: "#FFF8F0", padding: "0 14px", fontSize: 15, outline: "none" }}
                 />
                 <div style={{ display: "flex", gap: 8 }}>
                   <button type="button" style={{ ...primaryBtn, flex: 1, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => void saveEmail()}>

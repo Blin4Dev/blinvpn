@@ -1,11 +1,6 @@
-import React from "react";
+﻿import React from "react";
+import { Btn, MSIcon, T, btnReset } from "./ui";
 
-/**
- * Онбординг-модалка «Вы не завершили настройку». Показывается при заходе в
- * мини-приложение/сайт, если у пользователя есть подписка, но он ни разу не
- * подключался к VPN. В нашем стиле, без кнопки «Больше не показывать» —
- * только крестик (закрыть на эту сессию) и основная кнопка «Продолжить настройку».
- */
 export default function SetupPrompt({
   onContinue,
   onClose,
@@ -22,12 +17,12 @@ export default function SetupPrompt({
         position: "fixed",
         inset: 0,
         zIndex: 2500,
-        background: "rgba(0,0,0,0.55)",
+        background: "rgba(8, 6, 4, 0.72)",
         display: "flex",
         alignItems: "flex-end",
         justifyContent: "center",
-        fontFamily: "'Inter', sans-serif",
-        padding: "16px",
+        fontFamily: T.font,
+        padding: 16,
         boxSizing: "border-box",
         animation: "blinvpnFadeIn 0.2s ease both",
       }}
@@ -36,89 +31,86 @@ export default function SetupPrompt({
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          maxWidth: "420px",
-          background: "#1C1C1C",
-          borderRadius: "28px",
+          maxWidth: 420,
+          background: T.surface,
+          border: `1px solid ${T.borderStrong}`,
+          borderRadius: 28,
           padding: "26px 24px 22px",
           boxSizing: "border-box",
           position: "relative",
-          animation: "blinvpnSheetUp 0.34s cubic-bezier(0.22, 1, 0.36, 1) both",
+          animation: "blinvpnSheetUp 0.34s var(--ease-out) both",
         }}
       >
-        {/* Крестик — закрыть на эту сессию */}
         <button
           type="button"
           onClick={onClose}
           aria-label="Закрыть"
+          className="blin-press"
           style={{
+            ...btnReset,
             position: "absolute",
-            top: "20px",
-            right: "20px",
+            top: 18,
+            right: 18,
             width: 40,
             height: 40,
             borderRadius: "50%",
-            border: "none",
-            background: "#2E2E2E",
-            color: "#B9B9B9",
-            fontSize: 20,
-            lineHeight: 1,
+            border: `1px solid ${T.border}`,
+            background: T.surfaceRaised,
+            color: T.textMuted,
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
           }}
         >
-          ✕
+          <MSIcon name="close" style={{ fontSize: 20, color: T.textMuted }} />
         </button>
 
         <div
           style={{
-            fontWeight: 700,
-            fontSize: "26px",
-            lineHeight: "31px",
-            color: "#FFFFFF",
-            maxWidth: "80%",
-            marginBottom: "12px",
+            width: 48,
+            height: 48,
+            borderRadius: 16,
+            background: T.orangeSoft,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 16,
           }}
         >
-          Вы не завершили настройку
+          <MSIcon name="rocket_launch" style={{ color: T.orange, fontSize: 26 }} />
         </div>
 
         <div
           style={{
-            fontSize: "15px",
-            lineHeight: "21px",
-            color: "#9E9E9E",
-            marginBottom: "22px",
+            fontWeight: 700,
+            fontSize: 24,
+            letterSpacing: "-0.03em",
+            lineHeight: 1.2,
+            color: T.text,
+            maxWidth: "88%",
+            marginBottom: 10,
+          }}
+        >
+          Остался один шаг
+        </div>
+
+        <div
+          style={{
+            fontSize: 15,
+            lineHeight: "22px",
+            color: T.textMuted,
+            marginBottom: 22,
             maxWidth: "94%",
           }}
         >
-          Чтобы VPN заработал, добавьте подписку в приложение и подключитесь к серверу.
-          Это займёт меньше минуты.
+          Добавьте подписку в приложение и подключитесь к серверу — VPN заработает меньше чем за минуту.
         </div>
 
-        <button
-          type="button"
-          onClick={onContinue}
-          style={{
-            width: "100%",
-            height: "58px",
-            border: "none",
-            borderRadius: "20px",
-            background: "#F18726",
-            color: "#FFFFFF",
-            fontWeight: 700,
-            fontSize: "17px",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-          }}
-        >
+        <Btn onClick={onContinue}>
           Продолжить настройку
-          <span style={{ fontSize: 18, lineHeight: 1 }}>›</span>
-        </button>
+          <MSIcon name="arrow_forward" style={{ fontSize: 20 }} />
+        </Btn>
       </div>
     </div>
   );

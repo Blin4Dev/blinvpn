@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { useAppError } from "../components/ErrorModal";
@@ -245,7 +245,7 @@ export default function Payment() {
     position: "relative",
     width: "330px",
     height: "50px",
-    background: active ? "rgba(241, 135, 38, 0.7)" : "#3D3D3D",
+    background: active ? "rgba(255, 107, 26, 0.7)" : "#352E26",
     borderRadius: "30px",
     border: "none",
     padding: 0,
@@ -261,7 +261,7 @@ export default function Payment() {
   const pillStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
     height: "44px",
-    background: active ? "#F18726" : "#3D3D3D",
+    background: active ? "#FF6B1A" : "#352E26",
     borderRadius: "22px",
     border: "none",
     cursor: "pointer",
@@ -280,8 +280,8 @@ export default function Payment() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
+        background: "#0C0A08",
+        fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >
       <div
@@ -289,7 +289,7 @@ export default function Payment() {
           position: "relative",
           width: "402px",
           height: "803px",
-          background: "#212121",
+          background: "#14110E",
           overflow: "hidden",
           boxSizing: "border-box",
         }}
@@ -316,7 +316,7 @@ export default function Payment() {
             left: "26px",
             top: "87px",
             width: "350px",
-            background: "#333333",
+            background: "#2A241E",
             borderRadius: "30px",
             padding: "22px 27px 24px",
             boxSizing: "border-box",
@@ -350,7 +350,7 @@ export default function Payment() {
                   fontSize: "32px",
                   fontWeight: 700,
                   lineHeight: "39px",
-                  color: "#F18726",
+                  color: "#FF6B1A",
                 }}
               >
                 {displayPrice}
@@ -537,7 +537,7 @@ export default function Payment() {
                       display: "block",
                       width: "100%",
                       height: "100%",
-                      background: saveCard ? "#F18726" : "rgba(255,255,255,0.15)",
+                      background: saveCard ? "#FF6B1A" : "rgba(255,255,255,0.15)",
                       borderRadius: "13px",
                       transition: "background 0.2s ease",
                     }}
@@ -579,7 +579,7 @@ export default function Payment() {
                   <span style={{ fontSize: "15px", fontWeight: 500, color: "#FFFFFF", opacity: 0.7 }}>
                     Списать с реф. баланса
                   </span>
-                  <span style={{ fontSize: "11px", fontWeight: 500, color: "#F18726", opacity: 0.9 }}>
+                  <span style={{ fontSize: "11px", fontWeight: 500, color: "#FF6B1A", opacity: 0.9 }}>
                     {useRef && refApplied > 0
                       ? `−${refApplied} ₽ · останется ${Math.max(0, Math.floor(refBalance) - refApplied)} ₽`
                       : `доступно ${Math.floor(refBalance)} ₽`}
@@ -589,7 +589,7 @@ export default function Payment() {
                   <span
                     style={{
                       display: "block", width: "100%", height: "100%",
-                      background: useRef ? "#F18726" : "rgba(255,255,255,0.15)",
+                      background: useRef ? "#FF6B1A" : "rgba(255,255,255,0.15)",
                       borderRadius: "13px", transition: "background 0.2s ease",
                     }}
                   />
@@ -632,7 +632,7 @@ export default function Payment() {
             height: "50px",
             left: "36px",
             top: "717px",
-            background: belowMin ? "#555" : "#F18726",
+            background: belowMin ? "#555" : "#FF6B1A",
             borderRadius: "30px",
             border: "none",
             padding: 0,

@@ -1,11 +1,6 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+﻿import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { fetchConfig, openSupportWithError } from "../utils/api";
-
-/**
- * Единое интерфейсное окно ошибок вместо браузерного alert.
- * Показывает текст ошибки и кнопку «Написать в поддержку», в которой уже вписан
- * лог ошибки: https://t.me/blinteams?text=Здравствуйте. У меня возникла ошибка: <лог>
- */
+import { Btn, MSIcon, T, btnReset } from "./ui";
 
 type ErrorCtx = { showError: (message: string) => void };
 
@@ -42,30 +37,32 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.6)",
+            background: "rgba(8, 6, 4, 0.72)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             zIndex: 1000,
-            fontFamily: "'Inter', sans-serif",
-            padding: "24px",
+            fontFamily: T.font,
+            padding: 24,
             boxSizing: "border-box",
+            animation: "blinvpnFadeIn 0.18s ease both",
           }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
-              maxWidth: "340px",
-              background: "#2A2A2A",
-              borderRadius: "24px",
-              padding: "24px 22px 20px",
+              maxWidth: 340,
+              background: T.surface,
+              border: `1px solid ${T.borderStrong}`,
+              borderRadius: 26,
+              padding: "24px 22px 18px",
               boxSizing: "border-box",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              gap: "12px",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+              gap: 12,
+              animation: "blinvpnSheetUp 0.3s var(--ease-out) both",
             }}
           >
             <div
@@ -73,25 +70,24 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
                 width: 56,
                 height: 56,
                 borderRadius: "50%",
-                background: "rgba(255,77,77,0.15)",
+                background: T.dangerSoft,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 30,
               }}
             >
-              ⚠️
+              <MSIcon name="error" style={{ color: T.danger, fontSize: 30 }} />
             </div>
-            <div style={{ fontWeight: 700, fontSize: "19px", color: "#FFFFFF", textAlign: "center" }}>
+            <div style={{ fontWeight: 700, fontSize: 19, color: T.text, textAlign: "center", letterSpacing: "-0.02em" }}>
               Что-то пошло не так
             </div>
             <div
               style={{
-                fontSize: "14px",
+                fontSize: 14,
                 lineHeight: "20px",
-                color: "#C9C9C9",
+                color: T.textMuted,
                 textAlign: "center",
-                maxHeight: "120px",
+                maxHeight: 120,
                 overflowY: "auto",
                 width: "100%",
                 wordBreak: "break-word",
@@ -100,36 +96,26 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
               {msg}
             </div>
 
-            <button
-              type="button"
+            <Btn
               onClick={() => openSupportWithError(msg || "", supportBase)}
-              style={{
-                width: "100%",
-                height: "48px",
-                marginTop: "4px",
-                border: "none",
-                borderRadius: "16px",
-                background: "#F18726",
-                color: "#FFFFFF",
-                fontWeight: 600,
-                fontSize: "16px",
-                cursor: "pointer",
-              }}
+              style={{ marginTop: 4 }}
             >
               Написать в поддержку
-            </button>
+            </Btn>
             <button
               type="button"
               onClick={() => setMsg(null)}
+              className="blin-press"
               style={{
+                ...btnReset,
                 width: "100%",
-                height: "44px",
+                height: 44,
                 border: "none",
-                borderRadius: "16px",
+                borderRadius: T.radius.md,
                 background: "transparent",
-                color: "#9A9A9A",
-                fontWeight: 500,
-                fontSize: "15px",
+                color: T.textMuted,
+                fontWeight: 550,
+                fontSize: 15,
                 cursor: "pointer",
               }}
             >

@@ -85,9 +85,9 @@ export function initTelegramViewport(): void {
   try { tg.ready?.(); } catch { /* noop */ }
   try { tg.expand?.(); } catch { /* noop */ }
 
-  // Цвета шапки/фона под тёмную тему приложения.
-  try { tg.setBackgroundColor?.("#212121"); } catch { /* noop */ }
-  try { tg.setHeaderColor?.("#212121"); } catch { /* noop */ }
+  // Цвета шапки/фона под тёплую тему приложения.
+  try { tg.setBackgroundColor?.("#14110E"); } catch { /* noop */ }
+  try { tg.setHeaderColor?.("#14110E"); } catch { /* noop */ }
 
   const platform = String(tg.platform || "").toLowerCase();
   const isMobile = MOBILE_PLATFORMS.has(platform);

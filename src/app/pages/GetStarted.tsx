@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { MSIcon as MS } from "../components/ui";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { fetchAppLink, fetchPlans, openDeepLink, plansToPriceMap } from "../utils/api";
@@ -47,36 +47,13 @@ function detectDeviceKind(): DeviceKind {
   return "linux";
 }
 
-/** Свечение лого: плавная прогрессия от едва заметного до максимума */
+/** Мягкое свечение лого — один лёгкий слой вместо тяжёлых multi drop-shadow */
 const LOGO_GLOW: Record<number, string | undefined> = {
   1: undefined,
-
-  2: [
-    "drop-shadow(0px 0px 20px #F18726)",
-    "drop-shadow(0px 0px 12px #F18726)",
-    "drop-shadow(0px 0px 6px #F18726)",
-  ].join(" "),
-
-  3: [
-    "drop-shadow(0px 0px 60px #F18726)",
-    "drop-shadow(0px 0px 35px #F18726)",
-    "drop-shadow(0px 0px 18px #F18726)",
-    "drop-shadow(0px 0px 8px #F18726)",
-  ].join(" "),
-
-  4: [
-    "drop-shadow(0px 0px 40px #F18726)",
-    "drop-shadow(0px 0px 22px #F18726)",
-    "drop-shadow(0px 0px 12px #F18726)",
-    "drop-shadow(0px 0px 6px #F18726)",
-  ].join(" "),
-
-  5: [
-    "drop-shadow(0px 0px 55px #F18726)",
-    "drop-shadow(0px 0px 30px #F18726)",
-    "drop-shadow(0px 0px 16px #F18726)",
-    "drop-shadow(0px 0px 8px #F18726)",
-  ].join(" "),
+  2: "drop-shadow(0 0 18px rgba(255,107,26,0.35))",
+  3: "drop-shadow(0 0 28px rgba(255,107,26,0.45))",
+  4: "drop-shadow(0 0 22px rgba(255,107,26,0.4))",
+  5: "drop-shadow(0 0 26px rgba(255,107,26,0.42))",
 };
 
 const btnReset: React.CSSProperties = {
@@ -91,8 +68,8 @@ const pageShell: React.CSSProperties = {
   width: "402px",
   height: "803px",
   margin: "0 auto",
-  background: "#212121",
-  fontFamily: "'Inter', sans-serif",
+  background: "#14110E",
+  fontFamily: "'Outfit', system-ui, sans-serif",
   overflow: "hidden",
   flexShrink: 0,
   WebkitFontSmoothing: "antialiased",
@@ -114,7 +91,7 @@ function BottomCardTwoRows(props: {
           height: "135px",
           left: "26px",
           top: "628px",
-          background: "#333333",
+          background: "#2A241E",
           borderRadius: "30px",
         }}
       />
@@ -128,7 +105,7 @@ function BottomCardTwoRows(props: {
           height: "50px",
           left: "36px",
           top: "642px",
-          background: "#F18726",
+          background: "#FF6B1A",
           borderRadius: "30px",
           border: "none",
           cursor: "pointer",
@@ -148,7 +125,7 @@ function BottomCardTwoRows(props: {
           height: "50px",
           left: "36px",
           top: "699px",
-          background: "#3D3D3D",
+          background: "#352E26",
           borderRadius: "30px",
           border: "none",
           cursor: "pointer",
@@ -173,7 +150,7 @@ function BottomCardOneRow(props: { children: React.ReactNode; onClick?: () => vo
           height: "78px",
           left: "26px",
           top: "685px",
-          background: "#333333",
+          background: "#2A241E",
           borderRadius: "30px",
         }}
       />
@@ -187,7 +164,7 @@ function BottomCardOneRow(props: { children: React.ReactNode; onClick?: () => vo
           height: "50px",
           left: "36px",
           top: "699px",
-          background: "#F18726",
+          background: "#FF6B1A",
           borderRadius: "30px",
           border: "none",
           cursor: "pointer",
@@ -232,9 +209,9 @@ function AppChooser(props: {
           width: "330px",
           height: "64px",
           padding: "0 16px",
-          background: "#3D3D3D",
+          background: "#352E26",
           borderRadius: "22px",
-          border: opts.recommended ? "1px solid rgba(241,135,38,0.6)" : "none",
+          border: opts.recommended ? "1px solid rgba(255, 107, 26,0.6)" : "none",
           cursor: linking ? "wait" : "pointer",
           opacity: linking && !busy ? 0.5 : 1,
         }}
@@ -244,7 +221,7 @@ function AppChooser(props: {
             width: 40,
             height: 40,
             borderRadius: 10,
-            background: "#484848",
+            background: "#352E26",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -271,8 +248,8 @@ function AppChooser(props: {
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: "#F18726",
-                  background: "rgba(241,135,38,0.15)",
+                  color: "#FF6B1A",
+                  background: "rgba(255, 107, 26,0.15)",
                   borderRadius: 8,
                   padding: "2px 6px",
                 }}
@@ -281,11 +258,11 @@ function AppChooser(props: {
               </span>
             )}
           </span>
-          <span style={{ display: "block", fontSize: 12, color: "#8A8A8A", marginTop: 2 }}>
+          <span style={{ display: "block", fontSize: 12, color: "#A89B8C", marginTop: 2 }}>
             {busy ? "Открываем…" : opts.subtitle}
           </span>
         </span>
-        <MS name="chevron_right" style={{ fontSize: 22, color: "#F18726" }} />
+        <MS name="chevron_right" style={{ fontSize: 22, color: "#FF6B1A" }} />
       </button>
     );
   };
@@ -306,7 +283,7 @@ function AppChooser(props: {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: "100%",
-          background: "#212121",
+          background: "#14110E",
           borderTopLeftRadius: "30px",
           borderTopRightRadius: "30px",
           padding: "18px 26px 28px",
@@ -317,7 +294,7 @@ function AppChooser(props: {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <span style={{ fontWeight: 600, fontSize: 18, color: "#FFFFFF" }}>Выберите приложение</span>
           <button type="button" onClick={onClose} style={{ ...btnReset, cursor: "pointer" }}>
-            <MS name="close" style={{ fontSize: 24, color: "#8A8A8A" }} />
+            <MS name="close" style={{ fontSize: 24, color: "#A89B8C" }} />
           </button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -471,7 +448,7 @@ export default function GetStarted() {
         padding: 0,
         border: "none",
         borderRadius: "50%",
-        background: "#313131",
+        background: "#2A241E",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -520,8 +497,8 @@ export default function GetStarted() {
           alignItems: "center",
           boxSizing: "border-box",
           minHeight: "100vh",
-          background: "#111",
-          fontFamily: "'Inter', sans-serif",
+          background: "#0C0A08",
+          fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
         <div style={pageShell}>
@@ -588,7 +565,7 @@ export default function GetStarted() {
               height: "135px",
               left: "26px",
               top: "628px",
-              background: "#333333",
+              background: "#2A241E",
               borderRadius: "30px",
             }}
           />
@@ -602,7 +579,7 @@ export default function GetStarted() {
               height: "50px",
               left: "36px",
               top: "642px",
-              background: "#F18726",
+              background: "#FF6B1A",
               borderRadius: "30px",
               border: "none",
               cursor: "pointer",
@@ -638,7 +615,7 @@ export default function GetStarted() {
               height: "50px",
               left: "36px",
               top: "699px",
-              background: "#3D3D3D",
+              background: "#352E26",
               borderRadius: "30px",
               border: "none",
               cursor: "pointer",
@@ -679,8 +656,8 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#111",
-          fontFamily: "'Inter', sans-serif",
+          background: "#0C0A08",
+          fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
         <div style={pageShell}>
@@ -781,8 +758,8 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#111",
-          fontFamily: "'Inter', sans-serif",
+          background: "#0C0A08",
+          fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
         <div style={pageShell}>
@@ -888,7 +865,7 @@ export default function GetStarted() {
   const step4PillStyle = (active: boolean): React.CSSProperties => ({
     flex: 1,
     height: "44px",
-    background: active ? "#F18726" : "#3D3D3D",
+    background: active ? "#FF6B1A" : "#352E26",
     borderRadius: "22px",
     border: "none",
     cursor: "pointer",
@@ -908,8 +885,8 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#111",
-          fontFamily: "'Inter', sans-serif",
+          background: "#0C0A08",
+          fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
         <div style={pageShell}>
@@ -953,7 +930,7 @@ export default function GetStarted() {
               left: "26px",
               top: "570px",
               width: "350px",
-              background: "#333333",
+              background: "#2A241E",
               borderRadius: "30px",
               padding: "18px 20px 20px",
               boxSizing: "border-box",
@@ -1009,7 +986,7 @@ export default function GetStarted() {
               height: "50px",
               left: "36px",
               top: "717px",
-              background: "#F18726",
+              background: "#FF6B1A",
               borderRadius: "30px",
               border: "none",
               padding: 0,
@@ -1038,8 +1015,8 @@ export default function GetStarted() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#111",
-        fontFamily: "'Inter', sans-serif",
+        background: "#0C0A08",
+        fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >
       <div style={pageShell}>
