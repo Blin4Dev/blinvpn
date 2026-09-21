@@ -186,26 +186,6 @@ ensure_certbot_nginx() {
     exit 1
 }
 
-SITE_ROOT="/var/www/blinvpn-site"
-
-deploy_site_files() {
-    log_info "\nПубликация лендинга в ${SITE_ROOT}"
-    sudo mkdir -p "$SITE_ROOT"
-    if [[ -d "src/site" ]]; then
-        sudo rsync -a --delete "src/site/" "${SITE_ROOT}/" 2>/dev/null \
-            || sudo cp -a src/site/. "${SITE_ROOT}/"
-        if [[ -d "assets" ]]; then
-            sudo mkdir -p "${SITE_ROOT}/assets"
-            sudo rsync -a assets/ "${SITE_ROOT}/assets/" 2>/dev/null \
-                || sudo cp -a assets/. "${SITE_ROOT}/assets/"
-        fi
-        sudo chown -R www-data:www-data "$SITE_ROOT" 2>/dev/null || true
-        log_success "✔ файлы сайта развёрнуты."
-    else
-        log_warn "Каталог src/site не найден — пропускаем публикацию лендинга."
-    fi
-}
-
 # Общий блок проксирования webhook → сервис webhook:5000
 _webhook_location() {
     local path="$1"
@@ -223,9 +203,8 @@ EOF
 configure_nginx() {
     local miniapp_domain="$1"
     local panel_domain="$2"
-    local site_domain="$3"
-    local nginx_conf="$4"
-    local nginx_link="$5"
+    local nginx_conf="$3"
+    local nginx_link="$4"
 
     log_info "\nНастройка Nginx (HTTPS :443)"
     sudo rm -f /etc/nginx/sites-enabled/default
@@ -235,7 +214,7 @@ configure_nginx() {
 server {
     listen 80;
     listen [::]:80;
-    server_name ${miniapp_domain} ${panel_domain} ${site_domain};
+    server_name ${miniapp_domain} ${panel_domain};
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
@@ -325,35 +304,6 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
-
-# Маркетинговый сайт (статика)
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${site_domain};
-
-    ssl_certificate /etc/letsencrypt/live/${site_domain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${site_domain}/privkey.pem;
-
-    # Заголовки безопасности лендинга
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    root ${SITE_ROOT};
-    index index.html;
-
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
-
-    location ~* \\.(js|css|woff2?|png|jpg|jpeg|svg|ico|webp|gif)$ {
-        expires 7d;
-        add_header Cache-Control "public, max-age=604800";
-        try_files \$uri =404;
-    }
-}
 EOF
 
     sudo rm -f "$nginx_link"
@@ -389,8 +339,7 @@ gen_secret_hex() {
 create_env_file() {
     local domain="$1"
     local panel_domain="$2"
-    local site_domain="$3"
-    local email="$4"
+    local email="$3"
 
     section "Настройка переменных окружения"
 
@@ -436,8 +385,8 @@ create_env_file() {
     else
         MAIL_ENABLED="0"
     fi
-    prompt "  ${BOLD}Домен для писем${NC} (по умолч. ${site_domain}): " MAIL_DOMAIN_INPUT
-    MAIL_DOMAIN="${MAIL_DOMAIN_INPUT:-$site_domain}"
+    prompt "  ${BOLD}Домен для писем${NC} (по умолч. ${domain}): " MAIL_DOMAIN_INPUT
+    MAIL_DOMAIN="${MAIL_DOMAIN_INPUT:-$domain}"
     MAIL_FROM_NAME="BlinVPN"
     MAIL_FROM="no-reply@${MAIL_DOMAIN}"
     DKIM_SELECTOR="mail"
@@ -495,7 +444,6 @@ DKIM_PRIVATE_KEY_PATH=${DKIM_PRIVATE_KEY_PATH}
 # ===== URLs =====
 MINIAPP_URL=https://${domain}
 PANEL_URL=https://${panel_domain}
-SITE_URL=https://${site_domain}
 WEBHOOK_URL=https://${domain}
 API_URL=https://${domain}/api
 
@@ -511,6 +459,7 @@ DB_PATH=data/data.db
 # ===== Security =====
 ENV=production
 CORS_ORIGINS=https://${domain},https://${panel_domain},https://web.telegram.org
+# (сайта нет — лендинг в CORS не добавляется)
 TELEGRAM_INITDATA_MAX_AGE=86400
 TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
 PANEL_SETUP_TOKEN=${PANEL_SETUP_TOKEN}
@@ -521,7 +470,6 @@ MINIAPP_ALLOW_UNAUTH=0
 SSL_EMAIL=${email}
 MINIAPP_DOMAIN=${domain}
 PANEL_DOMAIN=${panel_domain}
-SITE_DOMAIN=${site_domain}
 WEBHOOK_DOMAIN=${domain}
 EOF
 
@@ -698,7 +646,7 @@ build_cors_origins_from_env() {
     local file="${1:-.env}"
     local origins=()
     local u key
-    for key in MINIAPP_URL PANEL_URL SITE_URL; do
+    for key in MINIAPP_URL PANEL_URL; do
         u="$(get_env_var "$key" "$file" 2>/dev/null || true)"
         u="${u%/}"
         if [[ -n "$u" ]]; then
@@ -850,18 +798,15 @@ obtain_certificates() {
 update_env_domains() {
     local miniapp="$1"
     local panel="$2"
-    local site="$3"
 
     set_env_var MINIAPP_DOMAIN "$miniapp"
     set_env_var WEBHOOK_DOMAIN "$miniapp"
     set_env_var PANEL_DOMAIN   "$panel"
-    set_env_var SITE_DOMAIN    "$site"
 
     set_env_var MINIAPP_URL         "https://${miniapp}"
     set_env_var WEBHOOK_URL         "https://${miniapp}"
     set_env_var API_URL             "https://${miniapp}/api"
     set_env_var PANEL_URL           "https://${panel}"
-    set_env_var SITE_URL            "https://${site}"
     set_env_var PLATEGA_RETURN_URL  "https://${miniapp}/success"
     set_env_var PLATEGA_FAILED_URL  "https://${miniapp}/failed"
     set_env_var CORS_ORIGINS        "https://${miniapp},https://${panel},https://web.telegram.org"
@@ -877,16 +822,14 @@ replace_domains_flow() {
         exit 1
     fi
 
-    local cur_miniapp cur_panel cur_site cur_email
+    local cur_miniapp cur_panel cur_email
     cur_miniapp=$(get_env_var MINIAPP_DOMAIN || true)
     cur_panel=$(get_env_var PANEL_DOMAIN || true)
-    cur_site=$(get_env_var SITE_DOMAIN || true)
     cur_email=$(get_env_var SSL_EMAIL || true)
 
     log_info "Текущие домены:"
     printf "  Мини-приложение : ${BOLD}%s${NC}\n" "${cur_miniapp:-—}"
     printf "  Панель          : ${BOLD}%s${NC}\n" "${cur_panel:-—}"
-    printf "  Сайт            : ${BOLD}%s${NC}\n" "${cur_site:-—}"
     echo
 
     if [[ -z "$cur_email" ]]; then
@@ -894,7 +837,7 @@ replace_domains_flow() {
         [[ -n "$cur_email" ]] || { log_error "Email обязателен."; exit 1; }
     fi
 
-    local new_miniapp="$cur_miniapp" new_panel="$cur_panel" new_site="$cur_site"
+    local new_miniapp="$cur_miniapp" new_panel="$cur_panel"
     local -a changed=()
     local -a old_domains=()
     local tmp
@@ -913,13 +856,6 @@ replace_domains_flow() {
         new_panel="$tmp"; changed+=("$new_panel"); old_domains+=("$cur_panel")
     fi
 
-    if [[ -n "$cur_site" ]] && confirm "Заменить домен сайта (${cur_site})? (y/n): "; then
-        prompt "  Новый домен сайта: " tmp
-        tmp=$(sanitize_domain "$tmp")
-        [[ -n "$tmp" ]] || { log_error "Некорректный домен."; exit 1; }
-        new_site="$tmp"; changed+=("$new_site"); old_domains+=("$cur_site")
-    fi
-
     if ((${#changed[@]} == 0)); then
         log_warn "Ни один домен не выбран. Изменений нет."
         return 0
@@ -928,7 +864,6 @@ replace_domains_flow() {
     log_info "\nНовые домены:"
     printf "  Мини-приложение : ${BOLD}%s${NC}\n" "$new_miniapp"
     printf "  Панель          : ${BOLD}%s${NC}\n" "$new_panel"
-    printf "  Сайт            : ${BOLD}%s${NC}\n" "$new_site"
     echo
     confirm "Применить замену? (y/n): " || { log_info "Отменено."; return 0; }
 
@@ -958,10 +893,10 @@ replace_domains_flow() {
     obtain_certificates "$cur_email" "${changed[@]}"
 
     section "Обновление Nginx"
-    configure_nginx "$new_miniapp" "$new_panel" "$new_site" "$NGINX_CONF" "$NGINX_LINK"
+    configure_nginx "$new_miniapp" "$new_panel" "$NGINX_CONF" "$NGINX_LINK"
 
     section "Обновление .env"
-    update_env_domains "$new_miniapp" "$new_panel" "$new_site"
+    update_env_domains "$new_miniapp" "$new_panel"
 
     section "Перезапуск Docker"
     if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
@@ -982,7 +917,7 @@ replace_domains_flow() {
         local od
         for od in "${old_domains[@]}"; do
             [[ -n "$od" ]] || continue
-            if [[ "$od" == "$new_miniapp" || "$od" == "$new_panel" || "$od" == "$new_site" ]]; then
+            if [[ "$od" == "$new_miniapp" || "$od" == "$new_panel" ]]; then
                 continue
             fi
             if [[ -d "/etc/letsencrypt/live/${od}" ]]; then
@@ -996,7 +931,6 @@ replace_domains_flow() {
     fi
 
     section "Замена доменов завершена"
-    printf "  Сайт            : ${YELLOW}https://%s${NC}\n" "$new_site"
     printf "  Мини-приложение : ${YELLOW}https://%s${NC}\n" "$new_miniapp"
     printf "  Панель          : ${YELLOW}https://%s${NC}\n" "$new_panel"
     if [[ "$new_miniapp" != "$cur_miniapp" ]]; then
@@ -1027,7 +961,6 @@ if [[ -f "$NGINX_CONF" ]]; then
         unset BLINVPN_POST_UPDATE
         section "Пост-обновление"
         migrate_security_update ".env"
-        deploy_site_files
         sudo docker-compose down --remove-orphans
         fix_container_data_permissions
         sudo docker-compose up -d --build
@@ -1037,9 +970,8 @@ if [[ -f "$NGINX_CONF" ]]; then
         if [[ -f "$NGINX_CONF" ]]; then
             _upd_mini="$(get_env_var MINIAPP_DOMAIN .env 2>/dev/null || get_env_var WEBHOOK_DOMAIN .env 2>/dev/null || true)"
             _upd_panel="$(get_env_var PANEL_DOMAIN .env 2>/dev/null || true)"
-            _upd_site="$(get_env_var SITE_DOMAIN .env 2>/dev/null || true)"
-            if [[ -n "$_upd_mini" && -n "$_upd_panel" && -n "$_upd_site" ]]; then
-                configure_nginx "$_upd_mini" "$_upd_panel" "$_upd_site" "$NGINX_CONF" "$NGINX_LINK"
+            if [[ -n "$_upd_mini" && -n "$_upd_panel" ]]; then
+                configure_nginx "$_upd_mini" "$_upd_panel" "$NGINX_CONF" "$NGINX_LINK"
             else
                 sudo nginx -t && sudo systemctl reload nginx || true
             fi
@@ -1117,22 +1049,16 @@ prompt "Домен панели (например panel.example.com): " USER_PAN
 PANEL_DOMAIN=$(sanitize_domain "$USER_PANEL_DOMAIN_INPUT")
 [[ -n "$PANEL_DOMAIN" ]] || { log_error "Некорректный домен панели."; exit 1; }
 
-prompt "Домен сайта / лендинга (например blinvpn.ru): " USER_SITE_DOMAIN_INPUT
-SITE_DOMAIN=$(sanitize_domain "$USER_SITE_DOMAIN_INPUT")
-[[ -n "$SITE_DOMAIN" ]] || { log_error "Некорректный домен сайта."; exit 1; }
-
 prompt "Email для Let's Encrypt: " EMAIL
 [[ -n "$EMAIL" ]] || { log_error "Email обязателен."; exit 1; }
 
 SERVER_IP=$(get_server_ip || true)
 DOMAIN_IP=$(resolve_domain_ip "$DOMAIN" || true)
 PANEL_DOMAIN_IP=$(resolve_domain_ip "$PANEL_DOMAIN" || true)
-SITE_DOMAIN_IP=$(resolve_domain_ip "$SITE_DOMAIN" || true)
 
 [[ -n "$SERVER_IP" ]] && log_info "IP сервера: ${SERVER_IP}"
 [[ -n "$DOMAIN_IP" ]] && log_info "IP ${DOMAIN}: ${DOMAIN_IP}"
 [[ -n "$PANEL_DOMAIN_IP" ]] && log_info "IP ${PANEL_DOMAIN}: ${PANEL_DOMAIN_IP}"
-[[ -n "$SITE_DOMAIN_IP" ]] && log_info "IP ${SITE_DOMAIN}: ${SITE_DOMAIN_IP}"
 
 if [[ -n "$SERVER_IP" && -n "$DOMAIN_IP" && "$SERVER_IP" != "$DOMAIN_IP" ]]; then
     log_warn "DNS ${DOMAIN} не совпадает с IP сервера."
@@ -1140,10 +1066,6 @@ if [[ -n "$SERVER_IP" && -n "$DOMAIN_IP" && "$SERVER_IP" != "$DOMAIN_IP" ]]; the
 fi
 if [[ -n "$SERVER_IP" && -n "$PANEL_DOMAIN_IP" && "$SERVER_IP" != "$PANEL_DOMAIN_IP" ]]; then
     log_warn "DNS ${PANEL_DOMAIN} не совпадает с IP сервера."
-    confirm "Продолжить? (y/n): " || exit 1
-fi
-if [[ -n "$SERVER_IP" && -n "$SITE_DOMAIN_IP" && "$SERVER_IP" != "$SITE_DOMAIN_IP" ]]; then
-    log_warn "DNS ${SITE_DOMAIN} не совпадает с IP сервера."
     confirm "Продолжить? (y/n): " || exit 1
 fi
 
@@ -1163,7 +1085,7 @@ TEMP_CONF="/tmp/blinvpn_certbot.conf"
 sudo tee "$TEMP_CONF" >/dev/null <<EOF
 server {
     listen 80;
-    server_name ${DOMAIN} ${PANEL_DOMAIN} ${SITE_DOMAIN};
+    server_name ${DOMAIN} ${PANEL_DOMAIN};
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
@@ -1179,7 +1101,7 @@ sudo ln -sf "$TEMP_CONF" "$NGINX_LINK"
 sudo nginx -t && sudo systemctl reload nginx
 sudo mkdir -p /var/www/html/.well-known/acme-challenge
 
-for d in "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN"; do
+for d in "$DOMAIN" "$PANEL_DOMAIN"; do
     if [[ -d "/etc/letsencrypt/live/${d}" ]]; then
         log_success "✔ сертификат для ${d} уже есть."
     else
@@ -1192,9 +1114,8 @@ done
 
 sudo rm -f "$TEMP_CONF"
 
-log_info "\nШаг 4: Nginx и лендинг"
-deploy_site_files
-configure_nginx "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$NGINX_CONF" "$NGINX_LINK"
+log_info "\nШаг 4: Nginx"
+configure_nginx "$DOMAIN" "$PANEL_DOMAIN" "$NGINX_CONF" "$NGINX_LINK"
 
 log_info "\nШаг 5: .env"
 if [[ -f ".env" ]]; then
@@ -1203,10 +1124,10 @@ if [[ -f ".env" ]]; then
         log_info "Используется существующий .env."
         migrate_security_update ".env"
     else
-        create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$EMAIL"
+        create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$EMAIL"
     fi
 else
-    create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$EMAIL"
+    create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$EMAIL"
 fi
 
 log_info "\nШаг 6: Docker"
@@ -1256,7 +1177,6 @@ printf "\n"
 printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
 printf "${BOLD}  Адреса${NC}\n"
 printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
-printf "  Сайт:             ${YELLOW}https://%s${NC}\n" "$SITE_DOMAIN"
 printf "  Мини-приложение:  ${YELLOW}https://%s${NC}\n" "$DOMAIN"
 printf "  Панель:           ${YELLOW}https://%s${NC}\n" "$PANEL_DOMAIN"
 printf "  API:              ${YELLOW}https://%s/api${NC}\n" "$DOMAIN"
