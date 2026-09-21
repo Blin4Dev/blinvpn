@@ -1,0 +1,1264 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m'
+RED=$'\033[0;31m'
+NC=$'\033[0m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
+
+log_info() { echo -e "${CYAN}$1${NC}"; }
+log_warn() { echo -e "${YELLOW}$1${NC}"; }
+log_success() { echo -e "${GREEN}$1${NC}"; }
+log_error() { echo -e "${RED}$1${NC}" >&2; }
+
+on_error() {
+    log_error "Ошибка на строке $1. Установка прервана."
+}
+trap 'on_error $LINENO' ERR
+
+prompt() {
+    local message="$1"
+    local __var="$2"
+    local value
+    read -r -p "$message" value < /dev/tty
+    printf -v "$__var" '%s' "$value"
+}
+
+confirm() {
+    local message="$1"
+    local reply
+    read -r -n1 -p "$message" reply < /dev/tty || true
+    echo
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+sanitize_domain() {
+    local input="$1"
+    echo "$input" \
+        | sed -e 's%^https\?://%%' -e 's%/.*$%%' \
+        | tr -cd 'A-Za-z0-9.-' \
+        | tr '[:upper:]' '[:lower:]'
+}
+
+get_server_ip() {
+    local ipv4_re='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    local ip
+    for url in \
+        "https://api.ipify.org" \
+        "https://ifconfig.co/ip" \
+        "https://ipv4.icanhazip.com"; do
+        ip=$(curl -fsS "$url" 2>/dev/null | tr -d '\r\n\t ')
+        if [[ $ip =~ $ipv4_re ]]; then
+            echo "$ip"
+            return 0
+        fi
+    done
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ $ip =~ $ipv4_re ]]; then
+        echo "$ip"
+    fi
+}
+
+resolve_domain_ip() {
+    local domain="$1"
+    local ipv4_re='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    local ip
+    ip=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | head -n1)
+    if [[ $ip =~ $ipv4_re ]]; then
+        echo "$ip"
+        return 0
+    fi
+    if command -v dig >/dev/null 2>&1; then
+        ip=$(dig +short A "$domain" 2>/dev/null | grep -E "$ipv4_re" | head -n1)
+        if [[ $ip =~ $ipv4_re ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+    if command -v nslookup >/dev/null 2>&1; then
+        ip=$(nslookup -type=A "$domain" 2>/dev/null | awk '/^Address: /{print $2; exit}')
+        if [[ $ip =~ $ipv4_re ]]; then
+            echo "$ip"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+ensure_packages() {
+    log_info "\nШаг 1: установка системных зависимостей"
+    declare -A packages=(
+        [git]='git'
+        [docker]='docker.io'
+        [docker-compose]='docker-compose'
+        [nginx]='nginx'
+        [curl]='curl'
+        [certbot]='certbot'
+        [dig]='dnsutils'
+        [rsync]='rsync'
+    )
+    local missing=()
+    for cmd in "${!packages[@]}"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            log_warn "«$cmd» не найден — устанавливаем пакет «${packages[$cmd]}»..."
+            missing+=("${packages[$cmd]}")
+        else
+            log_success "✔ $cmd уже установлен."
+        fi
+    done
+    if ((${#missing[@]})); then
+        export DEBIAN_FRONTEND=noninteractive
+        export DEBCONF_NONINTERACTIVE_SEEN=true
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends "${missing[@]}"
+        unset DEBIAN_FRONTEND
+        unset DEBCONF_NONINTERACTIVE_SEEN
+    else
+        log_info "Все необходимые пакеты уже установлены."
+    fi
+}
+
+ensure_services() {
+    for service in docker nginx; do
+        if ! sudo systemctl is-active --quiet "$service"; then
+            log_warn "Сервис $service не запущен — запускаем..."
+            sudo systemctl enable "$service"
+            sudo systemctl start "$service"
+        else
+            log_success "✔ сервис $service активен."
+        fi
+    done
+}
+
+ensure_certbot_nginx() {
+    log_info "\nПроверка плагина Certbot"
+
+    local has_nginx_plugin=0
+    if command -v certbot >/dev/null 2>&1; then
+        if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+            has_nginx_plugin=1
+        fi
+    fi
+
+    if [[ $has_nginx_plugin -eq 1 ]]; then
+        log_success "✔ плагин nginx для Certbot найден."
+        return
+    fi
+
+    if command -v apt-get >/dev/null 2>&1; then
+        log_info "Устанавливаю python3-certbot-nginx..."
+        export DEBIAN_FRONTEND=noninteractive
+        export DEBCONF_NONINTERACTIVE_SEEN=true
+        sudo apt-get update
+        if sudo apt-get install -y --no-install-recommends python3-certbot-nginx; then
+            if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+                log_success "✔ плагин nginx для Certbot установлен (apt)."
+                unset DEBIAN_FRONTEND
+                unset DEBCONF_NONINTERACTIVE_SEEN
+                return
+            fi
+        fi
+        unset DEBIAN_FRONTEND
+        unset DEBCONF_NONINTERACTIVE_SEEN
+    fi
+
+    log_warn "Пробую установить Certbot через snap..."
+    if ! command -v snap >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends snapd
+        unset DEBIAN_FRONTEND
+    fi
+    sudo snap install core || true
+    sudo snap refresh core || true
+    sudo snap install --classic certbot
+    sudo ln -sf /snap/bin/certbot /usr/bin/certbot
+
+    if certbot plugins 2>/dev/null | grep -qi 'nginx'; then
+        log_success "✔ плагин nginx для Certbot доступен (snap)."
+        return
+    fi
+
+    log_error "Плагин nginx для Certbot недоступен."
+    exit 1
+}
+
+SITE_ROOT="/var/www/blinvpn-site"
+
+deploy_site_files() {
+    log_info "\nПубликация лендинга в ${SITE_ROOT}"
+    sudo mkdir -p "$SITE_ROOT"
+    if [[ -d "src/site" ]]; then
+        sudo rsync -a --delete "src/site/" "${SITE_ROOT}/" 2>/dev/null \
+            || sudo cp -a src/site/. "${SITE_ROOT}/"
+        if [[ -d "assets" ]]; then
+            sudo mkdir -p "${SITE_ROOT}/assets"
+            sudo rsync -a assets/ "${SITE_ROOT}/assets/" 2>/dev/null \
+                || sudo cp -a assets/. "${SITE_ROOT}/assets/"
+        fi
+        sudo chown -R www-data:www-data "$SITE_ROOT" 2>/dev/null || true
+        log_success "✔ файлы сайта развёрнуты."
+    else
+        log_warn "Каталог src/site не найден — пропускаем публикацию лендинга."
+    fi
+}
+
+# Общий блок проксирования webhook → сервис webhook:5000
+_webhook_location() {
+    local path="$1"
+    cat <<EOF
+    location ${path} {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+EOF
+}
+
+configure_nginx() {
+    local miniapp_domain="$1"
+    local panel_domain="$2"
+    local site_domain="$3"
+    local nginx_conf="$4"
+    local nginx_link="$5"
+
+    log_info "\nНастройка Nginx (HTTPS :443)"
+    sudo rm -f /etc/nginx/sites-enabled/default
+
+    sudo tee "$nginx_conf" >/dev/null <<EOF
+# HTTP → HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${miniapp_domain} ${panel_domain} ${site_domain};
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+# Мини-приложение + API + payment webhooks
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${miniapp_domain};
+
+    ssl_certificate /etc/letsencrypt/live/${miniapp_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${miniapp_domain}/privkey.pem;
+
+    # Заголовки безопасности (мини-апп должен открываться внутри Telegram, поэтому без X-Frame-Options)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:9741;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 15s;
+    }
+
+    location ~* \\.(js|css|woff2?|png|jpg|svg|ico)$ {
+        proxy_pass http://127.0.0.1:9741;
+        proxy_set_header Host \$host;
+        add_header Cache-Control "public, max-age=86400";
+    }
+
+    # Внутренние service-to-service ручки недоступны снаружи.
+    location /api/internal {
+        return 404;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+$(_webhook_location /platega)
+}
+
+# Панель управления
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${panel_domain};
+
+    ssl_certificate /etc/letsencrypt/live/${panel_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${panel_domain}/privkey.pem;
+
+    # Заголовки безопасности панели (кликджекинг, sniffing, HSTS)
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location /api/internal {
+        return 404;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:9742;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+
+# Маркетинговый сайт (статика)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${site_domain};
+
+    ssl_certificate /etc/letsencrypt/live/${site_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${site_domain}/privkey.pem;
+
+    # Заголовки безопасности лендинга
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    root ${SITE_ROOT};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location ~* \\.(js|css|woff2?|png|jpg|jpeg|svg|ico|webp|gif)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        try_files \$uri =404;
+    }
+}
+EOF
+
+    sudo rm -f "$nginx_link"
+    sudo ln -s "$nginx_conf" "$nginx_link"
+    sudo nginx -t
+    sudo systemctl reload nginx
+    log_success "✔ конфигурация Nginx обновлена."
+}
+
+section() {
+    local title="$1"
+    local width=62
+    local pad=$(( (width - ${#title} - 2) / 2 ))
+    printf '\n'
+    printf "${CYAN}╭%s╮${NC}\n" "$(printf '─%.0s' $(seq 1 $width))"
+    printf "${CYAN}│${NC}%*s${BOLD}%s${NC}%*s${CYAN}│${NC}\n" \
+        $((pad + 1)) "" "$title" $((width - pad - ${#title} - 1)) ""
+    printf "${CYAN}╰%s╯${NC}\n" "$(printf '─%.0s' $(seq 1 $width))"
+}
+
+step() {
+    printf "  ${GREEN}%s${NC}  %s\n" "$1" "$2"
+}
+
+hint() {
+    printf "     ${DIM}↳ %s${NC}\n" "$1"
+}
+
+gen_secret_hex() {
+    openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p
+}
+
+create_env_file() {
+    local domain="$1"
+    local panel_domain="$2"
+    local site_domain="$3"
+    local email="$4"
+
+    section "Настройка переменных окружения"
+
+    section "Основной Telegram-бот"
+    prompt "  ${BOLD}Токен бота${NC}  (основной бот): " TELEGRAM_BOT_TOKEN
+    prompt "  ${BOLD}ID админа${NC}   (ваш Telegram ID): " TELEGRAM_ADMIN_ID
+    prompt "  ${BOLD}Username бота${NC} (без @, по умолч. blinvpn_bot): " BOT_USERNAME_INPUT
+    BOT_USERNAME="${BOT_USERNAME_INPUT:-blinvpn_bot}"
+
+    section "Форум-группа для служебных уведомлений"
+    echo -e "  Создайте группу-форум в Telegram, добавьте бота и получите ID группы."
+    echo -e "  Оставьте пустым — уведомления пойдут в личку админа.\n"
+    prompt "  ${BOLD}ID форум-группы${NC}  (например -1001234567890, или Enter): " NOTIFY_GROUP_ID
+    if [[ -n "$NOTIFY_GROUP_ID" ]]; then
+        prompt "  ${BOLD}ID ветки «Пополнения»${NC}: " NOTIFY_THREAD_DEPOSITS
+        prompt "  ${BOLD}ID ветки «Ошибки»${NC}: " NOTIFY_THREAD_ERRORS
+        prompt "  ${BOLD}ID ветки «Выводы»${NC}: " NOTIFY_THREAD_WITHDRAWALS
+    else
+        NOTIFY_GROUP_ID=""
+        NOTIFY_THREAD_DEPOSITS=""
+        NOTIFY_THREAD_ERRORS=""
+        NOTIFY_THREAD_WITHDRAWALS=""
+    fi
+
+    section "Бот поддержки"
+    prompt "  ${BOLD}Токен бота поддержки${NC}: " SUPPORT_BOT_TOKEN
+    prompt "  ${BOLD}ID группы поддержки${NC}: " SUPPORT_GROUP_ID
+    prompt "  ${BOLD}Юзернеймы админов${NC} (без @, по умолч. blin4icks): " SUPPORT_ADMIN_USERNAME_INPUT
+    SUPPORT_ADMIN_USERNAME="${SUPPORT_ADMIN_USERNAME_INPUT:-blin4icks}"
+
+    section "Remnawave · панель VPN"
+    prompt "  ${BOLD}Panel URL${NC}  (по умолч. http://localhost:3000): " REMWAVE_PANEL_URL_INPUT
+    REMWAVE_PANEL_URL="${REMWAVE_PANEL_URL_INPUT:-http://localhost:3000}"
+    prompt "  ${BOLD}API Token${NC}  (из панели Remnawave): " REMWAVE_API_KEY
+
+    # ── Почта (коды входа + email-рассылки, no-reply@домен) ──
+    # Без релеев и без почтового демона: приложение само шлёт письма напрямую
+    # на MX получателя и подписывает их DKIM. Нужен только DKIM-ключ + DNS-записи.
+    section "Почта (коды входа и email-рассылки)"
+    echo -e "  Письма уходят напрямую с ${BOLD}no-reply@вашего-домена${NC} — без внешних сервисов."
+    if confirm "  Включить отправку почты? (y/n): "; then
+        MAIL_ENABLED="1"
+    else
+        MAIL_ENABLED="0"
+    fi
+    prompt "  ${BOLD}Домен для писем${NC} (по умолч. ${site_domain}): " MAIL_DOMAIN_INPUT
+    MAIL_DOMAIN="${MAIL_DOMAIN_INPUT:-$site_domain}"
+    MAIL_FROM_NAME="BlinVPN"
+    MAIL_FROM="no-reply@${MAIL_DOMAIN}"
+    DKIM_SELECTOR="mail"
+    DKIM_PRIVATE_KEY_PATH="data/dkim/${MAIL_DOMAIN}.private"
+
+    TELEGRAM_WEBHOOK_SECRET="$(gen_secret_hex)"
+    PANEL_SETUP_TOKEN="$(gen_secret_hex)"
+    INTERNAL_API_SECRET="$(gen_secret_hex)"
+
+    cat > .env <<EOF
+# ===== Telegram =====
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
+BOT_USERNAME=${BOT_USERNAME}
+VITE_BOT_USERNAME=${BOT_USERNAME}
+
+# Форум-группа уведомлений
+NOTIFY_GROUP_ID=${NOTIFY_GROUP_ID}
+NOTIFY_THREAD_DEPOSITS=${NOTIFY_THREAD_DEPOSITS}
+NOTIFY_THREAD_ERRORS=${NOTIFY_THREAD_ERRORS}
+NOTIFY_THREAD_WITHDRAWALS=${NOTIFY_THREAD_WITHDRAWALS}
+
+# Бот поддержки
+SUPPORT_BOT_TOKEN=${SUPPORT_BOT_TOKEN}
+SUPPORT_GROUP_ID=${SUPPORT_GROUP_ID}
+SUPPORT_ADMIN_USERNAME=${SUPPORT_ADMIN_USERNAME}
+SUPPORT_URL=https://t.me/blinteams
+VITE_SUPPORT_URL=https://t.me/blinteams
+
+# ===== Remnawave =====
+REMWAVE_PANEL_URL=${REMWAVE_PANEL_URL}
+REMWAVE_API_KEY=${REMWAVE_API_KEY}
+
+# ===== Платежи: Platega / Telegram Stars =====
+# Ключи можно дописать позже в .env или в панели.
+
+# Platega
+PLATEGA_API_URL=https://app.platega.io
+PLATEGA_MERCHANT_ID=
+PLATEGA_SECRET_KEY=
+PLATEGA_RETURN_URL=https://${domain}/payment/waiting
+PLATEGA_FAILED_URL=https://${domain}/payment/waiting
+
+# Telegram Stars: bot = polling (рекомендуется), webhook = /api/telegram/webhook
+TELEGRAM_STARS_DELIVERY=bot
+
+# ===== Почта (прямая доставка на MX + DKIM, без релеев) =====
+MAIL_ENABLED=${MAIL_ENABLED}
+MAIL_DOMAIN=${MAIL_DOMAIN}
+MAIL_FROM=${MAIL_FROM}
+MAIL_FROM_NAME=${MAIL_FROM_NAME}
+DKIM_SELECTOR=${DKIM_SELECTOR}
+DKIM_PRIVATE_KEY_PATH=${DKIM_PRIVATE_KEY_PATH}
+
+# ===== URLs =====
+MINIAPP_URL=https://${domain}
+PANEL_URL=https://${panel_domain}
+SITE_URL=https://${site_domain}
+WEBHOOK_URL=https://${domain}
+API_URL=https://${domain}/api
+
+# Внутренние порты сервисов
+API_PORT=8000
+WEBHOOK_PORT=5000
+MINIAPP_PORT=9741
+PANEL_PORT=9742
+
+# Database
+DB_PATH=data/data.db
+
+# ===== Security =====
+ENV=production
+CORS_ORIGINS=https://${domain},https://${panel_domain},https://web.telegram.org
+TELEGRAM_INITDATA_MAX_AGE=86400
+TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
+PANEL_SETUP_TOKEN=${PANEL_SETUP_TOKEN}
+INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
+MINIAPP_ALLOW_UNAUTH=0
+
+# SSL / домены
+SSL_EMAIL=${email}
+MINIAPP_DOMAIN=${domain}
+PANEL_DOMAIN=${panel_domain}
+SITE_DOMAIN=${site_domain}
+WEBHOOK_DOMAIN=${domain}
+EOF
+
+    # .env содержит все секреты (токены, ключи Platega, INTERNAL_API_SECRET) —
+    # доступ только владельцу.
+    chmod 600 .env 2>/dev/null || true
+    log_success "✔ Файл .env создан (права 600)."
+    log_warn "\n⚠️  Логин и пароль панели будут показаны ниже, после запуска (один раз)."
+    log_warn "⚠️  Платежи (Platega, Telegram Stars) — ключи в .env или в панели."
+}
+
+# ─────────────────────────────────────────────────────────────
+# Почтовый сервер: локальный Postfix (send-only) + OpenDKIM.
+# Печатает DNS-записи (SPF, DKIM, DMARC), которые нужно добавить.
+# Все шаги защищены — сбой почты не роняет установку.
+# ─────────────────────────────────────────────────────────────
+DKIM_DNS_RECORD=""      # заполняется для финального вывода
+MAIL_SERVER_DOMAIN=""
+
+setup_mail_server() {
+    local maildomain selector keydir pubkey
+    [[ "$(get_env_var MAIL_ENABLED 2>/dev/null || echo 0)" == "1" ]] || return 0
+    maildomain="$(get_env_var MAIL_DOMAIN 2>/dev/null || true)"
+    [[ -n "$maildomain" ]] || { log_warn "MAIL_DOMAIN не задан — почта пропущена."; return 0; }
+
+    section "Почта (DKIM-ключ для прямой отправки)"
+    selector="$(get_env_var DKIM_SELECTOR 2>/dev/null || echo mail)"
+    # Запускается уже внутри каталога проекта → ключ в ./data/dkim.
+    keydir="$(pwd)/data/dkim"
+    MAIL_SERVER_DOMAIN="$maildomain"
+
+    mkdir -p "$keydir"
+    if [[ ! -f "${keydir}/${maildomain}.private" ]]; then
+        log_info "Генерирую DKIM-ключ (openssl, 2048 бит)…"
+        openssl genrsa -out "${keydir}/${maildomain}.private" 2048 2>/dev/null || {
+            log_warn "openssl genrsa не отработал — почта без подписи."; return 0; }
+    fi
+    openssl rsa -in "${keydir}/${maildomain}.private" -pubout -out "${keydir}/${maildomain}.public" 2>/dev/null || true
+    chmod 600 "${keydir}/${maildomain}.private" 2>/dev/null || true
+    # Ключ читает контейнер (том ./data:/app/data), владелец — как у остальной data.
+    sudo chown -R 1000:1000 "$keydir" 2>/dev/null || true
+
+    # Публичный ключ в одну строку → значение DKIM TXT-записи.
+    pubkey="$(grep -v '^-----' "${keydir}/${maildomain}.public" 2>/dev/null | tr -d '\n\r ' || true)"
+    if [[ -n "$pubkey" ]]; then
+        DKIM_DNS_RECORD="v=DKIM1; k=rsa; p=${pubkey}"
+    fi
+    log_success "✔ DKIM-ключ готов: data/dkim/${maildomain}.private"
+    return 0
+}
+
+print_mail_dns() {
+    local maildomain serverip selector
+    [[ "$(get_env_var MAIL_ENABLED 2>/dev/null || echo 0)" == "1" ]] || return 0
+    maildomain="$(get_env_var MAIL_DOMAIN 2>/dev/null || true)"
+    [[ -n "$maildomain" ]] || return 0
+    selector="$(get_env_var DKIM_SELECTOR 2>/dev/null || echo mail)"
+    serverip="${SERVER_IP:-$(get_server_ip 2>/dev/null || true)}"
+
+    printf "\n${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "${BOLD}  DNS-записи для почты (${maildomain}) — добавьте у регистратора${NC}\n"
+    printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "  ${BOLD}SPF${NC}   (TXT, хост @):\n    ${YELLOW}v=spf1 a mx ip4:%s ~all${NC}\n" "${serverip:-ВАШ_IP}"
+    printf "  ${BOLD}DMARC${NC} (TXT, хост _dmarc):\n    ${YELLOW}v=DMARC1; p=none; rua=mailto:postmaster@%s${NC}\n" "$maildomain"
+    if [[ -n "$DKIM_DNS_RECORD" ]]; then
+        printf "  ${BOLD}DKIM${NC}  (TXT, хост %s._domainkey):\n    ${YELLOW}%s${NC}\n" "$selector" "$DKIM_DNS_RECORD"
+    else
+        printf "  ${BOLD}DKIM${NC}  (TXT, хост %s._domainkey):\n    ${YELLOW}из data/dkim/%s.public${NC}\n" "$selector" "$maildomain"
+    fi
+    printf "  ${BOLD}PTR${NC}   (обратная запись): попросите хостинг указать %s → mail.%s\n" "${serverip:-ВАШ_IP}" "$maildomain"
+    printf "  ${DIM}После добавления записей письма не будут попадать в спам.${NC}\n"
+    printf "  ${DIM}Важно: у хостинга должен быть открыт исходящий порт 25.${NC}\n"
+}
+
+# Stars по умолчанию через bot polling. Webhook на API — только если TELEGRAM_STARS_DELIVERY=webhook.
+register_telegram_webhook() {
+    local bot_token="$1"
+    local domain="$2"
+
+    if [[ "${TELEGRAM_STARS_DELIVERY:-bot}" == "bot" ]]; then
+        log_info "\nTelegram Stars: режим bot (polling) — webhook на API не регистрируется."
+        hint "Для webhook-режима: TELEGRAM_STARS_DELIVERY=webhook в .env"
+        return 0
+    fi
+
+    if [[ -z "$bot_token" ]]; then
+        log_warn "TELEGRAM_BOT_TOKEN не задан — регистрация webhook пропущена."
+        return 0
+    fi
+
+    local webhook_url="https://${domain}/api/telegram/webhook"
+    local allowed_updates='["message","callback_query","pre_checkout_query","shipping_query"]'
+    local secret_token
+    secret_token="$(get_env_var TELEGRAM_WEBHOOK_SECRET .env 2>/dev/null || true)"
+    if [[ -z "$secret_token" ]]; then
+        secret_token="$(gen_secret_hex)"
+        set_env_var TELEGRAM_WEBHOOK_SECRET "$secret_token" .env 2>/dev/null || true
+    fi
+
+    log_info "\nРегистрация Telegram webhook (Stars)..."
+    log_info "  URL: ${webhook_url}"
+
+    local response http_code body
+    local payload
+    payload=$(printf '{"url":"%s","allowed_updates":%s,"secret_token":"%s"}' \
+        "$webhook_url" "$allowed_updates" "$secret_token")
+    response=$(curl -s -w "\n%{http_code}" -X POST \
+        "https://api.telegram.org/bot${bot_token}/setWebhook" \
+        -H "Content-Type: application/json" \
+        -d "${payload}" \
+        --max-time 15 2>/dev/null || true)
+
+    body=$(echo "$response" | head -n -1)
+    http_code=$(echo "$response" | tail -n1)
+
+    if echo "$body" | grep -q '"ok":true'; then
+        log_success "✔ Telegram webhook зарегистрирован."
+    else
+        log_warn "Не удалось зарегистрировать Telegram webhook (HTTP ${http_code})."
+        log_warn "  Ответ: ${body}"
+    fi
+}
+
+print_payment_webhooks() {
+    local domain="$1"
+    printf "\n"
+    printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "${BOLD}  Payment webhooks${NC}\n"
+    printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "  Platega:          ${YELLOW}https://%s/platega${NC}\n" "$domain"
+    printf "  Telegram Stars:   ${YELLOW}bot polling${NC} (или /api/telegram/webhook)\n"
+    printf "\n"
+}
+
+get_env_var() {
+    local key="$1"
+    local file="${2:-.env}"
+    [[ -f "$file" ]] || return 1
+    local line
+    line=$(grep -E "^${key}=" "$file" | tail -n1) || true
+    [[ -n "$line" ]] || return 1
+    printf '%s' "${line#*=}"
+}
+
+set_env_var() {
+    local key="$1"
+    local val="$2"
+    local file="${3:-.env}"
+    local esc="$val"
+    esc=${esc//\\/\\\\}
+    esc=${esc//&/\\&}
+    esc=${esc//|/\\|}
+    if grep -qE "^${key}=" "$file"; then
+        sed -i "s|^${key}=.*|${key}=${esc}|" "$file"
+    else
+        printf '%s=%s\n' "$key" "$val" >> "$file"
+    fi
+}
+
+ensure_env_var() {
+    local key="$1"
+    local val="$2"
+    local file="${3:-.env}"
+    local cur=""
+    cur="$(get_env_var "$key" "$file" 2>/dev/null || true)"
+    if [[ -z "$cur" ]]; then
+        set_env_var "$key" "$val" "$file"
+        return 0
+    fi
+    return 1
+}
+
+build_cors_origins_from_env() {
+    local file="${1:-.env}"
+    local origins=()
+    local u key
+    for key in MINIAPP_URL PANEL_URL SITE_URL; do
+        u="$(get_env_var "$key" "$file" 2>/dev/null || true)"
+        u="${u%/}"
+        if [[ -n "$u" ]]; then
+            origins+=("$u")
+        fi
+    done
+    origins+=("https://web.telegram.org")
+    local IFS=,
+    printf '%s' "${origins[*]}"
+}
+
+fix_container_data_permissions() {
+    mkdir -p data src/monitoring/logs
+    # Даём контейнеру (gid 1000) доступ, но НЕ ослабляем секреты: DKIM-ключ и БД
+    # с хэшами/сессиями не должны становиться доступны кому-то ещё на хосте.
+    chmod 750 data 2>/dev/null || true
+    # Контейнеры теперь работают под uid/gid 1000 — отдаём им владение data.
+    sudo chown -R 1000:1000 data src/monitoring/logs 2>/dev/null || chown -R 1000:1000 data src/monitoring/logs 2>/dev/null || true
+    chmod -R u+rwX,g+rwX data src/monitoring/logs 2>/dev/null || true
+    # Ужесточаем секреты обратно после рекурсивного chmod.
+    [ -d data/dkim ] && chmod 700 data/dkim 2>/dev/null || true
+    find data/dkim -type f -name '*.private' -exec chmod 600 {} \; 2>/dev/null || true
+    [ -f data/data.db ] && chmod 640 data/data.db 2>/dev/null || true
+    find data/backups -type f -name '*.db' -exec chmod 640 {} \; 2>/dev/null || true
+    chmod o-rwx data 2>/dev/null || true
+}
+
+migrate_security_update() {
+    local file="${1:-.env}"
+    if [[ ! -f "$file" ]]; then
+        log_warn "Файл ${file} не найден — миграция пропущена."
+        return 0
+    fi
+
+    section "Миграция .env"
+
+    local secret
+    if ensure_env_var TELEGRAM_INITDATA_MAX_AGE "86400" "$file"; then
+        log_info "  + TELEGRAM_INITDATA_MAX_AGE=86400"
+    fi
+
+    secret="$(gen_secret_hex)"
+    if ensure_env_var TELEGRAM_WEBHOOK_SECRET "$secret" "$file"; then
+        log_info "  + TELEGRAM_WEBHOOK_SECRET сгенерирован"
+    fi
+
+    secret="$(gen_secret_hex)"
+    if ensure_env_var PANEL_SETUP_TOKEN "$secret" "$file"; then
+        log_info "  + PANEL_SETUP_TOKEN сгенерирован"
+        log_warn "    Сброс пароля панели: /?setup_token=$(get_env_var PANEL_SETUP_TOKEN "$file")"
+    fi
+
+    secret="$(gen_secret_hex)"
+    if ensure_env_var INTERNAL_API_SECRET "$secret" "$file"; then
+        log_info "  + INTERNAL_API_SECRET сгенерирован"
+    fi
+
+    if ensure_env_var TELEGRAM_STARS_DELIVERY "bot" "$file"; then
+        log_info "  + TELEGRAM_STARS_DELIVERY=bot"
+    fi
+
+    local cors
+    cors="$(get_env_var CORS_ORIGINS "$file" 2>/dev/null || true)"
+    if [[ -z "$cors" ]]; then
+        cors="$(build_cors_origins_from_env "$file")"
+        set_env_var CORS_ORIGINS "$cors" "$file"
+        log_info "  + CORS_ORIGINS=${cors}"
+    fi
+
+    if ensure_env_var ENV "production" "$file"; then
+        log_info "  + ENV=production"
+    fi
+
+    local unauth
+    unauth="$(get_env_var MINIAPP_ALLOW_UNAUTH "$file" 2>/dev/null || true)"
+    if [[ "${unauth,,}" =~ ^(1|true|yes)$ ]]; then
+        set_env_var MINIAPP_ALLOW_UNAUTH "0" "$file"
+        log_warn "  ! MINIAPP_ALLOW_UNAUTH отключён (нельзя в production)"
+    fi
+
+    # Убрать устаревшие ключи из прошлых проектов (не критично, если их нет)
+    for stale in \
+        HELEKET_API_URL HELEKET_MERCHANT HELEKET_API_KEY \
+        PAYPEAR_RETURN_URL PAYPEAR_WEBHOOK_URL PAYPEAR_API_KEY PAYPEAR_MERCHANT \
+        ROLLYPAY_API_URL ROLLYPAY_API_KEY \
+        CRYPTOPAY_API_TOKEN CRYPTOPAY_WEBHOOK_URL \
+        SSL_PORT; do
+        if grep -qE "^${stale}=" "$file" 2>/dev/null; then
+            sed -i "/^${stale}=/d" "$file"
+            log_info "  − удалён устаревший ${stale}"
+        fi
+    done
+
+    fix_container_data_permissions
+    log_success "✔ миграция завершена."
+}
+
+obtain_certificates() {
+    local email="$1"; shift
+    local domains=("$@")
+    ((${#domains[@]})) || return 0
+
+    local temp_conf="/tmp/blinvpn_certbot_renew.conf"
+    local temp_link="/etc/nginx/sites-enabled/blinvpn-acme.conf"
+
+    log_info "Временная Nginx-конфигурация для ACME (порт 80)..."
+    sudo mkdir -p /var/www/html/.well-known/acme-challenge
+
+    local blocks="" d
+    for d in "${domains[@]}"; do
+        blocks+="server {
+    listen 80;
+    server_name ${d};
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+}
+"
+    done
+    printf '%s' "$blocks" | sudo tee "$temp_conf" >/dev/null
+    sudo ln -sf "$temp_conf" "$temp_link"
+
+    if ! sudo nginx -t; then
+        log_error "Ошибка проверки Nginx. Замена доменов прервана."
+        sudo rm -f "$temp_link" "$temp_conf"
+        sudo systemctl reload nginx || true
+        exit 1
+    fi
+    sudo systemctl reload nginx
+
+    for d in "${domains[@]}"; do
+        log_info "Выпуск сертификата для ${d}..."
+        if sudo certbot certonly --webroot -w /var/www/html -d "$d" \
+            --email "$email" --agree-tos --non-interactive --keep-until-expiring; then
+            log_success "✔ Сертификат для ${d} получен."
+        else
+            log_error "Не удалось получить сертификат для ${d}."
+            log_error "Проверьте A-запись ${d} и что порт 80 открыт."
+            sudo rm -f "$temp_link" "$temp_conf"
+            sudo systemctl reload nginx || true
+            exit 1
+        fi
+    done
+
+    sudo rm -f "$temp_link" "$temp_conf"
+    sudo systemctl reload nginx || true
+}
+
+update_env_domains() {
+    local miniapp="$1"
+    local panel="$2"
+    local site="$3"
+
+    set_env_var MINIAPP_DOMAIN "$miniapp"
+    set_env_var WEBHOOK_DOMAIN "$miniapp"
+    set_env_var PANEL_DOMAIN   "$panel"
+    set_env_var SITE_DOMAIN    "$site"
+
+    set_env_var MINIAPP_URL         "https://${miniapp}"
+    set_env_var WEBHOOK_URL         "https://${miniapp}"
+    set_env_var API_URL             "https://${miniapp}/api"
+    set_env_var PANEL_URL           "https://${panel}"
+    set_env_var SITE_URL            "https://${site}"
+    set_env_var PLATEGA_RETURN_URL  "https://${miniapp}/success"
+    set_env_var PLATEGA_FAILED_URL  "https://${miniapp}/failed"
+    set_env_var CORS_ORIGINS        "https://${miniapp},https://${panel},https://web.telegram.org"
+
+    log_success "✔ .env обновлён."
+}
+
+replace_domains_flow() {
+    section "Замена доменов и перевыпуск сертификатов"
+
+    if [[ ! -f ".env" ]]; then
+        log_error "Файл .env не найден в $(pwd)."
+        exit 1
+    fi
+
+    local cur_miniapp cur_panel cur_site cur_email
+    cur_miniapp=$(get_env_var MINIAPP_DOMAIN || true)
+    cur_panel=$(get_env_var PANEL_DOMAIN || true)
+    cur_site=$(get_env_var SITE_DOMAIN || true)
+    cur_email=$(get_env_var SSL_EMAIL || true)
+
+    log_info "Текущие домены:"
+    printf "  Мини-приложение : ${BOLD}%s${NC}\n" "${cur_miniapp:-—}"
+    printf "  Панель          : ${BOLD}%s${NC}\n" "${cur_panel:-—}"
+    printf "  Сайт            : ${BOLD}%s${NC}\n" "${cur_site:-—}"
+    echo
+
+    if [[ -z "$cur_email" ]]; then
+        prompt "Email для Let's Encrypt: " cur_email
+        [[ -n "$cur_email" ]] || { log_error "Email обязателен."; exit 1; }
+    fi
+
+    local new_miniapp="$cur_miniapp" new_panel="$cur_panel" new_site="$cur_site"
+    local -a changed=()
+    local -a old_domains=()
+    local tmp
+
+    if [[ -n "$cur_miniapp" ]] && confirm "Заменить домен мини-приложения (${cur_miniapp})? (y/n): "; then
+        prompt "  Новый домен мини-приложения: " tmp
+        tmp=$(sanitize_domain "$tmp")
+        [[ -n "$tmp" ]] || { log_error "Некорректный домен."; exit 1; }
+        new_miniapp="$tmp"; changed+=("$new_miniapp"); old_domains+=("$cur_miniapp")
+    fi
+
+    if [[ -n "$cur_panel" ]] && confirm "Заменить домен панели (${cur_panel})? (y/n): "; then
+        prompt "  Новый домен панели: " tmp
+        tmp=$(sanitize_domain "$tmp")
+        [[ -n "$tmp" ]] || { log_error "Некорректный домен."; exit 1; }
+        new_panel="$tmp"; changed+=("$new_panel"); old_domains+=("$cur_panel")
+    fi
+
+    if [[ -n "$cur_site" ]] && confirm "Заменить домен сайта (${cur_site})? (y/n): "; then
+        prompt "  Новый домен сайта: " tmp
+        tmp=$(sanitize_domain "$tmp")
+        [[ -n "$tmp" ]] || { log_error "Некорректный домен."; exit 1; }
+        new_site="$tmp"; changed+=("$new_site"); old_domains+=("$cur_site")
+    fi
+
+    if ((${#changed[@]} == 0)); then
+        log_warn "Ни один домен не выбран. Изменений нет."
+        return 0
+    fi
+
+    log_info "\nНовые домены:"
+    printf "  Мини-приложение : ${BOLD}%s${NC}\n" "$new_miniapp"
+    printf "  Панель          : ${BOLD}%s${NC}\n" "$new_panel"
+    printf "  Сайт            : ${BOLD}%s${NC}\n" "$new_site"
+    echo
+    confirm "Применить замену? (y/n): " || { log_info "Отменено."; return 0; }
+
+    local server_ip; server_ip=$(get_server_ip || true)
+    if [[ -n "$server_ip" ]]; then
+        log_info "IP сервера: ${server_ip}"
+        local dip
+        for tmp in "${changed[@]}"; do
+            dip=$(resolve_domain_ip "$tmp" || true)
+            if [[ -z "$dip" ]]; then
+                log_warn "Не удалось определить A-запись для ${tmp} (нужен ${server_ip})."
+                confirm "Продолжить всё равно? (y/n): " || exit 1
+            elif [[ "$dip" != "$server_ip" ]]; then
+                log_warn "DNS ${tmp} → ${dip} ≠ IP сервера (${server_ip})."
+                confirm "Продолжить всё равно? (y/n): " || exit 1
+            fi
+        done
+    fi
+
+    if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active'; then
+        log_warn "UFW активен — открываю 80 и 443."
+        sudo ufw allow 80/tcp || true
+        sudo ufw allow 443/tcp || true
+    fi
+
+    section "Выпуск сертификатов Let's Encrypt"
+    obtain_certificates "$cur_email" "${changed[@]}"
+
+    section "Обновление Nginx"
+    configure_nginx "$new_miniapp" "$new_panel" "$new_site" "$NGINX_CONF" "$NGINX_LINK"
+
+    section "Обновление .env"
+    update_env_domains "$new_miniapp" "$new_panel" "$new_site"
+
+    section "Перезапуск Docker"
+    if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
+        sudo docker-compose down
+    fi
+    sudo docker-compose up -d --build
+
+    if [[ "$new_miniapp" != "$cur_miniapp" ]]; then
+        section "Telegram Stars"
+        local bot_token; bot_token=$(get_env_var TELEGRAM_BOT_TOKEN || true)
+        TELEGRAM_STARS_DELIVERY="$(get_env_var TELEGRAM_STARS_DELIVERY || true)"
+        TELEGRAM_STARS_DELIVERY="${TELEGRAM_STARS_DELIVERY:-bot}"
+        register_telegram_webhook "$bot_token" "$new_miniapp"
+        print_payment_webhooks "$new_miniapp"
+    fi
+
+    if ((${#old_domains[@]})) && confirm "Удалить сертификаты заменённых доменов? (y/n): "; then
+        local od
+        for od in "${old_domains[@]}"; do
+            [[ -n "$od" ]] || continue
+            if [[ "$od" == "$new_miniapp" || "$od" == "$new_panel" || "$od" == "$new_site" ]]; then
+                continue
+            fi
+            if [[ -d "/etc/letsencrypt/live/${od}" ]]; then
+                if sudo certbot delete --cert-name "$od" --non-interactive 2>/dev/null; then
+                    log_info "Сертификат ${od} удалён."
+                else
+                    log_warn "Не удалось удалить сертификат ${od}."
+                fi
+            fi
+        done
+    fi
+
+    section "Замена доменов завершена"
+    printf "  Сайт            : ${YELLOW}https://%s${NC}\n" "$new_site"
+    printf "  Мини-приложение : ${YELLOW}https://%s${NC}\n" "$new_miniapp"
+    printf "  Панель          : ${YELLOW}https://%s${NC}\n" "$new_panel"
+    if [[ "$new_miniapp" != "$cur_miniapp" ]]; then
+        echo
+        log_warn "Обновите Web App URL в @BotFather:"
+        printf "     ${CYAN}https://%s${NC}\n" "$new_miniapp"
+    fi
+}
+
+REPO_URL="${BLINVPN_REPO_URL:-https://github.com/Blin4Dev/blinvpn.git}"
+REPO_BRANCH="${BLINVPN_BRANCH:-main}"
+PROJECT_DIR="blinvpn"
+NGINX_CONF="/etc/nginx/sites-available/${PROJECT_DIR}.conf"
+NGINX_LINK="/etc/nginx/sites-enabled/${PROJECT_DIR}.conf"
+
+log_success "--- Установка / обновление BlinVPN ---"
+
+# Режим обновления существующей установки
+if [[ -f "$NGINX_CONF" ]]; then
+    log_info "\nОбнаружена существующая конфигурация BlinVPN."
+    if [[ ! -d "$PROJECT_DIR" ]]; then
+        log_error "Nginx-конфиг есть, но каталог «${PROJECT_DIR}» отсутствует. Удалите $NGINX_CONF и повторите установку."
+        exit 1
+    fi
+    cd "$PROJECT_DIR"
+
+    if [[ "${BLINVPN_POST_UPDATE:-}" == "1" ]]; then
+        unset BLINVPN_POST_UPDATE
+        section "Пост-обновление"
+        migrate_security_update ".env"
+        deploy_site_files
+        sudo docker-compose down --remove-orphans
+        fix_container_data_permissions
+        sudo docker-compose up -d --build
+        fix_container_data_permissions
+        sudo docker-compose restart api webhook bot 2>/dev/null || true
+
+        if [[ -f "$NGINX_CONF" ]]; then
+            _upd_mini="$(get_env_var MINIAPP_DOMAIN .env 2>/dev/null || get_env_var WEBHOOK_DOMAIN .env 2>/dev/null || true)"
+            _upd_panel="$(get_env_var PANEL_DOMAIN .env 2>/dev/null || true)"
+            _upd_site="$(get_env_var SITE_DOMAIN .env 2>/dev/null || true)"
+            if [[ -n "$_upd_mini" && -n "$_upd_panel" && -n "$_upd_site" ]]; then
+                configure_nginx "$_upd_mini" "$_upd_panel" "$_upd_site" "$NGINX_CONF" "$NGINX_LINK"
+            else
+                sudo nginx -t && sudo systemctl reload nginx || true
+            fi
+        fi
+
+        log_success "\n🎉 Обновление завершено."
+        log_info "  • Перелогиньтесь в панели."
+        _upd_pst="$(get_env_var PANEL_SETUP_TOKEN .env 2>/dev/null || true)"
+        if [[ -n "$_upd_pst" ]]; then
+            log_info "  • PANEL_SETUP_TOKEN в .env (сброс пароля панели)."
+        fi
+        exit 0
+    fi
+
+    section "Существующая установка — выберите действие"
+    step "1)" "Обновить код и перезапустить контейнеры (по умолчанию)"
+    step "2)" "Заменить домен(ы) и перевыпустить сертификаты"
+    step "3)" "Выход"
+    echo
+    prompt "Ваш выбор [1/2/3] (Enter = 1): " ACTION_CHOICE
+    ACTION_CHOICE="${ACTION_CHOICE:-1}"
+
+    case "$ACTION_CHOICE" in
+        2)
+            replace_domains_flow
+            exit 0
+            ;;
+        3)
+            log_info "Выход без изменений."
+            exit 0
+            ;;
+        *)
+            log_info "\nОбновление исходного кода..."
+            git fetch origin
+            git reset --hard origin/"$REPO_BRANCH"
+            git checkout "$REPO_BRANCH" 2>/dev/null || git checkout -b "$REPO_BRANCH" --track origin/"$REPO_BRANCH"
+            git reset --hard origin/"$REPO_BRANCH"
+            log_success "✔ Репозиторий обновлён."
+
+            if [[ ! -f ./install.sh ]]; then
+                log_error "После обновления не найден ./install.sh."
+                exit 1
+            fi
+            log_info "\nЗапуск свежего install.sh..."
+            export BLINVPN_POST_UPDATE=1
+            cd ..
+            exec bash "$PROJECT_DIR/install.sh"
+            ;;
+    esac
+fi
+
+# ── Новая установка ──────────────────────────────────────────
+log_info "\nСуществующая конфигурация не найдена. Новая установка."
+
+ensure_packages
+ensure_services
+ensure_certbot_nginx
+
+log_info "\nШаг 2: клонирование репозитория"
+if [[ ! -d "$PROJECT_DIR/.git" ]]; then
+    git clone --branch "$REPO_BRANCH" "$REPO_URL" "$PROJECT_DIR"
+else
+    log_warn "Каталог $PROJECT_DIR уже есть — используем текущую версию."
+fi
+cd "$PROJECT_DIR"
+log_success "✔ Репозиторий BlinVPN готов."
+
+log_info "\nШаг 3: домены и SSL"
+
+prompt "Домен мини-приложения (например app.example.com): " USER_DOMAIN_INPUT
+DOMAIN=$(sanitize_domain "$USER_DOMAIN_INPUT")
+[[ -n "$DOMAIN" ]] || { log_error "Некорректный домен."; exit 1; }
+
+prompt "Домен панели (например panel.example.com): " USER_PANEL_DOMAIN_INPUT
+PANEL_DOMAIN=$(sanitize_domain "$USER_PANEL_DOMAIN_INPUT")
+[[ -n "$PANEL_DOMAIN" ]] || { log_error "Некорректный домен панели."; exit 1; }
+
+prompt "Домен сайта / лендинга (например blinvpn.ru): " USER_SITE_DOMAIN_INPUT
+SITE_DOMAIN=$(sanitize_domain "$USER_SITE_DOMAIN_INPUT")
+[[ -n "$SITE_DOMAIN" ]] || { log_error "Некорректный домен сайта."; exit 1; }
+
+prompt "Email для Let's Encrypt: " EMAIL
+[[ -n "$EMAIL" ]] || { log_error "Email обязателен."; exit 1; }
+
+SERVER_IP=$(get_server_ip || true)
+DOMAIN_IP=$(resolve_domain_ip "$DOMAIN" || true)
+PANEL_DOMAIN_IP=$(resolve_domain_ip "$PANEL_DOMAIN" || true)
+SITE_DOMAIN_IP=$(resolve_domain_ip "$SITE_DOMAIN" || true)
+
+[[ -n "$SERVER_IP" ]] && log_info "IP сервера: ${SERVER_IP}"
+[[ -n "$DOMAIN_IP" ]] && log_info "IP ${DOMAIN}: ${DOMAIN_IP}"
+[[ -n "$PANEL_DOMAIN_IP" ]] && log_info "IP ${PANEL_DOMAIN}: ${PANEL_DOMAIN_IP}"
+[[ -n "$SITE_DOMAIN_IP" ]] && log_info "IP ${SITE_DOMAIN}: ${SITE_DOMAIN_IP}"
+
+if [[ -n "$SERVER_IP" && -n "$DOMAIN_IP" && "$SERVER_IP" != "$DOMAIN_IP" ]]; then
+    log_warn "DNS ${DOMAIN} не совпадает с IP сервера."
+    confirm "Продолжить? (y/n): " || exit 1
+fi
+if [[ -n "$SERVER_IP" && -n "$PANEL_DOMAIN_IP" && "$SERVER_IP" != "$PANEL_DOMAIN_IP" ]]; then
+    log_warn "DNS ${PANEL_DOMAIN} не совпадает с IP сервера."
+    confirm "Продолжить? (y/n): " || exit 1
+fi
+if [[ -n "$SERVER_IP" && -n "$SITE_DOMAIN_IP" && "$SERVER_IP" != "$SITE_DOMAIN_IP" ]]; then
+    log_warn "DNS ${SITE_DOMAIN} не совпадает с IP сервера."
+    confirm "Продолжить? (y/n): " || exit 1
+fi
+
+if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active'; then
+    log_warn "UFW активен — открываю порты 80 и 443, закрываю внутренние."
+    sudo ufw allow 80/tcp
+    sudo ufw allow 443/tcp
+    # Внутренние сервисы (api/webhook) слушают только 127.0.0.1, но на всякий
+    # случай явно запрещаем их снаружи (defence-in-depth).
+    sudo ufw deny "${API_PORT:-8000}/tcp" 2>/dev/null || true
+    sudo ufw deny "${WEBHOOK_PORT:-5000}/tcp" 2>/dev/null || true
+fi
+
+log_info "\nПолучение SSL-сертификатов..."
+
+TEMP_CONF="/tmp/blinvpn_certbot.conf"
+sudo tee "$TEMP_CONF" >/dev/null <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN} ${PANEL_DOMAIN} ${SITE_DOMAIN};
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo rm -f "$NGINX_LINK"
+sudo ln -sf "$TEMP_CONF" "$NGINX_LINK"
+sudo nginx -t && sudo systemctl reload nginx
+sudo mkdir -p /var/www/html/.well-known/acme-challenge
+
+for d in "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN"; do
+    if [[ -d "/etc/letsencrypt/live/${d}" ]]; then
+        log_success "✔ сертификат для ${d} уже есть."
+    else
+        log_info "Выпуск сертификата для ${d}..."
+        sudo certbot certonly --webroot -w /var/www/html -d "$d" \
+            --email "$EMAIL" --agree-tos --non-interactive
+        log_success "✔ сертификат для ${d} получен."
+    fi
+done
+
+sudo rm -f "$TEMP_CONF"
+
+log_info "\nШаг 4: Nginx и лендинг"
+deploy_site_files
+configure_nginx "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$NGINX_CONF" "$NGINX_LINK"
+
+log_info "\nШаг 5: .env"
+if [[ -f ".env" ]]; then
+    log_warn "Файл .env уже существует."
+    if ! confirm "Перезаписать .env? (y/n): "; then
+        log_info "Используется существующий .env."
+        migrate_security_update ".env"
+    else
+        create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$EMAIL"
+    fi
+else
+    create_env_file "$DOMAIN" "$PANEL_DOMAIN" "$SITE_DOMAIN" "$EMAIL"
+fi
+
+log_info "\nШаг 6: Docker"
+fix_container_data_permissions
+if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
+    sudo docker-compose down
+fi
+sudo docker-compose up -d --build
+fix_container_data_permissions
+sudo docker-compose restart api webhook bot 2>/dev/null || true
+
+log_info "\nШаг 7: Telegram Stars"
+TELEGRAM_STARS_DELIVERY="$(get_env_var TELEGRAM_STARS_DELIVERY || true)"
+TELEGRAM_STARS_DELIVERY="${TELEGRAM_STARS_DELIVERY:-bot}"
+register_telegram_webhook "${TELEGRAM_BOT_TOKEN:-}" "$DOMAIN"
+
+log_info "\nШаг 8: Почта"
+setup_mail_server || log_warn "Почта не настроена (можно включить позже)."
+
+# Логин/пароль панели генерируются приложением при первом запуске и
+# записываются в data/first_run_credentials.txt. Показываем один раз и удаляем.
+log_info "\nШаг 9: Доступ в панель"
+PANEL_CREDS_FILE="data/first_run_credentials.txt"
+for _i in $(seq 1 30); do
+    [[ -f "$PANEL_CREDS_FILE" ]] && break
+    sleep 1
+done
+if [[ -f "$PANEL_CREDS_FILE" ]]; then
+    PANEL_LOGIN="$(get_env_var login "$PANEL_CREDS_FILE" 2>/dev/null || true)"
+    PANEL_PASS="$(get_env_var password "$PANEL_CREDS_FILE" 2>/dev/null || true)"
+    printf "\n${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "${BOLD}  Доступ в панель — сохраните, повторно НЕ показывается${NC}\n"
+    printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "  Логин:  ${YELLOW}%s${NC}\n" "$PANEL_LOGIN"
+    printf "  Пароль: ${YELLOW}%s${NC}\n" "$PANEL_PASS"
+    sudo rm -f "$PANEL_CREDS_FILE" 2>/dev/null || rm -f "$PANEL_CREDS_FILE" 2>/dev/null || true
+else
+    log_warn "Не удалось получить логин/пароль автоматически."
+    log_warn "Посмотрите их в логах: ${BOLD}sudo docker-compose logs api | grep -A3 'доступ в панель'${NC}"
+fi
+
+printf "\n"
+printf "${GREEN}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}\n"
+printf "${GREEN}┃${NC}  🎉 ${BOLD}Установка BlinVPN завершена${NC}                              ${GREEN}┃${NC}\n"
+printf "${GREEN}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}\n"
+printf "\n"
+printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+printf "${BOLD}  Адреса${NC}\n"
+printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+printf "  Сайт:             ${YELLOW}https://%s${NC}\n" "$SITE_DOMAIN"
+printf "  Мини-приложение:  ${YELLOW}https://%s${NC}\n" "$DOMAIN"
+printf "  Панель:           ${YELLOW}https://%s${NC}\n" "$PANEL_DOMAIN"
+printf "  API:              ${YELLOW}https://%s/api${NC}\n" "$DOMAIN"
+print_payment_webhooks "$DOMAIN"
+print_mail_dns

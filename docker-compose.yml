@@ -1,0 +1,78 @@
+# BlinVPN 2.0 — оркестрация сервисов
+#
+# Сервисы api / webhook / bot работают в network_mode: host — так они видят
+# Remnawave по http://localhost:3000 из .env и совпадают с проксированием
+# nginx на 127.0.0.1:{8000,5000} из install.sh. Порты берутся из .env.
+#
+# miniapp (9741) и panel (9742) — статические SPA за nginx, публикуются на
+# 127.0.0.1, куда их и проксирует внешний nginx.
+
+# Ротация логов: не даём docker-логам расти бесконечно (50 МБ × 3 файла на сервис).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+x-python-build: &python-build
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.python
+  env_file: .env
+  environment:
+    DB_PATH: /app/data/data.db
+  volumes:
+    - ./data:/app/data
+  restart: unless-stopped
+  network_mode: host
+  logging: *default-logging
+
+services:
+  api:
+    <<: *python-build
+    container_name: blinvpn-api
+    command: >
+      uvicorn core:app --host 127.0.0.1 --port ${API_PORT:-8000}
+      --forwarded-allow-ips 127.0.0.1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.getenv('API_PORT','8000'), timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  webhook:
+    <<: *python-build
+    container_name: blinvpn-webhook
+    command: >
+      uvicorn webhook:app --host 127.0.0.1 --port ${WEBHOOK_PORT:-5000}
+      --forwarded-allow-ips 127.0.0.1
+    depends_on:
+      - api
+
+  bot:
+    <<: *python-build
+    container_name: blinvpn-bot
+    command: python /app/src/bot/bot.py
+    depends_on:
+      - api
+
+  miniapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.miniapp
+    container_name: blinvpn-miniapp
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${MINIAPP_PORT:-9741}:80"
+
+  panel:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.panel
+    container_name: blinvpn-panel
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${PANEL_PORT:-9742}:80"

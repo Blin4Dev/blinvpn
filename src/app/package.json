@@ -1,0 +1,7 @@
+{
+  "name": "blinvpn-miniapp",
+  "private": true,
+  "type": "module",
+  "note": "Этот файл хранится в src/app по требованию структуры. Основной package.json остаётся в корне для npm-скриптов/установки зависимостей."
+}
+

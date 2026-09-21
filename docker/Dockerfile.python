@@ -1,0 +1,31 @@
+# Общий образ для сервисов api, webhook и bot BlinVPN
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Зависимости отдельно — лучше кешируется
+COPY docker/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Исходники
+COPY src /app/src
+
+# platega / telegram_stars / remnawave в src/api; ядро — в src/core
+ENV PYTHONPATH=/app/src/core:/app/src/api \
+    DB_PATH=/app/data/data.db
+
+# Непривилегированный пользователь (uid/gid 1000 совпадает с владельцем ./data,
+# который выставляет install.sh) — не запускаем сервисы от root.
+RUN groupadd -g 1000 app 2>/dev/null || true \
+    && useradd -u 1000 -g 1000 -m app 2>/dev/null || true \
+    && mkdir -p /app/data \
+    && chown -R app:app /app
+USER app
+WORKDIR /app/src/core
+
+# Команда переопределяется в docker-compose (api / webhook / bot)
+CMD ["uvicorn", "core:app", "--host", "127.0.0.1", "--port", "8000"]

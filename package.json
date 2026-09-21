@@ -1,0 +1,24 @@
+{
+  "name": "blinvpn",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BlinVPN — Telegram mini-app, панель и бэкенд",
+  "scripts": {
+    "dev:miniapp": "vite --config src/app/vite.config.ts",
+    "build:miniapp": "vite build --config src/app/vite.config.ts",
+    "preview:miniapp": "vite preview --config src/app/vite.config.ts"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.4"
+  }
+}
