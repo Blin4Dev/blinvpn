@@ -2,9 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./global.css";
-import { initTelegramViewport } from "./utils/telegram";
+import { initTelegramViewport, initStageScale } from "./utils/telegram";
 
-// Полноэкранный режим на телефоне / на всю высоту на компьютере.
+// Разворачиваем на всю высоту и вписываем макет 402px в ширину экрана.
+initStageScale();
 initTelegramViewport();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

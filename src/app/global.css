@@ -23,12 +23,30 @@
   -webkit-font-smoothing: antialiased;
 }
 
-html, body, #root {
+html, body {
   margin: 0;
   padding: 0;
   width: 100%;
   min-height: 100%;
   background: #111;
+  overflow-x: hidden;
+}
+
+/*
+ * Макет мини-приложения свёрстан под ширину 402px. Чтобы он аккуратно
+ * вписывался в ЛЮБОЙ экран телефона (не «уезжал», без горизонтального скролла,
+ * с точным попаданием по кнопкам), масштабируем весь #root так, чтобы 402px
+ * заняли всю доступную ширину. Значение --blin-scale выставляет JS по ширине
+ * окна (см. initStageScale в utils/telegram.ts).
+ */
+:root { --blin-scale: 1; }
+#root {
+  margin: 0;
+  background: #111;
+  transform: scale(var(--blin-scale));
+  transform-origin: top left;
+  width: calc(100% / var(--blin-scale));
+  min-height: calc(100vh / var(--blin-scale));
 }
 
 * {

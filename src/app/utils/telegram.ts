@@ -33,14 +33,49 @@ function webApp(): AnyTg | null {
   }
 }
 
-function supportsFullscreen(tg: AnyTg): boolean {
+export type TgUser = {
+  id?: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+};
+
+/** Данные пользователя из Telegram WebApp (initDataUnsafe.user), либо null. */
+export function tgUser(): TgUser | null {
   try {
-    if (typeof tg.requestFullscreen !== "function") return false;
-    if (typeof tg.isVersionAtLeast === "function") return tg.isVersionAtLeast("8.0");
-    return true;
+    const wa = (window as unknown as {
+      Telegram?: { WebApp?: { initDataUnsafe?: { user?: TgUser } } };
+    }).Telegram?.WebApp;
+    return wa?.initDataUnsafe?.user ?? null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+/**
+ * Вписывает фиксированный макет (ширина 402px) в реальную ширину экрана:
+ * выставляет CSS-переменную --blin-scale = min(1, ширина/402). Весь #root
+ * масштабируется по ней (см. global.css) — ничего не «уезжает» и не скроллится
+ * вбок, кнопки попадают точно. Пересчитывается при повороте/ресайзе.
+ */
+const DESIGN_WIDTH = 402;
+
+export function applyStageScale(): void {
+  try {
+    const w = window.visualViewport?.width || window.innerWidth || DESIGN_WIDTH;
+    const scale = Math.min(1, w / DESIGN_WIDTH);
+    document.documentElement.style.setProperty("--blin-scale", String(scale));
+  } catch { /* noop */ }
+}
+
+export function initStageScale(): void {
+  applyStageScale();
+  try {
+    window.addEventListener("resize", applyStageScale);
+    window.addEventListener("orientationchange", applyStageScale);
+    window.visualViewport?.addEventListener("resize", applyStageScale);
+  } catch { /* noop */ }
 }
 
 export function initTelegramViewport(): void {
@@ -48,7 +83,10 @@ export function initTelegramViewport(): void {
   if (!tg) return;
 
   try { tg.ready?.(); } catch { /* noop */ }
-  // Разворачиваем на всю высоту — это и есть fullsize на компьютере.
+  // Разворачиваем на всю высоту (fullsize). НЕ используем requestFullscreen:
+  // edge-to-edge режим заводит контент под чёлку/статус-бар и системные кнопки
+  // Telegram, из-за чего вёрстка «съезжает» сверху. expand() оставляет обычную
+  // безопасную область с шапкой Telegram.
   try { tg.expand?.(); } catch { /* noop */ }
 
   // Цвета шапки/фона под тёмную тему приложения.
@@ -57,16 +95,8 @@ export function initTelegramViewport(): void {
 
   const platform = String(tg.platform || "").toLowerCase();
   const isMobile = MOBILE_PLATFORMS.has(platform);
-
-  if (isMobile && supportsFullscreen(tg)) {
-    // Если fullscreen не удался (старый клиент) — откатываемся на expand().
-    try { tg.onEvent?.("fullscreenFailed", () => { try { tg.expand?.(); } catch { /* noop */ } }); } catch { /* noop */ }
-    try {
-      if (!tg.isFullscreen) tg.requestFullscreen?.();
-    } catch {
-      try { tg.expand?.(); } catch { /* noop */ }
-    }
-    // В полноэкранном режиме отключаем свайп-вниз, чтобы не закрывать приложение случайно.
+  if (isMobile) {
+    // Отключаем свайп-вниз, чтобы приложение не закрывалось случайно при скролле.
     try { tg.disableVerticalSwipes?.(); } catch { /* noop */ }
   }
 }

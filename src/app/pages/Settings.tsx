@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { BackCircleButton, MSIcon } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { fetchConfig, fetchMe, type AppUser } from "../utils/api";
+import { tgUser } from "../utils/telegram";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -27,6 +28,10 @@ export default function Settings() {
     ? `BlinVPN @${user.username}`
     : "BlinVPN @blinvpn_bot";
   const displayId = user?.telegram_id != null ? `ID: ${user.telegram_id}` : "ID: —";
+
+  const tg = tgUser();
+  const avatarUrl = tg?.photo_url || "";
+  const initial = (tg?.first_name || user?.username || "B").trim().charAt(0).toUpperCase();
 
   return (
     <div
@@ -90,16 +95,27 @@ export default function Settings() {
             height: "32px",
             left: "48px",
             top: "101px",
+            borderRadius: "50%",
+            overflow: "hidden",
+            background: "#484848",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#FFFFFF",
+            fontWeight: 700,
+            fontSize: 15,
           }}
         >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              borderRadius: "50%",
-              background: "#E3E3E3",
-            }}
-          />
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          ) : (
+            initial
+          )}
         </div>
 
         <div
