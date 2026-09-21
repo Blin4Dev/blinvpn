@@ -1,5 +1,5 @@
 ﻿import React, { useState } from "react";
-import { Btn, Field, MSIcon, PageHeader, Screen, T } from "../components/ui";
+import { Btn, Field, PageHeader, Screen, T } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch } from "../utils/api";
 
@@ -40,68 +40,40 @@ export default function Promocode() {
     <Screen>
       <PageHeader title="Промокод" onBack={goBack} />
 
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          textAlign: "center",
-          gap: 12,
-          marginTop: 28,
-          marginBottom: 28,
-        }}
-      >
-        <div
-          style={{
-            width: 88,
-            height: 88,
-            borderRadius: 28,
-            background: T.orangeSoft,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <MSIcon name="redeem" style={{ color: T.orange, fontSize: 44 }} />
-        </div>
-        <div style={{ fontWeight: 700, fontSize: 22, color: T.text, letterSpacing: "-0.02em" }}>
-          Активируйте промокод
-        </div>
-        <div style={{ fontSize: 14, color: T.textMuted, maxWidth: 260, lineHeight: "20px" }}>
-          Введите код и получите скидку на подписку.
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.5 }}>
+          Введите код — скидка применится к следующей оплате подписки.
         </div>
       </div>
 
+      <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8 }}>Код</div>
       <Field
         value={promo}
-        placeholder="Введите код"
+        placeholder="PROMO2026"
         onChange={(v) => setPromo(v.toUpperCase())}
         onKeyDown={(e) => { if (e.key === "Enter") void activate(); }}
         style={{
-          height: 58,
           fontWeight: 600,
-          fontSize: 18,
-          letterSpacing: "1px",
-          textAlign: "center",
+          letterSpacing: "0.06em",
           textTransform: "uppercase",
         }}
       />
 
-      {info && (
+      {info ? (
         <div
           style={{
-            marginTop: 14,
-            textAlign: "center",
-            fontSize: 14,
+            marginTop: 12,
+            fontSize: 13,
             color: ok ? T.success : T.danger,
+            lineHeight: 1.4,
           }}
         >
           {info}
         </div>
-      )}
+      ) : null}
 
-      <Btn disabled={busy} onClick={() => void activate()} style={{ marginTop: 20 }}>
-        {busy ? "…" : "Активировать"}
+      <Btn disabled={busy || !promo.trim()} onClick={() => void activate()} style={{ marginTop: 20 }}>
+        {busy ? "Проверяем…" : "Активировать"}
       </Btn>
     </Screen>
   );

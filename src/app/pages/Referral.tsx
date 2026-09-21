@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from "react";
-import { MSIcon } from "../components/ui";
+import { Btn, Field, PageHeader, Screen, SectionLabel, Surface, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, requestWithdraw } from "../utils/api";
 
@@ -22,8 +22,6 @@ export default function Referral() {
   const goBack = useSmartBack("/");
   const [data, setData] = useState<ReferralData | null>(null);
   const [copied, setCopied] = useState<"" | "tg" | "web">("");
-
-  // Вывод средств
   const [sheet, setSheet] = useState(false);
   const [amount, setAmount] = useState("");
   const [address, setAddress] = useState("");
@@ -47,13 +45,12 @@ export default function Referral() {
   const refs = data?.referrals || [];
   const minWithdraw = Number(data?.min_withdraw || MIN_WITHDRAW);
   const code = data?.code || "";
-
   const tgLink = data?.link || "";
-  // «Ссылка для сайта» — публичный веб-адрес приложения с реф-кодом.
   const webLink = code ? `${window.location.origin}/?ref=${code}` : "";
 
   const openSheet = () => {
-    setWErr(""); setWOk(false);
+    setWErr("");
+    setWOk(false);
     setAmount(balance >= minWithdraw ? String(Math.floor(balance)) : "");
     setAddress("");
     setSheet(true);
@@ -89,228 +86,179 @@ export default function Referral() {
     } catch { /* ignore */ }
   };
 
-  const card: React.CSSProperties = { background: "#1E1A16", borderRadius: 24 };
-  const caption: React.CSSProperties = { fontWeight: 600, fontSize: 13, color: "#A89B8C", margin: "18px 8px 8px" };
-
-  const LinkField = ({ label, url, which }: { label: string; url: string; which: "tg" | "web" }) => (
-    <div style={{ padding: "14px 16px", borderBottom: which === "tg" && webLink ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
-      <div style={{ fontWeight: 600, fontSize: 13, color: "#A89B8C", marginBottom: 8 }}>{label}</div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            flex: 1, minWidth: 0, background: "#2A241E", borderRadius: 12, padding: "11px 14px",
-            color: "#FFF8F0", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}
-        >
-          {url || "—"}
-        </div>
-        <button
-          type="button"
-          onClick={() => void copy(url, which)}
-          style={{
-            flex: "0 0 auto", height: 40, padding: "0 16px", borderRadius: 12, border: "none",
-            background: copied === which ? "#3D8B4E" : "#FF6B1A", color: "#FFF8F0", fontWeight: 600,
-            fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-          }}
-        >
-          <MSIcon name={copied === which ? "check" : "content_copy"} style={{ color: "#FFF8F0", fontSize: 18 }} />
-          {copied === which ? "Скоп." : "Копир."}
-        </button>
-      </div>
-    </div>
-  );
-
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#14110E",
-        fontFamily: "'Outfit', system-ui, sans-serif",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 402,
-          minHeight: "100vh",
-          padding: "20px 20px 32px",
-          boxSizing: "border-box",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        {/* Шапка */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
-          <button
-            type="button"
-            onClick={goBack}
-            aria-label="Назад"
-            style={{
-              flex: "0 0 auto", width: 40, height: 40, borderRadius: "50%",
-              background: "#2A241E", border: "none", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <MSIcon name="chevron_left" style={{ color: "#FFF8F0", fontSize: 24 }} />
-          </button>
-          <div style={{ fontWeight: 700, fontSize: 26, color: "#FFF8F0" }}>Друзья</div>
-        </div>
+    <Screen>
+      <PageHeader title="Друзья" onBack={goBack} />
 
-        {/* Баланс / статистика */}
-        <div style={{ ...card, padding: 18 }}>
-          <div style={{ display: "flex", gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFF8F0" }}>{balance} ₽</div>
-              <div style={{ fontWeight: 500, fontSize: 13, color: "#A89B8C", marginTop: 2 }}>Заработано</div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, fontSize: 26, color: "#FFF8F0" }}>{count} чел</div>
-              <div style={{ fontWeight: 500, fontSize: 13, color: "#A89B8C", marginTop: 2 }}>Приглашено</div>
-            </div>
+      <div style={{ display: "flex", gap: 24, marginBottom: 16 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 28, color: T.text, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
+            {balance} ₽
           </div>
-          <button
-            type="button"
-            onClick={openSheet}
-            style={{
-              width: "100%", marginTop: 16, height: 46, borderRadius: 14, border: "none",
-              background: "#352E26", color: "#FFF8F0", fontWeight: 600, fontSize: 15, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            }}
-          >
-            <MSIcon name="arrow_outward" style={{ color: "#FF6B1A", fontSize: 20 }} />
-            Вывести (USDT TON)
-          </button>
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Заработано</div>
         </div>
-
-        {/* Ссылки для приглашения */}
-        <div style={caption}>Ваши ссылки</div>
-        <div style={card}>
-          <LinkField label="Ссылка Telegram" url={tgLink} which="tg" />
-          {webLink && <LinkField label="Ссылка для сайта" url={webLink} which="web" />}
-        </div>
-
-        {/* Приглашённые */}
-        <div style={caption}>Приглашённые</div>
-        <div style={{ ...card, padding: hasReferrals ? 10 : 24, flex: hasReferrals ? "0 0 auto" : "1 0 auto" }}>
-          {hasReferrals ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {refs.map((u) => {
-                const label = u.name
-                  || (u.username ? `@${u.username}` : u.telegram_id ? `id${u.telegram_id}` : `Пользователь #${u.id}`);
-                const initial = (u.initial || label.replace(/^[@#]/, "").charAt(0) || "?").toUpperCase();
-                return (
-                  <div
-                    key={u.id}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 12,
-                      background: "#352E26", borderRadius: 16, padding: "12px 14px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        flex: "0 0 auto", width: 34, height: 34, borderRadius: "50%",
-                        background: "radial-gradient(circle at 35% 30%, #ffb879 0%, #FF6B1A 45%, #8e4f12 100%)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        color: "#FFF8F0", fontWeight: 700, fontSize: 15,
-                      }}
-                    >
-                      {initial}
-                    </div>
-                    <div style={{ minWidth: 0, fontWeight: 600, fontSize: 15, color: "#FFF8F0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {label}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 12, padding: "24px 8px" }}>
-              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#352E26", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <MSIcon name="group_add" style={{ color: "#A89B8C", fontSize: 30 }} />
-              </div>
-              <div style={{ fontWeight: 600, fontSize: 16, color: "#FFF8F0" }}>Пока нет приглашённых</div>
-              <div style={{ fontSize: 14, color: "#A89B8C", maxWidth: 260, lineHeight: "20px" }}>
-                Отправьте свою ссылку друзьям — за их покупки вы получаете вознаграждение.
-              </div>
-            </div>
-          )}
-        </div>
-
-        {sheet && (
-          <div
-            onClick={() => !submitting && setSheet(false)}
-            style={{
-              position: "fixed", inset: 0, background: "rgba(8,6,4,0.72)",
-              display: "flex", alignItems: "flex-end", zIndex: 50,
-            }}
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: "100%", maxWidth: 402, margin: "0 auto", background: "#14110E",
-                borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "22px 24px 28px",
-                boxSizing: "border-box", borderTop: "1px solid rgba(255,248,240,0.12)",
-              }}
-            >
-              <div style={{ width: 44, height: 5, borderRadius: 3, background: "#6F6458", margin: "0 auto 18px" }} />
-              <div style={{ color: "#FFF8F0", fontWeight: 600, fontSize: 20, marginBottom: 4 }}>Вывод средств</div>
-              <div style={{ color: "#A89B8C", fontSize: 13, marginBottom: 18 }}>
-                Только USDT TON. Минимум {minWithdraw}₽. Доступно: {Math.floor(balance)}₽
-              </div>
-
-              {wOk ? (
-                <div style={{ color: "#4ADE80", fontSize: 15, fontWeight: 500, padding: "18px 0" }}>
-                  Заявка создана. Средства заморожены до решения администратора.
-                </div>
-              ) : (
-                <>
-                  <label style={{ color: "#A89B8C", fontSize: 12 }}>Сумма, ₽</label>
-                  <input
-                    inputMode="numeric"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ""))}
-                    placeholder={String(minWithdraw)}
-                    style={{
-                      width: "100%", boxSizing: "border-box", marginTop: 6, marginBottom: 14,
-                      background: "#2A241E", border: "none", borderRadius: 16, padding: "14px 16px",
-                      color: "#FFF8F0", fontSize: 16, outline: "none",
-                    }}
-                  />
-                  <label style={{ color: "#A89B8C", fontSize: 12 }}>Адрес (UQ… / EQ… / .ton / .t.me)</label>
-                  <input
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    placeholder="UQ… или name.ton"
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    style={{
-                      width: "100%", boxSizing: "border-box", marginTop: 6, marginBottom: 8,
-                      background: "#2A241E", border: "none", borderRadius: 16, padding: "14px 16px",
-                      color: "#FFF8F0", fontSize: 15, outline: "none",
-                    }}
-                  />
-                  {wErr && <div style={{ color: "#F87171", fontSize: 13, marginBottom: 8 }}>{wErr}</div>}
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => void submitWithdraw()}
-                    style={{
-                      width: "100%", marginTop: 10, background: "#FF6B1A", border: "none",
-                      borderRadius: 18, padding: "15px 0", color: "#FFF8F0", fontSize: 16, fontWeight: 600,
-                      cursor: "pointer", opacity: submitting ? 0.6 : 1,
-                    }}
-                  >
-                    {submitting ? "Отправка…" : "Запросить вывод"}
-                  </button>
-                </>
-              )}
-            </div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 28, color: T.text, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums" }}>
+            {count}
           </div>
-        )}
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 4 }}>Приглашено</div>
+        </div>
       </div>
-    </div>
+
+      <Btn variant="secondary" onClick={openSheet} style={{ marginBottom: 8 }}>
+        Вывести USDT TON
+      </Btn>
+
+      <SectionLabel>Ссылки</SectionLabel>
+      <Surface padded>
+        {(
+          [
+            { label: "Telegram", url: tgLink, which: "tg" as const },
+            ...(webLink ? [{ label: "Сайт", url: webLink, which: "web" as const }] : []),
+          ]
+        ).map((row, i, arr) => (
+          <div
+            key={row.which}
+            style={{
+              padding: "12px 0",
+              borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : "none",
+            }}
+          >
+            <div style={{ fontSize: 12, color: T.textMuted, marginBottom: 8 }}>{row.label}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 13,
+                  color: T.text,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontFamily: T.font,
+                }}
+              >
+                {row.url || "—"}
+              </div>
+              <button
+                type="button"
+                onClick={() => void copy(row.url, row.which)}
+                className="blin-press"
+                style={{
+                  ...btnReset,
+                  flexShrink: 0,
+                  height: 36,
+                  padding: "0 12px",
+                  borderRadius: 10,
+                  border: `1px solid ${T.border}`,
+                  background: copied === row.which ? T.successSoft : T.surfaceRaised,
+                  color: copied === row.which ? T.success : T.text,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+              >
+                {copied === row.which ? "Готово" : "Копировать"}
+              </button>
+            </div>
+          </div>
+        ))}
+      </Surface>
+
+      <SectionLabel>Приглашённые</SectionLabel>
+      {!hasReferrals ? (
+        <div style={{ paddingTop: 8 }}>
+          <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.5 }}>
+            Пока никого нет. Отправьте ссылку — за покупки друзей начисляется вознаграждение.
+          </div>
+        </div>
+      ) : (
+        <Surface padded>
+          {refs.map((u, i) => {
+            const label =
+              u.name ||
+              (u.username ? `@${u.username}` : u.telegram_id ? `id${u.telegram_id}` : `Пользователь #${u.id}`);
+            return (
+              <div
+                key={u.id}
+                style={{
+                  padding: "13px 0",
+                  borderBottom: i < refs.length - 1 ? `1px solid ${T.border}` : "none",
+                  fontWeight: 500,
+                  fontSize: 15,
+                  color: T.text,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {label}
+              </div>
+            );
+          })}
+        </Surface>
+      )}
+
+      {sheet && (
+        <div
+          onClick={() => !submitting && setSheet(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(8,6,4,0.7)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 402,
+              background: T.bg,
+              borderTop: `1px solid ${T.border}`,
+              padding: "16px 26px 28px",
+              boxSizing: "border-box",
+            }}
+          >
+            <div style={{ width: 36, height: 3, borderRadius: 2, background: T.textDim, margin: "0 auto 14px" }} />
+            <div style={{ fontWeight: 600, fontSize: 17, color: T.text, marginBottom: 4 }}>Вывод средств</div>
+            <div style={{ color: T.textMuted, fontSize: 13, marginBottom: 16, lineHeight: 1.4 }}>
+              USDT в сети TON. Минимум {minWithdraw}₽. Доступно: {Math.floor(balance)}₽
+            </div>
+
+            {wOk ? (
+              <div style={{ color: T.success, fontSize: 14, padding: "12px 0" }}>
+                Заявка создана. Средства заморожены до решения администратора.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 6 }}>Сумма, ₽</div>
+                <Field
+                  value={amount}
+                  onChange={(v) => setAmount(v.replace(/[^\d]/g, ""))}
+                  placeholder={String(minWithdraw)}
+                  inputMode="numeric"
+                />
+                <div style={{ fontSize: 13, color: T.textMuted, margin: "14px 0 6px" }}>
+                  Адрес (UQ… / EQ… / .ton / .t.me)
+                </div>
+                <Field
+                  value={address}
+                  onChange={setAddress}
+                  placeholder="UQ… или name.ton"
+                />
+                {wErr ? <div style={{ color: T.danger, fontSize: 13, marginTop: 8 }}>{wErr}</div> : null}
+                <Btn disabled={submitting} onClick={() => void submitWithdraw()} style={{ marginTop: 16 }}>
+                  {submitting ? "Отправка…" : "Запросить вывод"}
+                </Btn>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </Screen>
   );
 }

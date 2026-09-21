@@ -1,6 +1,6 @@
 ﻿import React, { useState } from "react";
 import { fetchMembership, tgWebApp, type Membership } from "../utils/api";
-import { Btn, BrandMark, MSIcon, T, pageFrame, pageOuter } from "../components/ui";
+import { Btn, BrandMark, T, pageFrame, pageOuter } from "../components/ui";
 
 export default function ChannelGate({
   membership,
@@ -29,53 +29,33 @@ export default function ChannelGate({
     const m = await fetchMembership(true);
     setChecking(false);
     if (m.subscribed) onPassed();
-    else setErr("Мы пока не видим подписку. Подпишитесь и нажмите ещё раз.");
+    else setErr("Подписка пока не видна. Подпишитесь и нажмите ещё раз.");
   };
 
   return (
-    <div style={{ ...pageOuter({ alignItems: "center" }), position: "fixed", inset: 0, zIndex: 2000, padding: 24 }}>
+    <div style={{ ...pageOuter({ alignItems: "center" }), position: "fixed", inset: 0, zIndex: 2000, padding: 26 }}>
       <div style={{ ...pageFrame({ height: "auto", minHeight: 0, overflow: "visible", width: "100%", maxWidth: 360, background: "transparent" }) }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
-          <BrandMark size="lg" />
-          <div
-            style={{
-              width: 72,
-              height: 72,
-              borderRadius: 24,
-              background: T.orangeSoft,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginTop: 8,
-            }}
-          >
-            <MSIcon name="campaign" style={{ color: T.orange, fontSize: 36 }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <BrandMark size="sm" />
+          <div style={{ fontWeight: 600, fontSize: 22, color: T.text, letterSpacing: "-0.02em", marginTop: 12 }}>
+            Подписка на канал
           </div>
-          <div style={{ fontWeight: 700, fontSize: 24, color: T.text, letterSpacing: "-0.03em" }}>
-            Подпишитесь на канал
-          </div>
-          <div style={{ fontSize: 14, lineHeight: "21px", color: T.textMuted }}>
+          <div style={{ fontSize: 14, lineHeight: 1.5, color: T.textMuted }}>
             Чтобы пользоваться BlinVPN, подпишитесь на основной канал — это займёт пару секунд.
           </div>
 
-          <Btn onClick={() => openChannel(mainUrl)} style={{ marginTop: 6 }}>
-            <MSIcon name="open_in_new" style={{ fontSize: 22 }} />
+          <Btn onClick={() => openChannel(mainUrl)} style={{ marginTop: 8 }}>
             Подписаться на канал
           </Btn>
-
           {optUrl ? (
             <Btn variant="secondary" onClick={() => openChannel(optUrl)}>
               Дополнительный канал
             </Btn>
           ) : null}
-
           <Btn variant="ghost" disabled={checking} onClick={() => void recheck()}>
             {checking ? "Проверяем…" : "Я подписался — проверить"}
           </Btn>
-
-          {err ? (
-            <div style={{ fontSize: 13, color: T.danger, lineHeight: "18px" }}>{err}</div>
-          ) : null}
+          {err ? <div style={{ fontSize: 13, color: T.danger }}>{err}</div> : null}
         </div>
       </div>
     </div>

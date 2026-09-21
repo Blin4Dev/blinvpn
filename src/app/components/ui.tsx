@@ -56,8 +56,8 @@ export function BackCircleButton({
         height: 40,
         left,
         top,
-        background: T.surfaceRaised,
-        borderRadius: "50%",
+        background: T.surface,
+        borderRadius: 12,
         border: `1px solid ${T.border}`,
         padding: 0,
         display: "flex",
@@ -72,7 +72,6 @@ export function BackCircleButton({
   );
 }
 
-/** Круглая кнопка «назад» для flex-шапок */
 export function BackButton({ onClick, ariaLabel = "Назад" }: { onClick: () => void; ariaLabel?: string }) {
   return (
     <button
@@ -85,8 +84,8 @@ export function BackButton({ onClick, ariaLabel = "Назад" }: { onClick: () 
         flex: "0 0 auto",
         width: 40,
         height: 40,
-        borderRadius: "50%",
-        background: T.surfaceRaised,
+        borderRadius: 12,
+        background: T.surface,
         border: `1px solid ${T.border}`,
         cursor: "pointer",
         display: "flex",
@@ -94,7 +93,7 @@ export function BackButton({ onClick, ariaLabel = "Назад" }: { onClick: () 
         justifyContent: "center",
       }}
     >
-      <MSIcon name="chevron_left" style={{ color: T.text, fontSize: 24 }} />
+      <MSIcon name="chevron_left" style={{ color: T.text, fontSize: 22 }} />
     </button>
   );
 }
@@ -109,13 +108,21 @@ export function PageHeader({
   right?: React.ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 22 }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        marginBottom: 24,
+        paddingTop: 4,
+      }}
+    >
       <BackButton onClick={onBack} />
       <div
         style={{
           flex: 1,
-          fontWeight: 700,
-          fontSize: 24,
+          fontWeight: 600,
+          fontSize: 20,
           letterSpacing: "-0.02em",
           color: T.text,
           minWidth: 0,
@@ -128,22 +135,167 @@ export function PageHeader({
   );
 }
 
-/** Оболочка экрана: ambient + скролл + фиксированная ширина */
+export function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontWeight: 500,
+        fontSize: 12,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        color: T.textDim,
+        margin: "20px 2px 10px",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Строка списка в стиле главной: спокойная, без оранжевых плашек */
+export function ListRow({
+  title,
+  subtitle,
+  meta,
+  icon,
+  onClick,
+  last,
+}: {
+  title: string;
+  subtitle?: string;
+  meta?: string;
+  icon?: string;
+  onClick?: () => void;
+  last?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      className={onClick ? "blin-press" : undefined}
+      style={{
+        ...btnReset,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        width: "100%",
+        padding: "14px 0",
+        background: "transparent",
+        border: "none",
+        borderBottom: last ? "none" : `1px solid ${T.border}`,
+        cursor: onClick ? "pointer" : "default",
+        textAlign: "left",
+        color: T.text,
+      }}
+    >
+      {icon ? (
+        <MSIcon name={icon} style={{ color: T.textMuted, fontSize: 22, flexShrink: 0 }} />
+      ) : null}
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <span style={{ display: "block", fontWeight: 500, fontSize: 15, color: T.text }}>{title}</span>
+        {subtitle ? (
+          <span style={{ display: "block", fontWeight: 400, fontSize: 13, color: T.textMuted, marginTop: 2 }}>
+            {subtitle}
+          </span>
+        ) : null}
+      </span>
+      {meta ? (
+        <span style={{ fontSize: 13, color: T.textMuted, whiteSpace: "nowrap", flexShrink: 0 }}>{meta}</span>
+      ) : null}
+      {onClick ? <MSIcon name="chevron_right" style={{ color: T.textDim, fontSize: 20, flexShrink: 0 }} /> : null}
+    </button>
+  );
+}
+
+/** Кнопка-действие как на главной */
+export function ActionButton({
+  title,
+  meta,
+  icon,
+  onClick,
+  primary,
+  disabled,
+}: {
+  title: string;
+  meta?: string;
+  icon?: string;
+  onClick: () => void;
+  primary?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="blin-press"
+      style={{
+        ...btnReset,
+        width: "100%",
+        minHeight: 52,
+        padding: "0 16px",
+        border: primary ? "none" : `1px solid ${T.border}`,
+        background: primary ? T.orange : T.surface,
+        borderRadius: T.radius.lg,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+      }}
+    >
+      {icon ? (
+        <MSIcon name={icon} style={{ fontSize: 22, color: primary ? "#fff" : T.textMuted, flexShrink: 0 }} />
+      ) : null}
+      <span
+        style={{
+          flex: 1,
+          fontWeight: 600,
+          fontSize: 15,
+          color: primary ? "#fff" : T.text,
+          textAlign: "left",
+        }}
+      >
+        {title}
+      </span>
+      {meta ? (
+        <span
+          style={{
+            fontSize: 13,
+            color: primary ? "rgba(255,255,255,0.75)" : T.textMuted,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {meta}
+        </span>
+      ) : null}
+      <MSIcon
+        name="chevron_right"
+        style={{ fontSize: 20, color: primary ? "rgba(255,255,255,0.7)" : T.textDim, flexShrink: 0 }}
+      />
+    </button>
+  );
+}
+
+/** Оболочка внутренних экранов — без сильного ambient, как спокойный кабинет */
 export function Screen({
   children,
   scroll = true,
   pad = true,
+  ambient = false,
   style,
 }: {
   children: React.ReactNode;
   scroll?: boolean;
   pad?: boolean;
+  ambient?: boolean;
   style?: React.CSSProperties;
 }) {
   return (
     <div style={pageOuter()}>
       <div style={pageFrame({ overflow: "hidden", ...style })}>
-        <div className="blin-ambient" aria-hidden />
+        {ambient ? <div className="blin-ambient" aria-hidden /> : null}
         <div
           className={scroll ? "blin-scroll blin-tg-safe" : "blin-tg-safe"}
           style={{
@@ -152,7 +304,7 @@ export function Screen({
             height: "100%",
             paddingLeft: pad ? 26 : undefined,
             paddingRight: pad ? 26 : undefined,
-            paddingBottom: pad ? 32 : undefined,
+            paddingBottom: pad ? 28 : undefined,
             boxSizing: "border-box",
           }}
         >
@@ -184,12 +336,11 @@ export function Btn({
 }) {
   const palette: Record<BtnVariant, React.CSSProperties> = {
     primary: {
-      background: `linear-gradient(180deg, ${T.orangeBright} 0%, ${T.orange} 100%)`,
+      background: T.orange,
       color: "#fff",
-      boxShadow: `0 8px 24px ${T.orangeGlow}`,
     },
     secondary: {
-      background: T.surfaceRaised,
+      background: T.surface,
       color: T.text,
       border: `1px solid ${T.border}`,
     },
@@ -217,7 +368,7 @@ export function Btn({
         borderRadius: T.radius.lg,
         border: "none",
         fontWeight: 600,
-        fontSize: 16,
+        fontSize: 15,
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.45 : 1,
         display: "flex",
@@ -237,10 +388,12 @@ export function Surface({
   children,
   style,
   onClick,
+  padded,
 }: {
   children: React.ReactNode;
   style?: React.CSSProperties;
   onClick?: () => void;
+  padded?: boolean;
 }) {
   const Comp = onClick ? "button" : "div";
   return (
@@ -252,12 +405,13 @@ export function Surface({
         ...(onClick ? btnReset : {}),
         background: T.surface,
         border: `1px solid ${T.border}`,
-        borderRadius: T.radius.xl,
+        borderRadius: T.radius.lg,
         overflow: "hidden",
         width: onClick ? "100%" : undefined,
         cursor: onClick ? "pointer" : undefined,
         textAlign: onClick ? "left" : undefined,
         color: T.text,
+        padding: padded ? "4px 16px" : undefined,
         ...style,
       }}
     >
@@ -302,13 +456,13 @@ export function Field({
       autoComplete={autoComplete}
       style={{
         width: "100%",
-        height: 54,
+        height: 52,
         borderRadius: T.radius.md,
-        border: `1px solid ${T.borderStrong}`,
-        background: T.surfaceRaised,
+        border: `1px solid ${T.border}`,
+        background: T.surface,
         color: T.text,
         padding: "0 16px",
-        fontSize: 16,
+        fontSize: 15,
         outline: "none",
         boxSizing: "border-box",
         fontFamily: T.font,
@@ -319,13 +473,13 @@ export function Field({
 }
 
 export function BrandMark({ size = "lg" }: { size?: "sm" | "lg" }) {
-  const fontSize = size === "lg" ? 34 : 22;
+  const fontSize = size === "lg" ? 32 : 20;
   return (
     <div
       style={{
-        fontWeight: 800,
+        fontWeight: 700,
         fontSize,
-        letterSpacing: "-0.04em",
+        letterSpacing: "-0.03em",
         lineHeight: 1,
         color: T.text,
       }}
@@ -337,42 +491,28 @@ export function BrandMark({ size = "lg" }: { size?: "sm" | "lg" }) {
 
 export function LoadingScreen({ text = "Загрузка…" }: { text?: string }) {
   return (
-    <div style={pageOuter({ alignItems: "center", background: T.bgOuter })}>
+    <div style={pageOuter({ alignItems: "center" })}>
+      <div
+        style={{
+          ...pageFrame(),
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 16,
+        }}
+      >
         <div
           style={{
-            ...pageFrame(),
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 18,
-          }}
-        >
-        <div className="blin-ambient" aria-hidden />
-        <div
-          style={{
-            position: "relative",
-            zIndex: 1,
-            width: 52,
-            height: 52,
+            width: 40,
+            height: 40,
             borderRadius: "50%",
-            border: `4px solid ${T.orangeSoft}`,
+            border: `3px solid ${T.borderStrong}`,
             borderTopColor: T.orange,
-            animation: "blinvpnSpin 0.85s linear infinite",
+            animation: "blinvpnSpin 0.8s linear infinite",
           }}
         />
-        <div
-          style={{
-            position: "relative",
-            zIndex: 1,
-            color: T.text,
-            fontSize: 15,
-            fontWeight: 600,
-            opacity: 0.8,
-          }}
-        >
-          {text}
-        </div>
+        <div style={{ color: T.textMuted, fontSize: 14, fontWeight: 500 }}>{text}</div>
       </div>
     </div>
   );

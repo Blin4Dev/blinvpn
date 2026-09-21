@@ -260,39 +260,6 @@ export default function BlinVPNApp() {
             boxSizing: "border-box",
           }}
         >
-          {/* История — справа сверху */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              flexShrink: 0,
-              animation: "blinvpnRise 0.45s var(--ease-out) both",
-            }}
-          >
-            <button
-              type="button"
-              aria-label="История"
-              disabled={blocked}
-              onClick={() => { if (!blocked) navigate("/history"); }}
-              className="blin-press"
-              style={{
-                ...btnReset,
-                width: 44,
-                height: 44,
-                borderRadius: 14,
-                background: T.surfaceRaised,
-                border: `1px solid ${T.border}`,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: blocked ? "not-allowed" : "pointer",
-                opacity: blocked ? 0.4 : 1,
-              }}
-            >
-              <MSIcon name="history" style={{ color: T.text, fontSize: 22 }} />
-            </button>
-          </div>
-
           {/* Logo — занимает свободное место по центру */}
           <div
             style={{
@@ -346,7 +313,7 @@ export default function BlinVPNApp() {
             </div>
           </div>
 
-          {/* Низ: статус + CTA + сетка — прижаты к низу экрана */}
+          {/* Низ: статус + история + CTA + сетка */}
           <div style={{ flexShrink: 0, paddingBottom: 4 }}>
             <div
               style={{
@@ -383,25 +350,59 @@ export default function BlinVPNApp() {
               ) : null}
             </div>
 
+            {/* История — над основной кнопкой, вне зоны кнопок TG */}
+            <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.15s both", marginBottom: 10 }}>
+              <button
+                type="button"
+                disabled={blocked}
+                onClick={() => { if (!blocked) navigate("/history"); }}
+                className="blin-press"
+                style={{
+                  ...btnReset,
+                  width: "100%",
+                  minHeight: 48,
+                  padding: "0 16px",
+                  borderRadius: T.radius.lg,
+                  background: T.surface,
+                  border: `1px solid ${T.border}`,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  cursor: blocked ? "not-allowed" : "pointer",
+                  opacity: blocked ? 0.4 : 1,
+                  color: T.text,
+                }}
+              >
+                <MSIcon name="history" style={{ color: T.orange, fontSize: 22 }} />
+                <span style={{ flex: 1, fontWeight: 600, fontSize: 15, textAlign: "left" }}>История платежей</span>
+                <MSIcon name="chevron_right" style={{ color: T.textDim, fontSize: 22 }} />
+              </button>
+            </div>
+
             <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.18s both", marginBottom: 10 }}>
               <Btn
                 variant={ctaPrimary ? "primary" : "secondary"}
                 disabled={blocked || trialBusy}
                 onClick={() => { if (!blocked && !trialBusy) void handleCta(); }}
-                style={{ justifyContent: "space-between", padding: "0 18px" }}
+                style={{
+                  justifyContent: ctaPrimary ? "space-between" : "flex-start",
+                  padding: "0 18px",
+                }}
               >
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <MSIcon name={ctaPrimary ? "bolt" : "tune"} style={{ fontSize: 22, color: "inherit" }} />
                   <span>{trialBusy ? "Активация…" : ctaLabel}</span>
                 </span>
-                <span style={{ display: "flex", alignItems: "baseline", gap: 6, fontWeight: 600, opacity: 0.85 }}>
-                  {hasDiscount && (
-                    <span style={{ opacity: 0.45, textDecoration: "line-through", fontSize: 13 }}>
-                      {ctaPriceBase}
-                    </span>
-                  )}
-                  <span style={{ fontSize: 15 }}>{ctaPrice}</span>
-                </span>
+                {ctaPrimary ? (
+                  <span style={{ display: "flex", alignItems: "baseline", gap: 6, fontWeight: 600, opacity: 0.85 }}>
+                    {hasDiscount && (
+                      <span style={{ opacity: 0.45, textDecoration: "line-through", fontSize: 13 }}>
+                        {ctaPriceBase}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 15 }}>{ctaPrice}</span>
+                  </span>
+                ) : null}
               </Btn>
             </div>
 
@@ -414,7 +415,7 @@ export default function BlinVPNApp() {
             >
               <ActionTile
                 icon="group"
-                label="Рефералы"
+                label="Друзья"
                 disabled={blocked}
                 delay={0.22}
                 onClick={() => { if (!blocked) navigate("/referral"); }}

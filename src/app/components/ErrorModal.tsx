@@ -1,6 +1,6 @@
 ﻿import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { fetchConfig, openSupportWithError } from "../utils/api";
-import { Btn, MSIcon, T, btnReset } from "./ui";
+import { Btn, T, btnReset } from "./ui";
 
 type ErrorCtx = { showError: (message: string) => void };
 
@@ -20,9 +20,7 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
         const cfg = await fetchConfig();
         const s = (cfg as { supportUrl?: string }).supportUrl;
         if (typeof s === "string" && s) setSupportBase(s);
-      } catch {
-        /* дефолт */
-      }
+      } catch { /* дефолт */ }
     })();
   }, []);
 
@@ -37,7 +35,7 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(8, 6, 4, 0.72)",
+            background: "rgba(8, 6, 4, 0.7)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -45,7 +43,6 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
             fontFamily: T.font,
             padding: 24,
             boxSizing: "border-box",
-            animation: "blinvpnFadeIn 0.18s ease both",
           }}
         >
           <div
@@ -53,32 +50,17 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
             style={{
               width: "100%",
               maxWidth: 340,
-              background: T.surface,
-              border: `1px solid ${T.borderStrong}`,
-              borderRadius: 26,
-              padding: "24px 22px 18px",
+              background: T.bg,
+              border: `1px solid ${T.border}`,
+              borderRadius: T.radius.lg,
+              padding: "22px 20px 16px",
               boxSizing: "border-box",
               display: "flex",
               flexDirection: "column",
-              alignItems: "center",
-              gap: 12,
-              animation: "blinvpnSheetUp 0.3s var(--ease-out) both",
+              gap: 10,
             }}
           >
-            <div
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: "50%",
-                background: T.dangerSoft,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <MSIcon name="error" style={{ color: T.danger, fontSize: 30 }} />
-            </div>
-            <div style={{ fontWeight: 700, fontSize: 19, color: T.text, textAlign: "center", letterSpacing: "-0.02em" }}>
+            <div style={{ fontWeight: 600, fontSize: 17, color: T.text }}>
               Что-то пошло не так
             </div>
             <div
@@ -86,20 +68,14 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
                 fontSize: 14,
                 lineHeight: "20px",
                 color: T.textMuted,
-                textAlign: "center",
                 maxHeight: 120,
                 overflowY: "auto",
-                width: "100%",
                 wordBreak: "break-word",
               }}
             >
               {msg}
             </div>
-
-            <Btn
-              onClick={() => openSupportWithError(msg || "", supportBase)}
-              style={{ marginTop: 4 }}
-            >
+            <Btn onClick={() => openSupportWithError(msg || "", supportBase)} style={{ marginTop: 6 }}>
               Написать в поддержку
             </Btn>
             <button
@@ -111,11 +87,10 @@ export function AppErrorProvider({ children }: { children: React.ReactNode }) {
                 width: "100%",
                 height: 44,
                 border: "none",
-                borderRadius: T.radius.md,
                 background: "transparent",
                 color: T.textMuted,
-                fontWeight: 550,
-                fontSize: 15,
+                fontWeight: 500,
+                fontSize: 14,
                 cursor: "pointer",
               }}
             >

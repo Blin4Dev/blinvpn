@@ -117,14 +117,13 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     <div style={pageOuter()}>
-      <div style={pageFrame({ padding: "64px 26px 40px" })}>
-        <div className="blin-ambient" aria-hidden />
+      <div style={pageFrame({ padding: "56px 26px 40px" })}>
         <div style={{ position: "relative", zIndex: 1 }}>
           <BrandMark size="lg" />
-          <div style={{ fontWeight: 700, fontSize: 26, marginTop: 32, letterSpacing: "-0.03em", color: T.text }}>
+          <div style={{ fontWeight: 600, fontSize: 22, marginTop: 36, letterSpacing: "-0.02em", color: T.text }}>
             {step === "email" ? "Вход" : "Введите код"}
           </div>
-          <div style={{ marginTop: 8, color: T.textMuted, fontSize: 14, lineHeight: "20px" }}>
+          <div style={{ marginTop: 8, color: T.textMuted, fontSize: 14, lineHeight: 1.5 }}>
             {step === "email"
               ? "Укажите почту — пришлём код. Новый аккаунт создастся автоматически."
               : `Код отправлен на ${email.trim()}`}
@@ -133,7 +132,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
           <div style={{ marginTop: 28 }}>
             {step === "email" ? (
               <>
-                <div style={{ fontSize: 13, fontWeight: 550, color: T.textMuted, marginBottom: 8, marginLeft: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: T.textMuted, marginBottom: 8 }}>
                   Электронная почта
                 </div>
                 <Field
@@ -156,7 +155,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
               </>
             ) : (
               <>
-                <div style={{ fontSize: 13, fontWeight: 550, color: T.textMuted, marginBottom: 8, marginLeft: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: T.textMuted, marginBottom: 8 }}>
                   Код из письма
                 </div>
                 <Field
@@ -213,10 +212,10 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
 
           {oauthUrl && (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "28px 0 20px", opacity: 0.45 }}>
-                <div style={{ flex: 1, height: 1, background: T.borderStrong }} />
-                <span style={{ fontSize: 13, color: T.textMuted }}>или</span>
-                <div style={{ flex: 1, height: 1, background: T.borderStrong }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "28px 0 20px" }}>
+                <div style={{ flex: 1, height: 1, background: T.border }} />
+                <span style={{ fontSize: 13, color: T.textDim }}>или</span>
+                <div style={{ flex: 1, height: 1, background: T.border }} />
               </div>
               <Btn
                 variant="secondary"
