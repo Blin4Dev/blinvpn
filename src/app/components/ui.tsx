@@ -142,7 +142,7 @@ export function Screen({
 }) {
   return (
     <div style={pageOuter()}>
-      <div style={pageFrame({ height: 803, overflow: "hidden", ...style })}>
+      <div style={pageFrame({ overflow: "hidden", ...style })}>
         <div className="blin-ambient" aria-hidden />
         <div
           className={scroll ? "blin-scroll" : undefined}
@@ -336,16 +336,16 @@ export function BrandMark({ size = "lg" }: { size?: "sm" | "lg" }) {
 export function LoadingScreen({ text = "Загрузка…" }: { text?: string }) {
   return (
     <div style={pageOuter({ alignItems: "center", background: T.bgOuter })}>
-      <div
-        style={{
-          ...pageFrame({ height: 803 }),
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 18,
-        }}
-      >
+        <div
+          style={{
+            ...pageFrame(),
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 18,
+          }}
+        >
         <div className="blin-ambient" aria-hidden />
         <div
           style={{

@@ -25,8 +25,10 @@
 
 :root {
   --blin-scale: 1;
+  /* Только Telegram fullscreen; в браузере всегда 0 */
+  --blin-tg-pad-top: 0px;
   --bg: #14110E;
-  --bg-outer: #0C0A08;
+  --bg-outer: #14110E;
   --surface: #1E1A16;
   --surface-raised: #2A241E;
   --surface-hover: #352E26;
@@ -77,8 +79,11 @@ input::placeholder, textarea::placeholder {
   transform: scale(var(--blin-scale));
   transform-origin: top left;
   width: calc(100% / var(--blin-scale));
-  height: calc((100% - env(safe-area-inset-top, 0px)) / var(--blin-scale));
-  margin-top: env(safe-area-inset-top, 0px);
+  /* Полная высота — без чёрной полосы снизу. TG-отступ — внутренний padding. */
+  height: calc(100% / var(--blin-scale));
+  /* --blin-tg-pad-top в экранных px; делим на scale, т.к. #root сам масштабируется */
+  padding-top: calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale));
+  box-sizing: border-box;
   overflow: hidden;
 }
 

@@ -497,7 +497,7 @@ export default function GetStarted() {
           alignItems: "center",
           boxSizing: "border-box",
           minHeight: "100vh",
-          background: "#0C0A08",
+          background: "#14110E",
           fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
@@ -656,7 +656,7 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#0C0A08",
+          background: "#14110E",
           fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
@@ -758,7 +758,7 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#0C0A08",
+          background: "#14110E",
           fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
@@ -885,7 +885,7 @@ export default function GetStarted() {
           justifyContent: "center",
           alignItems: "center",
           minHeight: "100vh",
-          background: "#0C0A08",
+          background: "#14110E",
           fontFamily: "'Outfit', system-ui, sans-serif",
         }}
       >
@@ -1015,7 +1015,7 @@ export default function GetStarted() {
         justifyContent: "center",
         alignItems: "center",
         minHeight: "100vh",
-        background: "#0C0A08",
+        background: "#14110E",
         fontFamily: "'Outfit', system-ui, sans-serif",
       }}
     >

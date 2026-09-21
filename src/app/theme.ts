@@ -6,7 +6,7 @@ import type { CSSProperties } from "react";
  */
 export const T = {
   bg: "#14110E",
-  bgOuter: "#0C0A08",
+  bgOuter: "#14110E",
   surface: "#1E1A16",
   surfaceRaised: "#2A241E",
   surfaceHover: "#352E26",
@@ -47,7 +47,8 @@ export function pageFrame(extra?: CSSProperties): CSSProperties {
     position: "relative",
     boxSizing: "border-box",
     width: T.width,
-    minHeight: 803,
+    height: "100%",
+    minHeight: "100%",
     margin: "0 auto",
     background: T.bg,
     fontFamily: T.font,
@@ -64,8 +65,9 @@ export function pageOuter(extra?: CSSProperties): CSSProperties {
     display: "flex",
     justifyContent: "center",
     alignItems: "flex-start",
-    minHeight: "100vh",
-    background: T.bgOuter,
+    height: "100%",
+    minHeight: "100%",
+    background: T.bg,
     fontFamily: T.font,
     ...extra,
   };

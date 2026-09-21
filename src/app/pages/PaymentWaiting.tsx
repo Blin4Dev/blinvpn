@@ -69,7 +69,7 @@ export default function PaymentWaiting() {
     justifyContent: "center",
     alignItems: "center",
     minHeight: "100vh",
-    background: "#0C0A08",
+    background: "#14110E",
     fontFamily: "'Outfit', system-ui, sans-serif",
   };
   const card: React.CSSProperties = {

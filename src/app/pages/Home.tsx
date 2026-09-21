@@ -243,7 +243,7 @@ export default function BlinVPNApp() {
 
   return (
     <div style={pageOuter()}>
-      <div style={pageFrame({ height: 803 })}>
+      <div style={pageFrame()}>
         <div className="blin-ambient" aria-hidden />
 
         <div
@@ -251,44 +251,19 @@ export default function BlinVPNApp() {
             position: "relative",
             zIndex: 1,
             height: "100%",
-            padding: "28px 26px 28px",
+            padding: "16px 26px 28px",
             display: "flex",
             flexDirection: "column",
           }}
         >
-          {/* Brand hero */}
+          {/* История — справа сверху */}
           <div
             style={{
               display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
+              justifyContent: "flex-end",
               animation: "blinvpnRise 0.45s var(--ease-out) both",
             }}
           >
-            <div>
-              <div
-                style={{
-                  fontWeight: 800,
-                  fontSize: 36,
-                  letterSpacing: "-0.045em",
-                  lineHeight: 1,
-                  color: T.text,
-                }}
-              >
-                Blin<span style={{ color: T.orange }}>VPN</span>
-              </div>
-              <div
-                style={{
-                  marginTop: 8,
-                  fontSize: 14,
-                  fontWeight: 500,
-                  color: T.textMuted,
-                  letterSpacing: "-0.01em",
-                }}
-              >
-                Быстрый и стабильный доступ
-              </div>
-            </div>
             <button
               type="button"
               aria-label="История"

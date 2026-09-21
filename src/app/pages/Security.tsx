@@ -182,7 +182,7 @@ export default function Security() {
   const sub: React.CSSProperties = { color: "#A89B8C", fontSize: 13, fontWeight: 500 };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", minHeight: "100vh", background: "#0C0A08", fontFamily: "'Outfit', system-ui, sans-serif" }}>
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-start", minHeight: "100vh", background: "#14110E", fontFamily: "'Outfit', system-ui, sans-serif" }}>
       <div style={frame}>
         <BackCircleButton onClick={goBack} />
         <div style={{ position: "absolute", left: "73px", top: "28px", fontWeight: 600, fontSize: "27px", lineHeight: "33px", color: "#FFF8F0" }}>

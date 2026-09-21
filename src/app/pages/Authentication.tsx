@@ -117,7 +117,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     <div style={pageOuter()}>
-      <div style={pageFrame({ minHeight: 803, padding: "64px 26px 40px" })}>
+      <div style={pageFrame({ padding: "64px 26px 40px" })}>
         <div className="blin-ambient" aria-hidden />
         <div style={{ position: "relative", zIndex: 1 }}>
           <BrandMark size="lg" />
