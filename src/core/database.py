@@ -271,6 +271,15 @@ CREATE TABLE IF NOT EXISTS mailings (
     created_at TEXT NOT NULL
 );
 
+-- Отправленные сообщения рассылки: нужны, чтобы удалить их у пользователей.
+CREATE TABLE IF NOT EXISTS mailing_messages (
+    mailing_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    sent_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mailing_messages_m ON mailing_messages(mailing_id);
+
 CREATE TABLE IF NOT EXISTS promotions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

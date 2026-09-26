@@ -28,7 +28,7 @@ export const MailingPage: React.FC<{ onToast: (t: string, m: string, ty: ToastTy
 
   useEffect(() => { loadStats(); loadHistory(); }, []);
   useEffect(() => {
-    if (!history.some((i) => i.status === 'Sending')) return;
+    if (!history.some((i) => i.status === 'Sending' || i.status === 'Deleting')) return;
     const timer = setInterval(() => { loadHistory(); loadStats(); }, 4000);
     return () => clearInterval(timer);
   }, [history]);
@@ -56,7 +56,7 @@ export const MailingPage: React.FC<{ onToast: (t: string, m: string, ty: ToastTy
   };
 
   const targets = [{ v: 'all', l: 'Все' }, { v: 'active', l: 'Активные' }, { v: 'expired', l: 'Истёкшие' }, { v: 'no_subscription', l: 'Без подписки' }];
-  const historyBadge = (s: string) => s === 'Completed' ? { cls: 'solid', label: 'Отправлено' } : s === 'Sending' ? { cls: 'mute', label: 'Отправляется' } : s === 'Cancelled' ? { cls: 'danger', label: 'Отменено' } : s === 'Interrupted' ? { cls: 'danger', label: 'Прервана (перезапуск)' } : { cls: 'line', label: s };
+  const historyBadge = (s: string) => s === 'Completed' ? { cls: 'solid', label: 'Отправлено' } : s === 'Sending' ? { cls: 'mute', label: 'Отправляется' } : s === 'Deleting' ? { cls: 'mute', label: 'Удаляется у пользователей' } : s === 'Cancelled' ? { cls: 'danger', label: 'Отменено' } : s === 'Interrupted' ? { cls: 'danger', label: 'Прервана (перезапуск)' } : { cls: 'line', label: s };
 
   return (
     <div className="flex flex-col gap-6">
@@ -123,11 +123,21 @@ export const MailingPage: React.FC<{ onToast: (t: string, m: string, ty: ToastTy
                       </div>
                       <div className="flex gap-2 mt-3">
                         <button className="btn sm" onClick={() => setSelected(item)}>Открыть</button>
-                        <button className="btn sm danger" onClick={async () => {
-                          if (!confirm('Удалить рассылку и попытаться удалить сообщения у пользователей?')) return;
-                          try { await apiFetch(`/panel/mailing/${item.id}`, { method: 'DELETE' }); onToast('Готово', 'Рассылка удалена', 'success'); loadHistory(); }
+                        {item.status !== 'Deleting' && <button className="btn sm danger" onClick={async () => {
+                          const hasEmail = String(item.channel || '').includes('email');
+                          const text = 'Удалить рассылку?\n\n'
+                            + 'Сообщения в Telegram будут удалены у пользователей (Telegram позволяет это только в течение 48 часов после отправки).'
+                            + (hasEmail ? '\n\nПисьма удалить нельзя: они уже в почтовых ящиках получателей.' : '')
+                            + (item.status === 'Sending' ? '\n\nОтправка будет остановлена.' : '');
+                          if (!confirm(text)) return;
+                          try {
+                            const r = await apiFetch(`/panel/mailing/${item.id}`, { method: 'DELETE' });
+                            const n = Number(r?.telegram_messages || 0);
+                            onToast('Удаление', n ? `Удаляем ${fmtInt(n)} сообщ. в Telegram` : 'Рассылка удалена', 'success');
+                            loadHistory();
+                          }
                           catch { onToast('Ошибка', 'Не удалось удалить', 'error'); }
-                        }}>Удалить</button>
+                        }}>Удалить</button>}
                       </div>
                     </div>
                   );

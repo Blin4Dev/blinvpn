@@ -212,10 +212,10 @@ def send_broadcast_message(
     bot_username: str = "",
     parse_mode: str = "HTML",
     on_throttle=None,
-) -> bool:
+) -> Optional[int]:
     """
     Отправляет одно сообщение рассылки. С картинкой — sendPhoto (текст в подписи),
-    иначе sendMessage. Возвращает True при успешной доставке.
+    иначе sendMessage. Возвращает message_id доставленного сообщения или None.
     on_throttle(retry_after) вызывается при 429 (для авто-снижения скорости).
     """
     reply_markup = _keyboard(button_type, button_value, miniapp_url, bot_username)
@@ -229,8 +229,9 @@ def send_broadcast_message(
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        if call("sendPhoto", payload, on_throttle=on_throttle) is not None:
-            return True
+        res = call("sendPhoto", payload, on_throttle=on_throttle)
+        if res is not None:
+            return _msg_id(res)
         # если картинка не принята Telegram — отправим хотя бы текст
     payload = {
         "chat_id": chat_id,
@@ -240,4 +241,22 @@ def send_broadcast_message(
     }
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    return call("sendMessage", payload, on_throttle=on_throttle) is not None
+    res = call("sendMessage", payload, on_throttle=on_throttle)
+    return _msg_id(res) if res is not None else None
+
+
+def _msg_id(res: Any) -> int:
+    """message_id из ответа Bot API (0 — доставлено, но id неизвестен)."""
+    try:
+        return int((res or {}).get("message_id") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def delete_message(chat_id: int, message_id: int, *, on_throttle=None) -> bool:
+    """
+    Удаляет сообщение бота у пользователя. Telegram разрешает это только
+    в течение 48 часов после отправки — старые сообщения останутся.
+    """
+    return call("deleteMessage", {"chat_id": chat_id, "message_id": message_id},
+                timeout=15.0, on_throttle=on_throttle) is not None

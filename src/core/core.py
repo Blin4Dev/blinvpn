@@ -276,6 +276,13 @@ def _startup() -> None:
         db.execute("UPDATE mailings SET status = 'Interrupted' WHERE status = 'Sending'")
     except Exception:  # noqa: BLE001
         pass
+    # Удаление рассылки, прерванное перезапуском, — доводим до конца.
+    try:
+        import threading as _th
+        for m in db.fetchall("SELECT id FROM mailings WHERE status = 'Deleting'"):
+            _th.Thread(target=_purge_mailing, args=(int(m["id"]),), daemon=True).start()
+    except Exception:  # noqa: BLE001
+        pass
     # Пересчитываем статус пользователей по фактическим подпискам
     # (раньше всем новым ставился 'Trial', даже без подписки).
     try:
@@ -1571,6 +1578,7 @@ def serialize_mailing(m: dict[str, Any]) -> dict[str, Any]:
         "button_type": m.get("button_type"),
         "button_value": m.get("button_value"),
         "image_url": m.get("image_url"),
+        "channel": m.get("channel") or "telegram",
     }
 
 
@@ -3814,16 +3822,29 @@ def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[s
     total = len(recipients)
 
     def _send_one(u: dict[str, Any]) -> None:
+        if mailing_id in _MAILING_CANCELLED:
+            return  # рассылку удалили во время отправки — остальным не шлём
         ok_any = False
         if do_tg and u.get("telegram_id"):
             limiter.acquire()  # держим общий темп только для Telegram
-            if notifier.send_broadcast_message(
-                int(u["telegram_id"]), body.message,
+            chat_id = int(u["telegram_id"])
+            msg_id = notifier.send_broadcast_message(
+                chat_id, body.message,
                 image_url=body.image_url, button_type=body.button_type,
                 button_value=body.button_value, miniapp_url=MINIAPP_URL, bot_username=BOT_USERNAME,
                 on_throttle=limiter.throttle,  # 429 → авто-снижение скорости
-            ):
+            )
+            if msg_id is not None:
                 ok_any = True
+                if msg_id:
+                    # Запоминаем, чтобы при удалении рассылки убрать сообщение у пользователя.
+                    try:
+                        db.execute(
+                            "INSERT INTO mailing_messages (mailing_id, chat_id, message_id, sent_at) VALUES (?, ?, ?, ?)",
+                            (mailing_id, chat_id, int(msg_id), db.utcnow_iso()),
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
         if do_email and u.get("email"):
             try:
                 ok, _err = mailer.send_broadcast(str(u["email"]), subject, email_html, body_text=body.message)
@@ -3846,8 +3867,53 @@ def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[s
     with _fut.ThreadPoolExecutor(max_workers=BROADCAST_WORKERS) as pool:
         list(pool.map(_send_one, recipients))
 
+    if mailing_id in _MAILING_CANCELLED:
+        return  # удалением займётся _purge_mailing
     db.execute("UPDATE mailings SET sent_count = ?, status = 'Completed' WHERE id = ?",
                (counter["sent"], mailing_id))
+
+
+# Рассылки, которые удаляют: отправка по ним останавливается.
+_MAILING_CANCELLED: set[int] = set()
+_MAILING_THREADS: dict[int, "threading.Thread"] = {}
+
+
+def _purge_mailing(mailing_id: int) -> None:
+    """
+    Удаляет сообщения рассылки у пользователей в Telegram, затем саму рассылку.
+    Письма удалить невозможно: они уже лежат в чужих почтовых ящиках.
+    Telegram даёт боту удалять свои сообщения только в течение 48 часов.
+    """
+    import concurrent.futures as _fut
+
+    # Сначала дожидаемся остановки отправки, чтобы не пропустить последние сообщения.
+    t = _MAILING_THREADS.get(mailing_id)
+    if t is not None and t.is_alive():
+        t.join(timeout=120)
+
+    rows = db.fetchall(
+        "SELECT chat_id, message_id FROM mailing_messages WHERE mailing_id = ?", (mailing_id,)
+    )
+    limiter = _RateLimiter(BROADCAST_RATE)
+    counter = {"ok": 0, "fail": 0}
+    lock = threading.Lock()
+
+    def _del_one(r: dict[str, Any]) -> None:
+        limiter.acquire()
+        ok = notifier.delete_message(int(r["chat_id"]), int(r["message_id"]), on_throttle=limiter.throttle)
+        with lock:
+            counter["ok" if ok else "fail"] += 1
+
+    if rows:
+        with _fut.ThreadPoolExecutor(max_workers=BROADCAST_WORKERS) as pool:
+            list(pool.map(_del_one, rows))
+
+    db.execute("DELETE FROM mailing_messages WHERE mailing_id = ?", (mailing_id,))
+    db.execute("DELETE FROM mailings WHERE id = ?", (mailing_id,))
+    _MAILING_CANCELLED.discard(mailing_id)
+    _MAILING_THREADS.pop(mailing_id, None)
+    print(f"[mailing] рассылка #{mailing_id} удалена: сообщений убрано {counter['ok']}, "
+          f"не удалось {counter['fail']} (старше 48 ч или чат удалён)", flush=True)
 
 
 @app.post("/api/panel/mailing")
@@ -3880,13 +3946,14 @@ def panel_mailing_create(body: MailingBody, _: dict = Depends(require_panel)) ->
     mailing_id = db.last_id()
 
     if reach:
-        import threading
-        threading.Thread(
+        t = threading.Thread(
             target=_deliver_mailing,
             args=(mailing_id, body, reach, channels),
             name=f"mailing-{mailing_id}",
             daemon=True,
-        ).start()
+        )
+        _MAILING_THREADS[mailing_id] = t
+        t.start()
 
     item = db.fetchone("SELECT * FROM mailings WHERE id = ?", (mailing_id,))
     assert item is not None
@@ -3897,11 +3964,24 @@ def panel_mailing_create(body: MailingBody, _: dict = Depends(require_panel)) ->
 
 @app.delete("/api/panel/mailing/{mailing_id}")
 def panel_mailing_delete(mailing_id: int, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    row = db.fetchone("SELECT id FROM mailings WHERE id = ?", (mailing_id,))
+    row = db.fetchone("SELECT id, status, channel FROM mailings WHERE id = ?", (mailing_id,))
     if not row:
         raise HTTPException(404, detail="Mailing not found")
-    db.execute("DELETE FROM mailings WHERE id = ?", (mailing_id,))
-    return {"success": True}
+    if row.get("status") == "Deleting":
+        return {"success": True, "status": "Deleting"}
+    tg_count = db.fetchone(
+        "SELECT COUNT(*) AS n FROM mailing_messages WHERE mailing_id = ?", (mailing_id,)
+    )
+    _MAILING_CANCELLED.add(mailing_id)
+    db.execute("UPDATE mailings SET status = 'Deleting' WHERE id = ?", (mailing_id,))
+    threading.Thread(target=_purge_mailing, args=(mailing_id,), name=f"mailing-purge-{mailing_id}",
+                     daemon=True).start()
+    return {
+        "success": True,
+        "status": "Deleting",
+        "telegram_messages": int(tg_count["n"]) if tg_count else 0,
+        "had_email": "email" in str(row.get("channel") or ""),
+    }
 
 
 # ═════════════════════════════════════════════════════════════
