@@ -346,12 +346,6 @@ server {
         proxy_connect_timeout 15s;
     }
 
-    location ~* \\.(js|css|woff2?|png|jpg|svg|ico)$ {
-        proxy_pass http://127.0.0.1:9741;
-        proxy_set_header Host \$host;
-        add_header Cache-Control "public, max-age=86400";
-    }
-
     # Внутренние service-to-service ручки недоступны снаружи.
     location /api/internal {
         return 404;

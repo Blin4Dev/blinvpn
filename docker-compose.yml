@@ -83,6 +83,9 @@ services:
     logging: *default-logging
     ports:
       - "127.0.0.1:${MINIAPP_PORT:-9741}:80"
+    # Картинки из assets/ отдаются «вживую»: положили файл — он сразу доступен.
+    volumes:
+      - ./assets:/usr/share/nginx/live/assets:ro
 
   panel:
     build:
@@ -93,3 +96,6 @@ services:
     logging: *default-logging
     ports:
       - "127.0.0.1:${PANEL_PORT:-9742}:80"
+    # Картинки из assets/ отдаются «вживую»: положили файл — он сразу доступен.
+    volumes:
+      - ./assets:/usr/share/nginx/live/assets:ro
