@@ -37,6 +37,7 @@ import reminders  # type: ignore
 import services  # type: ignore
 import forum  # type: ignore
 import survey  # type: ignore
+import blacklist  # type: ignore
 
 API_BASE = "https://api.telegram.org"
 
@@ -164,6 +165,20 @@ def _send_welcome(chat_id: int) -> None:
     })
 
 
+def _send_banned(chat_id: int) -> None:
+    """Заблокированному — вместо приветствия сообщение о блокировке."""
+    text = "⛔️ Ваш аккаунт заблокирован за нарушение правил сервиса."
+    api("sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
+        "entities": [
+            {"type": "custom_emoji", "custom_emoji_id": reminders.EMOJI_STOP, "offset": 0, "length": 2},
+            {"type": "bold", "offset": 3, "length": len(text) - 3},
+        ],
+        "reply_markup": {"inline_keyboard": [[{"text": "Поддержка", "url": SUPPORT_URL}]]},
+    })
+
+
 def handle_start(message: dict[str, Any]) -> None:
     chat_id = message["chat"]["id"]
     frm = message.get("from") or {}
@@ -177,6 +192,15 @@ def handle_start(message: dict[str, Any]) -> None:
     existed = db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,)) is not None
     user = fulfillment.get_user(_ensure_user(telegram_id, frm))
     is_new = not existed
+
+    # Общий чёрный список: нарушителя блокируем сразу при входе в бота.
+    try:
+        blacklist.enforce(user, log=lambda m: print(m, flush=True))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[blacklist] ошибка проверки: {exc}", flush=True)
+    if user and user.get("is_banned"):
+        _send_banned(chat_id)
+        return
 
     # Фиксируем время ПЕРВОГО /start (для онбординг-цепочки). Ставится один раз.
     if user:
@@ -256,7 +280,7 @@ def _ensure_user(telegram_id: int, frm: dict[str, Any]) -> int:
     db.execute(
         "INSERT INTO users (telegram_id, username, first_name, last_name, balance, status, is_banned, "
         "referral_code, is_partner, partner_balance, partner_rate, autopay_enabled, created_at) "
-        "VALUES (?, ?, ?, ?, 0, 'Trial', 0, ?, 0, 0, 25, 0, ?)",
+        "VALUES (?, ?, ?, ?, 0, 'None', 0, ?, 0, 0, 25, 0, ?)",
         (
             telegram_id,
             (frm.get("username") or "").lstrip("@") or None,
@@ -274,7 +298,12 @@ def _apply_referral(user: dict[str, Any], code: str, is_new: bool = True) -> Non
     # аккаунт можно задним числом «пригласить» вторым аккаунтом и фармить бонусы.
     if not code or user.get("referred_by") or not is_new:
         return
-    ref = db.fetchone("SELECT id, referred_by FROM users WHERE referral_code = ?", (code,))
+    # Новые ссылки: ref_<id пользователя>. Старые ref_<КОД> продолжают работать.
+    ref = None
+    if code.isdigit():
+        ref = db.fetchone("SELECT id, referred_by FROM users WHERE id = ?", (int(code),))
+    if not ref:
+        ref = db.fetchone("SELECT id, referred_by FROM users WHERE referral_code = ?", (code,))
     if not ref or int(ref["id"]) == int(user["id"]):
         return
     # Запрещаем взаимные петли A↔B.
@@ -348,87 +377,12 @@ def handle_callback(cq: dict[str, Any]) -> None:
             print(f"[bot] survey callback error: {type(exc).__name__}: {exc}", flush=True)
         return
 
-    # АВТОРИЗАЦИЯ: только явные админы (TELEGRAM_ADMIN_ID / forum_admin_ids) и
-    # только из настроенной форум-группы. Членство в группе прав НЕ даёт.
+    # Старые сообщения о выводах с кнопками: обработка теперь только в панели.
     if data.startswith("wd_ok_") or data.startswith("wd_no_"):
-        if not forum.is_admin(from_id) or not forum.withdrawals_chat_ok(chat_id, thread_id):
-            answer("Недостаточно прав")
-            return
-
-    if data.startswith("wd_ok_"):
-        try:
-            wid = int(data[len("wd_ok_"):])
-        except ValueError:
-            answer("Ошибка"); return
-        w = db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (wid,))
-        if not w or w.get("status") != "pending":
-            answer("Заявка уже обработана"); return
-        services.set_pending_tx(from_id, wid)
-        answer("Отправьте ссылку на транзакцию")
-        prompt = {
-            "chat_id": chat_id,
-            "text": f"✍️ Отправьте <b>ссылку на транзакцию</b> для вывода #{wid} — ответом на это сообщение.",
-            "parse_mode": "HTML",
-        }
-        if thread_id is not None:
-            prompt["message_thread_id"] = thread_id
-        api("sendMessage", prompt)
-        return
-
-    if data.startswith("wd_no_"):
-        try:
-            wid = int(data[len("wd_no_"):])
-        except ValueError:
-            answer("Ошибка"); return
-        try:
-            w = services.reject_withdrawal(wid)
-            services.clear_pending_tx(from_id)
-            forum.remove_withdrawal_message(w)
-            answer("Отклонено — средства возвращены")
-        except services.ServiceError as exc:
-            answer(exc.message)
+        answer("Выводы обрабатываются в панели: Пользователи → Выводы")
         return
 
     answer()
-
-
-def handle_tx_link(message: dict[str, Any]) -> bool:
-    """Ловит ссылку на транзакцию от админа после нажатия «Одобрить»."""
-    from_id = int((message.get("from") or {}).get("id") or 0)
-    # Ссылку на транзакцию принимаем только от админа и только из форум-группы.
-    if not forum.is_admin(from_id):
-        return False
-    wid = services.get_pending_tx(from_id)
-    if not wid:
-        return False
-    link = (message.get("text") or "").strip()
-    chat_id = (message.get("chat") or {}).get("id")
-    thread_id = message.get("message_thread_id")
-    if not forum.withdrawals_chat_ok(chat_id, thread_id):
-        return False
-
-    def reply(text: str) -> None:
-        p = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-        if thread_id is not None:
-            p["message_thread_id"] = thread_id
-        api("sendMessage", p)
-
-    if not (link.startswith("http://") or link.startswith("https://")):
-        reply("⚠️ Нужна ссылка (http/https) на транзакцию. Попробуйте ещё раз.")
-        return True
-    try:
-        w = services.approve_withdrawal(wid, link)
-    except services.ServiceError as exc:
-        services.clear_pending_tx(from_id)
-        reply(f"⚠️ {exc.message}")
-        return True
-    services.clear_pending_tx(from_id)
-    user = fulfillment.get_user(int(w["user_id"]))
-    if user and user.get("telegram_id"):
-        forum.dm_withdrawal_approved(int(user["telegram_id"]), link)
-    forum.remove_withdrawal_message(w)
-    reply(f"✅ Вывод #{wid} одобрен, пользователь уведомлён.")
-    return True
 
 
 def handle_survey_text(message: dict[str, Any]) -> bool:
@@ -468,9 +422,6 @@ def process_update(update: dict[str, Any]) -> None:
             return
         # Свободный ответ в опросе (если бот ждёт текст от этого пользователя)
         if text and handle_survey_text(message):
-            return
-        # Ссылка на транзакцию для одобренного вывода (ответ админа)
-        if text and handle_tx_link(message):
             return
     except Exception as exc:  # noqa: BLE001
         print(f"[bot] ошибка обработки апдейта: {type(exc).__name__}: {exc}", flush=True)

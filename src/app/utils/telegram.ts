@@ -40,19 +40,29 @@ export function isTelegramClient(): boolean {
  * В браузере всегда 0.
  */
 export function applyTelegramTopInset(): void {
+  const root = document.documentElement.style;
   try {
     const tg = webApp();
+    const bottomSafe = Number(tg?.safeAreaInset?.bottom) || 0;
+    const bottomContent = Number(tg?.contentSafeAreaInset?.bottom) || 0;
+    // Нижний отступ (полоска «домой» на iPhone и т.п.) — нужен в любом режиме TG.
+    root.setProperty("--blin-tg-pad-bottom", tg?.initData ? `${Math.round(bottomSafe + bottomContent)}px` : "0px");
+
     if (!tg?.initData || !tg.isFullscreen) {
-      document.documentElement.style.setProperty("--blin-tg-pad-top", "0px");
+      root.setProperty("--blin-tg-pad-top", "0px");
       return;
     }
+    // В fullscreen сверху лежат ДВА слоя: системный статус-бар (safeAreaInset)
+    // и кнопки Telegram «Закрыть / ⋯» (contentSafeAreaInset, отсчитывается
+    // ОТ safe area). Учитываем оба + небольшой воздух, иначе шапка страницы
+    // уезжает под кнопки TG.
     const content = Number(tg.contentSafeAreaInset?.top) || 0;
     const safe = Number(tg.safeAreaInset?.top) || 0;
-    // В fullscreen кнопки TG поверх контента — нужен только content inset (без запаса «на глаз»).
-    const top = content > 0 ? content : safe > 0 ? safe : 44;
-    document.documentElement.style.setProperty("--blin-tg-pad-top", `${Math.round(top)}px`);
+    const top = content + safe > 0 ? content + safe + 8 : 92;
+    root.setProperty("--blin-tg-pad-top", `${Math.round(top)}px`);
   } catch {
-    document.documentElement.style.setProperty("--blin-tg-pad-top", "0px");
+    root.setProperty("--blin-tg-pad-top", "0px");
+    root.setProperty("--blin-tg-pad-bottom", "0px");
   }
 }
 

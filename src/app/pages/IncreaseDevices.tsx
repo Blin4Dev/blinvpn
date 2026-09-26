@@ -1,55 +1,74 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Btn, MSIcon, PageHeader, Screen, Surface, T, btnReset } from "../components/ui";
+import { Btn, Card, CardLabel, MSIcon, PageHeader, Screen, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { fetchPlans, fetchQuote, fetchSubscription } from "../utils/api";
 import { deviceWord } from "../utils/devices";
+import { formatDateRu } from "../utils/date";
 
 const MAX_DEVICES = 20;
+
+function daysWord(n: number): string {
+  const a = n % 100;
+  const b = n % 10;
+  if (b === 1 && a !== 11) return "день";
+  if (b >= 2 && b <= 4 && (a < 12 || a > 14)) return "дня";
+  return "дней";
+}
 
 export default function IncreaseDevices() {
   const navigate = useNavigate();
   const goBack = useSmartBack("/subscription");
 
-  const [baseIncluded, setBaseIncluded] = useState(1);
-  const [pricePerDeviceRub, setPricePerDeviceRub] = useState(40);
-  const [targetMax, setTargetMax] = useState(2);
+  const [loaded, setLoaded] = useState(false);
+  const [current, setCurrent] = useState(1);
+  // Сколько устройств БУДЕТ в подписке. Меньше текущего выбрать нельзя
+  // (уменьшить лимит может только администратор в панели).
+  const [target, setTarget] = useState(2);
+  const [pricePerDevice, setPricePerDevice] = useState(40);
   const [subId, setSubId] = useState<number | null>(null);
   const [daysLeft, setDaysLeft] = useState(0);
-  const [totalRub, setTotalRub] = useState(0);
+  const [expiry, setExpiry] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
   const [quoteBusy, setQuoteBusy] = useState(false);
 
   useEffect(() => {
     void (async () => {
       try {
         const data = await fetchPlans();
-        setPricePerDeviceRub(data.extra_device_price || 40);
+        setPricePerDevice(data.extra_device_price || 40);
       } catch {
         /* keep defaults */
       }
       try {
         const sub = await fetchSubscription();
         const k = sub?.key;
-        const limit = Math.max(1, Number(k?.devices_limit ?? 1));
-        setBaseIncluded(limit);
-        setTargetMax(Math.min(MAX_DEVICES, limit + 1));
+        const cur = Math.max(1, Number(k?.devices_limit ?? 1));
+        setCurrent(cur);
+        setTarget(Math.min(MAX_DEVICES, cur + 1));
         if (k?.id) setSubId(Number(k.id));
+        if (k?.expiry_date) setExpiry(String(k.expiry_date));
         let dl = Number(k?.days_left ?? NaN);
         if (!Number.isFinite(dl) && k?.expiry_date) {
-          dl = Math.max(0, Math.ceil((new Date(k.expiry_date).getTime() - Date.now()) / 86400000));
+          dl = Math.ceil((new Date(k.expiry_date).getTime() - Date.now()) / 86400000);
         }
         if (Number.isFinite(dl)) setDaysLeft(Math.max(0, Math.floor(dl)));
       } catch {
         /* keep defaults */
+      } finally {
+        setLoaded(true);
       }
     })();
   }, []);
 
-  const extra = Math.max(0, targetMax - baseIncluded);
+  const maxAdd = Math.max(0, MAX_DEVICES - current);
+  const minTarget = Math.min(MAX_DEVICES, current + 1);
+  const total_ = Math.min(MAX_DEVICES, Math.max(minTarget, target));
+  const extra = Math.max(0, total_ - current);
 
   useEffect(() => {
     if (extra <= 0) {
-      setTotalRub(0);
+      setTotal(0);
       return;
     }
     let alive = true;
@@ -65,122 +84,127 @@ export default function IncreaseDevices() {
         use_referral_balance: false,
       });
       if (!alive) return;
-      if (q) setTotalRub(Math.round(q.price));
-      else {
-        // запасной клиентский расчёт как на сервере
-        setTotalRub(Math.round(extra * pricePerDeviceRub * (Math.min(daysLeft, 3650) / 30)));
-      }
+      if (q) setTotal(Math.round(q.price));
+      else setTotal(Math.round(extra * pricePerDevice * (Math.min(daysLeft, 3650) / 30)));
       setQuoteBusy(false);
     })();
     return () => {
       alive = false;
     };
-  }, [extra, subId, pricePerDeviceRub, daysLeft]);
+  }, [extra, subId, pricePerDevice, daysLeft]);
 
-  const title = useMemo(() => {
-    if (extra === 0) return "Докупка устройств";
-    return `+${extra} ${deviceWord(extra)}`;
-  }, [extra]);
+  const stepBtn = (disabled: boolean): React.CSSProperties => ({
+    ...btnReset,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    background: T.surface,
+    border: `1px solid ${T.border}`,
+    color: T.text,
+    cursor: disabled ? "default" : "pointer",
+    opacity: disabled ? 0.35 : 1,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  });
+
+  const priceText = quoteBusy ? "…" : `${total} ₽`;
 
   return (
     <Screen>
-      <PageHeader title="Устройства" onBack={goBack} />
+      <PageHeader title="Докупить устройства" onBack={goBack} />
 
-      <Surface padded style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 20, fontWeight: 600, color: T.text, marginBottom: 8 }}>{title}</div>
-        <div style={{ fontSize: 13, color: T.textMuted, lineHeight: 1.45 }}>
-          Сейчас в подписке {baseIncluded} {deviceWord(baseIncluded)}. Доп. слот — {pricePerDeviceRub} ₽/мес,
-          оплата только за остаток срока (~{daysLeft} дн.). Срок подписки не меняется.
+      <Card>
+        <CardLabel>Сейчас в подписке</CardLabel>
+        <div style={{ fontSize: 26, fontWeight: 700, color: T.text, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+          {loaded ? `${current} ${deviceWord(current)}` : "…"}
         </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginTop: 18,
-            background: T.surfaceRaised,
-            borderRadius: T.radius.lg,
-            padding: "10px 12px",
-          }}
-        >
-          <button
-            type="button"
-            aria-label="Меньше"
-            className="blin-press"
-            onClick={() => setTargetMax((v) => Math.max(baseIncluded, v - 1))}
-            style={{
-              ...btnReset,
-              width: 44,
-              height: 44,
-              borderRadius: 12,
-              background: T.surface,
-              border: `1px solid ${T.border}`,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <MSIcon name="remove" style={{ color: T.text }} />
-          </button>
-          <div style={{ flex: 1, textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 600, color: T.text }}>
-              {targetMax} {deviceWord(targetMax)}
-            </div>
-            <div style={{ fontSize: 12, color: T.textDim, marginTop: 2 }}>
-              +{extra} / {Math.max(0, MAX_DEVICES - baseIncluded)} доп.
-            </div>
+        {expiry ? (
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6 }}>
+            до {formatDateRu(expiry)} · осталось {daysLeft} {daysWord(daysLeft)}
           </div>
-          <button
-            type="button"
-            aria-label="Больше"
-            className="blin-press"
-            onClick={() => setTargetMax((v) => Math.min(MAX_DEVICES, v + 1))}
+        ) : null}
+      </Card>
+
+      {maxAdd === 0 && loaded ? (
+        <Card>
+          <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.45 }}>
+            В подписке уже максимум — {MAX_DEVICES} устройств.
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <CardLabel>Будет устройств</CardLabel>
+          <div
             style={{
-              ...btnReset,
-              width: 44,
-              height: 44,
-              borderRadius: 12,
-              background: T.surface,
-              border: `1px solid ${T.border}`,
-              cursor: "pointer",
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
+              gap: 12,
+              background: T.surfaceRaised,
+              borderRadius: T.radius.md,
+              padding: 6,
             }}
           >
-            <MSIcon name="add" style={{ color: T.text }} />
-          </button>
-        </div>
+            <button
+              type="button"
+              aria-label="Меньше"
+              className="blin-press"
+              disabled={total_ <= minTarget}
+              onClick={() => setTarget((v) => Math.max(minTarget, v - 1))}
+              style={stepBtn(total_ <= minTarget)}
+            >
+              <MSIcon name="remove" style={{ fontSize: 22 }} />
+            </button>
+            <div style={{ flex: 1, textAlign: "center", fontSize: 16, fontWeight: 600, color: T.text }}>
+              {total_} {deviceWord(total_)}
+            </div>
+            <button
+              type="button"
+              aria-label="Больше"
+              className="blin-press"
+              disabled={total_ >= MAX_DEVICES}
+              onClick={() => setTarget((v) => Math.min(MAX_DEVICES, v + 1))}
+              style={stepBtn(total_ >= MAX_DEVICES)}
+            >
+              <MSIcon name="add" style={{ fontSize: 22 }} />
+            </button>
+          </div>
 
-        <div
-          style={{
-            marginTop: 16,
-            paddingTop: 14,
-            borderTop: `1px solid ${T.border}`,
-            display: "flex",
-            alignItems: "baseline",
-            justifyContent: "space-between",
-          }}
+          <div style={{ fontSize: 13, color: T.textMuted, marginTop: 10, textAlign: "center" }}>
+            +{extra} к текущим {current}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              marginTop: 14,
+              paddingTop: 12,
+              borderTop: `1px solid ${T.border}`,
+            }}
+          >
+            <div style={{ fontSize: 14, color: T.textMuted }}>За остаток срока</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: T.orange }}>{priceText}</div>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ fontSize: 13, color: T.textDim, lineHeight: 1.45, padding: "0 4px" }}>
+        {pricePerDevice} ₽ в месяц за устройство — платите только за оставшиеся дни. Дата окончания подписки не меняется.
+      </div>
+
+      <div style={{ marginTop: "auto", paddingTop: 16 }}>
+        <Btn
+          disabled={extra === 0 || total <= 0 || quoteBusy}
+          onClick={() =>
+            navigate(`/payment?type=devices&count=${extra}&amount=${total}${subId ? `&sub=${subId}` : ""}`)
+          }
         >
-          <span style={{ fontSize: 13, color: T.textMuted }}>Итого</span>
-          <span style={{ fontSize: 28, fontWeight: 700, color: T.orange }}>
-            {quoteBusy && extra > 0 ? "…" : `${totalRub} ₽`}
-          </span>
-        </div>
-      </Surface>
-
-      <Btn
-        disabled={extra === 0 || totalRub <= 0}
-        onClick={() =>
-          navigate(
-            `/payment?type=devices&count=${extra}&amount=${totalRub}${subId ? `&sub=${subId}` : ""}`,
-          )
-        }
-      >
-        Перейти к оплате
-      </Btn>
+          {extra > 0 && total > 0 && !quoteBusy ? `Оплатить ${total} ₽` : "Оплатить"}
+        </Btn>
+      </div>
     </Screen>
   );
 }

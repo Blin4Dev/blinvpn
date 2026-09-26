@@ -6,6 +6,7 @@ import {
   requestEmailCode,
   setAppToken,
   verifyEmailCode,
+  getWebRef,
   type AppUser,
   type TelegramOAuthPayload,
 } from "../utils/api";
@@ -52,9 +53,10 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
         if (payload.photo_url) clean.photo_url = payload.photo_url;
         if (payload.auth_date != null && payload.auth_date !== "") clean.auth_date = payload.auth_date;
 
+        const ref = getWebRef();
         const b = await appFetch<{ user?: AppUser; token?: string }>("/auth/oauth", {
           method: "POST",
-          body: JSON.stringify(clean),
+          body: JSON.stringify(ref ? { ...clean, ref } : clean),
         });
         if (b.token) setAppToken(b.token);
         onAuthed();

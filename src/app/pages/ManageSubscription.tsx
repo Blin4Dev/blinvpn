@@ -1,15 +1,10 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ActionButton, Btn, PageHeader, Screen, SectionLabel, T, btnReset } from "../components/ui";
+import { ActionButton, PageHeader, Screen, SectionLabel, T } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
-import {
-  appFetch,
-  fetchAppLink,
-  fetchConfig,
-  fetchPlans,
-  minPlanPrice,
-  openDeepLink,
-} from "../utils/api";
+import { appFetch, fetchConfig } from "../utils/api";
+import { formatDateRu } from "../utils/date";
+import SetupSheet from "../components/SetupSheet";
 
 function pad2(n: number) {
   return n.toString().padStart(2, "0");
@@ -38,13 +33,20 @@ export default function ManageSubscription() {
   const goBack = useSmartBack("/");
 
   const [untilIso, setUntilIso] = useState<string | null>(null);
+  // Закончившаяся (ещё не удалённая) подписка: дата окончания и автоудаления
+  const [expiredAt, setExpiredAt] = useState<string | null>(null);
+  const [deleteAt, setDeleteAt] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [minPrice, setMinPrice] = useState(99);
-  const [devicesSummary, setDevicesSummary] = useState("—");
   const [trafficResetPrice, setTrafficResetPrice] = useState(0);
+  // Продление запрещено администратором: кнопки «Продлить» нет
+  const [noRenew, setNoRenew] = useState(false);
   const [appSheet, setAppSheet] = useState(false);
-  const [linking, setLinking] = useState<string | null>(null);
-  const [linkErr, setLinkErr] = useState("");
+
+  const closeSheet = () => {
+    setAppSheet(false);
+    // Убираем ?setup=1, чтобы окно не открылось снова при возврате на страницу
+    if (new URLSearchParams(location.search).has("setup")) navigate("/subscription", { replace: true });
+  };
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get("setup") === "1") {
@@ -52,27 +54,8 @@ export default function ManageSubscription() {
     }
   }, [location.search]);
 
-  const pickApp = async (which: "incy" | "happ" | "other") => {
-    if (linking) return;
-    setLinking(which);
-    setLinkErr("");
-    try {
-      const res = await fetchAppLink(which);
-      openDeepLink(res);
-      setAppSheet(false);
-    } catch (e) {
-      setLinkErr(e instanceof Error ? e.message : "Не удалось получить ссылку");
-    } finally {
-      setLinking(null);
-    }
-  };
-
   useEffect(() => {
     void (async () => {
-      try {
-        const plans = await fetchPlans();
-        setMinPrice(minPlanPrice(plans.plans));
-      } catch { /* keep 99 */ }
       try {
         const cfg = await fetchConfig();
         const p = Number((cfg as { trafficResetPrice?: number }).trafficResetPrice ?? 0);
@@ -80,17 +63,26 @@ export default function ManageSubscription() {
       } catch { /* без сброса */ }
       try {
         const data = await appFetch<{
+          status?: string;
           until?: string | null;
-          key?: { devices_limit?: number; days_left?: number | null } | null;
+          key?: { devices_limit?: number; days_left?: number | null; no_renew?: boolean } | null;
+          expired_key?: { expiry_date?: string | null } | null;
+          delete_at?: string | null;
         }>("/subscription");
+        if (data.status === "expired") {
+          // Экран «Истекла» показываем даже если сервер не прислал дату
+          setExpiredAt(data.expired_key?.expiry_date || new Date().toISOString());
+          setDeleteAt(data.delete_at || null);
+          return;
+        }
         if (!data.until) {
+          // Подписки нет (или уже удалена) — на главную, там кнопка оформления
           setLoaded(true);
-          navigate("/subscription/start", { replace: true });
+          navigate("/", { replace: true });
           return;
         }
         setUntilIso(data.until);
-        const limit = data.key?.devices_limit;
-        if (limit != null) setDevicesSummary(`лимит ${limit}`);
+        setNoRenew(!!data.key?.no_renew);
       } catch { /* placeholder */ } finally {
         setLoaded(true);
       }
@@ -101,17 +93,59 @@ export default function ManageSubscription() {
     () => (untilIso ? new Date(untilIso) : new Date(Date.now() + 86400000)),
     [untilIso],
   );
-  const { days, h, m, s } = useCountdown(validUntil);
+  const { days, h, m, s, ms } = useCountdown(validUntil);
+
+  // Подписка закончилась, пока страница открыта — переключаемся на экран «Истекла»
+  useEffect(() => {
+    if (untilIso && ms <= 0 && !expiredAt) {
+      setExpiredAt(untilIso);
+      setDeleteAt(new Date(new Date(untilIso).getTime() + 7 * 86_400_000).toISOString());
+    }
+  }, [ms, untilIso, expiredAt]);
 
   const untilLabel = untilIso
-    ? new Date(untilIso).toLocaleDateString("ru-RU", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      })
+    ? formatDateRu(untilIso)
     : loaded
       ? "нет активной подписки"
       : "загрузка…";
+
+  if (expiredAt) {
+    const deleteIn = deleteAt ? Math.max(1, Math.ceil((new Date(deleteAt).getTime() - Date.now()) / 86_400_000)) : null;
+    const dw = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "день" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "дня" : "дней");
+    return (
+      <Screen>
+        <PageHeader title="Подписка" onBack={goBack} />
+        <div style={{ marginBottom: 22 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", color: T.textDim, marginBottom: 8 }}>
+            Статус
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 36, letterSpacing: "-0.03em", color: T.text, lineHeight: 1 }}>Истекла</div>
+          <div style={{ marginTop: 10, fontSize: 14, color: T.textMuted }}>
+            Закончилась {formatDateRu(expiredAt)}
+          </div>
+          {deleteIn != null ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: "12px 14px",
+                borderRadius: T.radius.md,
+                background: T.dangerSoft,
+                color: T.danger,
+                fontSize: 13,
+                lineHeight: 1.45,
+                fontWeight: 500,
+              }}
+            >
+              Продлите подписку — иначе через {deleteIn} {dw(deleteIn)} она будет удалена вместе с настройками в приложении.
+            </div>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <ActionButton primary icon="bolt" title="Продлить подписку" onClick={() => navigate("/subscription/extend")} />
+        </div>
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
@@ -152,6 +186,22 @@ export default function ManageSubscription() {
         <div style={{ marginTop: 10, fontSize: 14, color: T.textMuted }}>
           Действует до {untilLabel}
         </div>
+        {noRenew ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: T.radius.md,
+              background: T.surface,
+              border: `1px solid ${T.border}`,
+              color: T.textMuted,
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            Продление этой подписки недоступно. После окончания срока она будет удалена — тогда можно будет оформить новую.
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -159,19 +209,18 @@ export default function ManageSubscription() {
           primary
           icon="download"
           title="Добавить подписку"
-          meta="в приложение"
           onClick={() => setAppSheet(true)}
         />
-        <ActionButton
-          icon="shopping_bag"
-          title="Продлить подписку"
-          meta={`от ${minPrice} ₽`}
-          onClick={() => navigate("/subscription/extend")}
-        />
+        {!noRenew && (
+          <ActionButton
+            icon="shopping_bag"
+            title="Продлить подписку"
+            onClick={() => navigate("/subscription/extend")}
+          />
+        )}
         <ActionButton
           icon="devices"
           title="Мои устройства"
-          meta={devicesSummary}
           onClick={() => navigate("/subscription/devices")}
         />
       </div>
@@ -181,97 +230,18 @@ export default function ManageSubscription() {
         <ActionButton
           icon="add_circle"
           title="Докупить устройство"
-          meta="+слот"
           onClick={() => navigate("/subscription/increase")}
         />
         {trafficResetPrice > 0 && (
           <ActionButton
             icon="refresh"
             title="Сбросить трафик"
-            meta={`${trafficResetPrice} ₽`}
             onClick={() => navigate("/payment?type=traffic_reset")}
           />
         )}
       </div>
 
-      {appSheet && (
-        <div
-          onClick={() => !linking && setAppSheet(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(8,6,4,0.7)",
-            display: "flex",
-            alignItems: "flex-end",
-            justifyContent: "center",
-            zIndex: 40,
-            animation: "blinvpnFadeIn 0.18s ease both",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 402,
-              background: T.bg,
-              borderTop: `1px solid ${T.border}`,
-              padding: "16px 26px 28px",
-              boxSizing: "border-box",
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              animation: "blinvpnSheetUp 0.28s var(--ease-out) both",
-            }}
-          >
-            <div style={{ width: 36, height: 3, borderRadius: 2, background: T.textDim, margin: "0 auto 12px" }} />
-            <div style={{ fontWeight: 600, fontSize: 17, color: T.text, marginBottom: 2 }}>
-              Добавить подписку
-            </div>
-            <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 8, lineHeight: 1.4 }}>
-              Выберите приложение — подписка добавится автоматически.
-            </div>
-            {(
-              [
-                { app: "incy", title: "Incy", sub: "Рекомендуем", primary: true },
-                { app: "happ", title: "Happ", sub: "Популярное", primary: false },
-                { app: "other", title: "Другое приложение", sub: "Скопировать ссылку", primary: false },
-              ] as const
-            ).map((row) => (
-              <button
-                key={row.app}
-                type="button"
-                disabled={linking != null}
-                onClick={() => void pickApp(row.app)}
-                className="blin-press"
-                style={{
-                  ...btnReset,
-                  width: "100%",
-                  minHeight: 56,
-                  padding: "10px 16px",
-                  borderRadius: T.radius.lg,
-                  border: row.primary ? "none" : `1px solid ${T.border}`,
-                  background: row.primary ? T.orange : T.surface,
-                  color: row.primary ? "#fff" : T.text,
-                  textAlign: "left",
-                  cursor: linking ? "wait" : "pointer",
-                  opacity: linking && linking !== row.app ? 0.5 : 1,
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 15 }}>
-                  {linking === row.app ? "Открываем…" : row.title}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{row.sub}</div>
-              </button>
-            ))}
-            {linkErr ? (
-              <div style={{ fontSize: 12, color: T.danger, textAlign: "center", marginTop: 4 }}>{linkErr}</div>
-            ) : null}
-            <Btn variant="ghost" onClick={() => setAppSheet(false)} style={{ marginTop: 4 }}>
-              Отмена
-            </Btn>
-          </div>
-        </div>
-      )}
+      {appSheet && <SetupSheet onClose={closeSheet} />}
     </Screen>
   );
 }

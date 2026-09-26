@@ -27,8 +27,9 @@ function formatWhen(iso?: string): string {
 }
 
 function titleFor(item: HistoryItem): string {
-  if (item.description) return String(item.description);
   const method = item.payment_method || "";
+  if (method === "referral") return "Бонус за друга";
+  if (item.description) return String(item.description);
   if (method === "promocode") return `Промокод №${item.id}`;
   if (Number(item.amount) === 0) return `Операция №${item.id}`;
   return `Оплата №${item.id}`;

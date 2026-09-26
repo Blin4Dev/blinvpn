@@ -50,19 +50,6 @@ export function useSmartBack(fallbackPath = "/") {
   return useCallback(() => {
     const current = `${location.pathname}${location.search}`;
 
-    // Спец-правило для онбординга: кнопка "Назад" возвращает на предыдущий шаг.
-    if (location.pathname === "/subscription/start") {
-      const params = new URLSearchParams(location.search);
-      const step = Number(params.get("step") || "1");
-      if (Number.isFinite(step) && step > 1) {
-        params.set("step", String(step - 1));
-        navigate(`/subscription/start?${params.toString()}`);
-        return;
-      }
-      navigate("/", { replace: true });
-      return;
-    }
-
     const previousInApp = getPreviousRoute(current);
     if (previousInApp && previousInApp !== current) {
       navigate(previousInApp);

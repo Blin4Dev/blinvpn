@@ -304,3 +304,19 @@ a { color: inherit; }
 .avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--surface-active); color: var(--muted); font-weight: 600; flex: none; }
 
 .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ── horizontal bar chart ─────────────────────────────────── */
+.hbars { display: flex; flex-direction: column; gap: 12px; }
+.hbar-row { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; align-items: center; gap: 12px; }
+.hbar-label { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hbar-track { height: 10px; background: var(--surface-active); border-radius: var(--r-pill); overflow: hidden; }
+.hbar-fill { height: 100%; background: rgba(255,255,255,0.55); border-radius: var(--r-pill); transition: width 0.4s ease; }
+.hbar-row.top .hbar-fill { background: #fff; }
+.hbar-row.danger .hbar-fill { background: var(--danger); }
+.hbar-val { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text); min-width: 64px; text-align: right; }
+
+/* ── monitoring: node tile ───────────────────────────────── */
+.mon-node { display: flex; align-items: center; gap: 12px; padding: 12px 14px; cursor: pointer; font: inherit; color: inherit; width: 100%; transition: background var(--t), border-color var(--t); }
+.mon-node:hover { background: var(--surface-hover); border-color: rgba(255,255,255,0.18); }
+.todo-row { border-radius: var(--r-md); transition: background var(--t); }
+.todo-row:hover { background: var(--surface-hover) !important; }

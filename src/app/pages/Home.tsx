@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { activateTrial, fetchConfig, fetchMe } from "../utils/api";
+import { formatDateRu } from "../utils/date";
 import { Btn, LoadingScreen, MSIcon, T, btnReset, pageFrame, pageOuter } from "../components/ui";
 
 type SubscriptionState =
@@ -21,6 +22,9 @@ interface StateConfig {
   ctaPrimary: boolean;
 }
 
+// Покупка: выбор устройств и оплата, после неё — окно «Добавить подписку»
+const BUY_PATH = `/payment?return=${encodeURIComponent("/subscription?setup=1")}`;
+
 const STATE_CONFIGS: Record<SubscriptionState, StateConfig> = {
   active: {
     statusTitle: "Подписка активна",
@@ -34,15 +38,15 @@ const STATE_CONFIGS: Record<SubscriptionState, StateConfig> = {
   never: {
     statusTitle: "Нет подписки",
     statusTone: "off",
-    statusSubtitle: "Попробуйте бесплатно — займёт минуту",
+    statusSubtitle: "И никогда не было",
     ctaLabel: "Попробовать бесплатно",
-    ctaPath: "/subscription/start?step=1&flow=trial&trialUsed=0",
+    ctaPath: "/subscription?setup=1",
     ctaPrice: "0 ₽",
     ctaPrimary: true,
   },
   expired: {
-    statusTitle: "Подписка закончилась",
-    statusTone: "warn",
+    statusTitle: "Истекла",
+    statusTone: "off",
     statusSubtitle: "Продлите, чтобы снова подключиться",
     ctaLabel: "Продлить подписку",
     ctaPath: "/subscription/extend",
@@ -70,20 +74,32 @@ const STATE_CONFIGS: Record<SubscriptionState, StateConfig> = {
   had_before: {
     statusTitle: "Нет подписки",
     statusTone: "off",
-    statusSubtitle: "Оформите снова — всё на месте",
+    statusSubtitle: "Пора её приобрести",
     ctaLabel: "Купить подписку",
-    ctaPath: "/subscription/start?step=1&flow=purchase&trialUsed=1",
+    ctaPath: BUY_PATH,
     ctaPrice: "от 99 ₽",
     ctaPrimary: true,
   },
 };
 
-const TONE: Record<StateConfig["statusTone"], { dot: string; bg: string; text: string }> = {
-  ok: { dot: T.orange, bg: T.orangeSoft, text: T.orangeBright },
-  warn: { dot: "#FFB020", bg: "rgba(255,176,32,0.14)", text: "#FFC14D" },
-  off: { dot: T.textDim, bg: "rgba(255,248,240,0.06)", text: T.textMuted },
-  danger: { dot: T.danger, bg: T.dangerSoft, text: T.danger },
+// Цвет заголовка статуса: оранжевый — активна, светло-оранжевый — скоро
+// закончится, белый — нет/истекла, красный — заблокирована.
+const TONE: Record<StateConfig["statusTone"], string> = {
+  ok: T.orange,
+  warn: "#FFB587",
+  off: T.text,
+  danger: T.danger,
 };
+
+/** «Остался 1 день», «Осталось 2 дня», «Осталось 5 дней». */
+function daysLeftTitle(n: number): string {
+  if (n <= 0) return "Заканчивается сегодня";
+  const a = n % 100;
+  const b = n % 10;
+  if (b === 1 && a !== 11) return `Остался ${n} день`;
+  if (b >= 2 && b <= 4 && (a < 12 || a > 14)) return `Осталось ${n} дня`;
+  return `Осталось ${n} дней`;
+}
 
 function ActionTile({
   icon,
@@ -117,7 +133,8 @@ function ActionTile({
         border: `1px solid ${T.border}`,
         borderRadius: T.radius.xl,
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
+        // Не opacity: анимация появления заканчивается на opacity 1 и перебивает её.
+        // Неактивную плитку делаем серой через цвета.
         animation: `blinvpnRise 0.5s var(--ease-out) ${delay}s both`,
       }}
     >
@@ -126,15 +143,15 @@ function ActionTile({
           width: 36,
           height: 36,
           borderRadius: 12,
-          background: T.orangeSoft,
+          background: disabled ? "rgba(255,248,240,0.05)" : T.orangeSoft,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <MSIcon name={icon} style={{ color: T.orange, fontSize: 20 }} />
+        <MSIcon name={icon} style={{ color: disabled ? T.textDim : T.orange, fontSize: 20 }} />
       </span>
-      <span style={{ fontWeight: 600, fontSize: 15, color: T.text, letterSpacing: "-0.01em" }}>
+      <span style={{ fontWeight: 600, fontSize: 15, color: disabled ? T.textDim : T.text, letterSpacing: "-0.01em" }}>
         {label}
       </span>
     </button>
@@ -150,6 +167,8 @@ export default function BlinVPNApp() {
   const [trialBusy, setTrialBusy] = useState(false);
   const [supportUrl, setSupportUrl] = useState("https://t.me/blinteams");
   const [expiringTitle, setExpiringTitle] = useState("Скоро закончится");
+  // Чёрный список: заблокирована и кнопка поддержки
+  const [blacklisted, setBlacklisted] = useState(false);
 
   const cfg = STATE_CONFIGS[subscriptionState];
   const statusTitle = subscriptionState === "expiring_soon" ? expiringTitle : cfg.statusTitle;
@@ -157,7 +176,7 @@ export default function BlinVPNApp() {
   const blocked = subscriptionState === "blocked";
   const trialOff = subscriptionState === "never" && !trialEnabled;
   const ctaLabel = trialOff ? "Оформить подписку" : cfg.ctaLabel;
-  const ctaPath = trialOff ? "/subscription/start?step=1&flow=purchase&trialUsed=1" : cfg.ctaPath;
+  const ctaPath = trialOff ? BUY_PATH : cfg.ctaPath;
   const isTrialCta = subscriptionState === "never" && trialEnabled;
   const ctaPrimary = trialOff ? true : cfg.ctaPrimary;
 
@@ -168,7 +187,7 @@ export default function BlinVPNApp() {
       const res = await activateTrial();
       setTrialBusy(false);
       if (!res.success && res.message) {
-        navigate("/subscription/start?step=1&flow=purchase&trialUsed=1");
+        navigate(BUY_PATH);
         return;
       }
     }
@@ -190,16 +209,18 @@ export default function BlinVPNApp() {
           if (!me) return;
           const st = String(me.subscription_status || "");
           const until = String(me.subscription_until || "");
-          if (until) setSubscriptionUntilText(until.slice(0, 10));
-          if (st === "blocked") {
+          if (until) setSubscriptionUntilText(formatDateRu(until));
+          // Заблокирован ключ или весь аккаунт — одно и то же состояние «Заблокирована»
+          if (st === "blocked" || st === "banned") {
             setSubscriptionState("blocked");
+            setBlacklisted(!!me.blacklisted);
           } else if (st === "active" || st === "trial") {
             const daysLeft = until
               ? Math.ceil((new Date(until).getTime() - Date.now()) / 86_400_000)
               : Infinity;
             if (daysLeft <= 3) {
               setExpiringTitle(
-                daysLeft <= 0 ? "Заканчивается сегодня" : `Осталось ${daysLeft} дн.`,
+                daysLeftTitle(daysLeft),
               );
               setSubscriptionState("expiring_soon");
             } else {
@@ -224,7 +245,9 @@ export default function BlinVPNApp() {
   const subtitle =
     subscriptionUntilText && (subscriptionState === "active" || subscriptionState === "expiring_soon")
       ? `до ${subscriptionUntilText}`
-      : cfg.statusSubtitle;
+      : blacklisted
+        ? "Вы в черном списке проекта"
+        : cfg.statusSubtitle;
 
   return (
     <div style={pageOuter()}>
@@ -239,7 +262,8 @@ export default function BlinVPNApp() {
             height: "100%",
             paddingLeft: 26,
             paddingRight: 26,
-            paddingBottom: 20,
+            // Воздух снизу + системная полоска «домой» (в Telegram fullscreen)
+            paddingBottom: "calc(36px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
@@ -299,7 +323,7 @@ export default function BlinVPNApp() {
           </div>
 
           {/* Низ: статус + история + CTA + сетка */}
-          <div style={{ flexShrink: 0, paddingBottom: 4 }}>
+          <div style={{ flexShrink: 0 }}>
             <div
               style={{
                 marginBottom: 14,
@@ -308,28 +332,18 @@ export default function BlinVPNApp() {
             >
               <div
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "7px 12px 7px 10px",
-                  borderRadius: T.radius.pill,
-                  background: tone.bg,
-                  marginBottom: 8,
+                  fontWeight: 700,
+                  fontSize: 20,
+                  lineHeight: 1.2,
+                  letterSpacing: "-0.02em",
+                  color: tone,
+                  marginBottom: 3,
                 }}
               >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: tone.dot,
-                    animation: cfg.statusTone === "ok" ? "blinvpnPulse 2.2s ease-in-out infinite" : undefined,
-                  }}
-                />
-                <span style={{ fontWeight: 600, fontSize: 13, color: tone.text }}>{statusTitle}</span>
+                {statusTitle}
               </div>
               {subtitle ? (
-                <div style={{ fontSize: 14, color: T.textMuted, fontWeight: 500, lineHeight: 1.35 }}>
+                <div style={{ fontSize: 13, color: T.textMuted, fontWeight: 500, lineHeight: 1.35 }}>
                   {subtitle}
                 </div>
               ) : null}
@@ -383,11 +397,9 @@ export default function BlinVPNApp() {
               <ActionTile
                 icon="chat"
                 label="Поддержка"
-                disabled={blocked}
                 delay={0.34}
-                onClick={() => {
-                  if (!blocked) window.open(supportUrl, "_blank", "noopener,noreferrer");
-                }}
+                disabled={blacklisted}
+                onClick={() => { if (!blacklisted) window.open(supportUrl, "_blank", "noopener,noreferrer"); }}
               />
             </div>
           </div>

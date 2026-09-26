@@ -1,9 +1,11 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Btn, Field, PageHeader, Screen, SectionLabel, Surface, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, requestWithdraw } from "../utils/api";
 
-type RefUser = { id: number; username?: string | null; telegram_id?: number; name?: string; initial?: string };
+type RefUser = { id: number; username?: string | null; telegram_id?: number; name?: string; initial?: string; earned?: number };
+
+const rub = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(2).replace(".", ",")} ₽`;
 
 type ReferralData = {
   code?: string;
@@ -177,22 +179,43 @@ export default function Referral() {
           {refs.map((u, i) => {
             const label =
               u.name ||
-              (u.username ? `@${u.username}` : u.telegram_id ? `id${u.telegram_id}` : `Пользователь #${u.id}`);
+              (u.username ? `@${u.username}` : `Пользователь #${u.id}`);
             return (
               <div
                 key={u.id}
                 style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
                   padding: "13px 0",
                   borderBottom: i < refs.length - 1 ? `1px solid ${T.border}` : "none",
-                  fontWeight: 500,
-                  fontSize: 15,
-                  color: T.text,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
                 }}
               >
-                {label}
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    fontWeight: 500,
+                    fontSize: 15,
+                    color: T.text,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {label}
+                </div>
+                <div
+                  style={{
+                    flexShrink: 0,
+                    fontWeight: 600,
+                    fontSize: 15,
+                    fontVariantNumeric: "tabular-nums",
+                    color: Number(u.earned) > 0 ? T.orange : T.textDim,
+                  }}
+                >
+                  {Number(u.earned) > 0 ? `+${rub(Number(u.earned))}` : rub(0)}
+                </div>
               </div>
             );
           })}

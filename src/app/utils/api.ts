@@ -23,6 +23,7 @@ export type AppUser = {
   subscription_status?: string;
   subscription_until?: string | null;
   is_banned?: boolean;
+  blacklisted?: boolean;
   referral_code?: string;
   is_partner?: boolean;
   partner_balance?: number;
@@ -162,6 +163,8 @@ export type CreatePaymentRequest = {
   purpose?: PaymentPurpose;
   subscription_id?: number | null;
   use_referral_balance?: boolean;
+  /** Экран, куда вернуть после оплаты (в т.ч. если приложение закроется во время оплаты) */
+  return_to?: string;
 };
 
 export type CreatePaymentResponse = {
@@ -187,8 +190,37 @@ export type PaymentStatusResponse = {
   currency?: string;
   pay_url?: string | null;
   invoice_link?: string | null;
+  purpose?: string;
   subscription?: unknown;
 };
+
+export type UnseenPayment = {
+  payment_id: string;
+  status: string;
+  provider?: string;
+  purpose?: string;
+  return_to?: string | null;
+  pay_url?: string | null;
+  invoice_link?: string | null;
+};
+
+/** Платёж, итог которого пользователь ещё не видел (приложение закрылось во время оплаты). */
+export async function fetchUnseenPayment(): Promise<UnseenPayment | null> {
+  try {
+    const r = await appFetch<{ payment: UnseenPayment | null }>("/payment/unseen");
+    return r?.payment || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function markPaymentSeen(paymentId: string): Promise<void> {
+  try {
+    await appFetch("/payment/seen", { method: "POST", body: JSON.stringify({ payment_id: paymentId }) });
+  } catch {
+    /* не критично */
+  }
+}
 
 export async function createPayment(
   req: CreatePaymentRequest,
@@ -236,32 +268,13 @@ export type SubKey = {
   days_left?: number | null;
   devices_limit?: number;
   type?: string;
-  frozen?: boolean;
 };
 
-export async function fetchSubscription(): Promise<{ until?: string | null; key?: SubKey | null; frozen?: boolean } | null> {
+export async function fetchSubscription(): Promise<{ until?: string | null; key?: SubKey | null } | null> {
   try {
     return await appFetch("/subscription");
   } catch {
     return null;
-  }
-}
-
-export async function freezeSubscription(): Promise<{ ok: boolean; error?: string }> {
-  try {
-    await appFetch("/subscription/freeze", { method: "POST" });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Ошибка" };
-  }
-}
-
-export async function unfreezeSubscription(): Promise<{ ok: boolean; error?: string }> {
-  try {
-    await appFetch("/subscription/unfreeze", { method: "POST" });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Ошибка" };
   }
 }
 
@@ -363,10 +376,32 @@ export async function requestEmailCode(email: string): Promise<EmailRequestResul
   });
 }
 
+/** Реферальный код из ссылки сайта (?ref=…), запомненный при первом заходе. */
+export function getWebRef(): string {
+  try {
+    return localStorage.getItem("blinvpn_ref") || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Запоминаем ?ref=… один раз (первый приглашающий «выигрывает»). */
+export function captureWebRef(): void {
+  try {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref && /^[A-Za-z0-9]{1,32}$/.test(ref) && !localStorage.getItem("blinvpn_ref")) {
+      localStorage.setItem("blinvpn_ref", ref);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function verifyEmailCode(email: string, code: string): Promise<AppUser> {
+  const ref = getWebRef();
   const b = await appFetch<{ user: AppUser; token: string }>("/auth/email/verify", {
     method: "POST",
-    body: JSON.stringify({ email, code }),
+    body: JSON.stringify(ref ? { email, code, ref } : { email, code }),
   });
   if (b.token) setAppToken(b.token);
   return b.user;
@@ -391,7 +426,22 @@ export async function checkAuth(): Promise<boolean> {
       return false;
     }
   })();
-  if (inTelegram) return true;
+  if (inTelegram) {
+    // Получаем сессию-«страховку»: она выручит, если приложение будет открыто
+    // дольше срока подписи Telegram (сервер примет её только для этого же аккаунта).
+    try {
+      const headers = initDataHeader();
+      delete headers["X-App-Session"];
+      const res = await fetch("/api/app/auth", { method: "POST", headers });
+      if (res.ok) {
+        const body = (await res.json()) as { token?: string };
+        if (body.token) setAppToken(body.token);
+      }
+    } catch {
+      /* без страховки — просто продолжаем */
+    }
+    return true;
+  }
   if (!getAppToken()) return false;
   const me = await fetchMe();
   if (!me) {
@@ -454,7 +504,6 @@ export type Membership = {
   required: boolean;
   subscribed: boolean;
   channel_url: string;
-  optional_url?: string;
 };
 
 /** Статус обязательной подписки на канал (только для Telegram-входа). */

@@ -27,6 +27,7 @@
   --blin-scale: 1;
   /* Только Telegram fullscreen; в браузере всегда 0 */
   --blin-tg-pad-top: 0px;
+  --blin-tg-pad-bottom: 0px;
   --bg: #14110E;
   --bg-outer: #14110E;
   --surface: #1E1A16;

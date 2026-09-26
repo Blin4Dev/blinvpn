@@ -1,7 +1,8 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Btn, MSIcon, PageHeader, Screen, Surface, T, btnReset } from "../components/ui";
+import { useSearchParams } from "react-router-dom";
+import { Btn, Card, CardLabel, MSIcon, PageHeader, Screen, T, btnReset } from "../components/ui";
 import { useAppError } from "../components/ErrorModal";
+import PaymentSheet, { type PendingPayment } from "../components/PaymentSheet";
 import { useSmartBack } from "../utils/navigation";
 import {
   applyDiscount,
@@ -57,10 +58,11 @@ const METHODS: { id: PaymentMethod; label: string; icon: React.ReactNode }[] = [
 export default function Payment() {
   const { showError } = useAppError();
   const goBack = useSmartBack("/");
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const returnTo = searchParams.get("return") || "";
+  // Если количество устройств уже выбрали на предыдущем экране — второй раз не спрашиваем.
+  const devicesPreselected = searchParams.has("devices");
   const initialDevices = Math.min(
     MAX_DEVICES,
     Math.max(1, parseInt(searchParams.get("devices") || "1", 10)),
@@ -95,7 +97,6 @@ export default function Payment() {
   const [extraPrice, setExtraPrice] = useState(40);
   const [method, setMethod] = useState<PaymentMethod>("sbp");
   const [paying, setPaying] = useState(false);
-  const [payInfo, setPayInfo] = useState("");
   const [discount, setDiscount] = useState(0);
   const [refBalance, setRefBalance] = useState(0);
   const [providerMin, setProviderMin] = useState<Record<string, number>>({
@@ -106,6 +107,7 @@ export default function Payment() {
   const [useRefBal, setUseRefBal] = useState(false);
   const [quote, setQuote] = useState<PaymentQuote | null>(null);
   const [quoteReady, setQuoteReady] = useState(false);
+  const [pending, setPending] = useState<PendingPayment | null>(null);
 
   const planSizes = useMemo(
     () => Object.keys(rubMap).map(Number).sort((a, b) => a - b),
@@ -206,11 +208,6 @@ export default function Payment() {
           ? "Оплатить с баланса"
           : `Оплатить ${displayPrice}`;
 
-  const waitingQs = (extra = "") => {
-    const ret = returnTo ? `&return=${encodeURIComponent(returnTo)}` : "";
-    return ret + extra;
-  };
-
   const handlePay = async () => {
     if (paying || !quoteReady) return;
     if (belowMin) {
@@ -218,7 +215,6 @@ export default function Payment() {
       return;
     }
     setPaying(true);
-    setPayInfo("");
     try {
       const result = await createPayment({
         plan_devices: planDevices,
@@ -228,72 +224,87 @@ export default function Payment() {
         purpose,
         subscription_id: subParam ? Number(subParam) : null,
         use_referral_balance: canUseRef && useRefBal,
+        return_to: returnTo || "/subscription",
       });
 
-      const goWaiting = (extra = "") =>
-        navigate(
-          `/payment/waiting?payment_id=${encodeURIComponent(result.payment_id)}` +
-            `&provider=${result.provider}${waitingQs(extra)}`,
-        );
+      // Вместо отдельной страницы — нижнее окно ожидания поверх оплаты
+      const goWaiting = (extra: Partial<PendingPayment> = {}) =>
+        setPending({
+          paymentId: String(result.payment_id),
+          provider: String(result.provider || ""),
+          invoiceLink: result.invoice_link || undefined,
+          purpose,
+          ...extra,
+        });
 
       if (result.provider === "balance" || (result as { paid?: boolean }).paid) {
-        setPayInfo("Оплачено с баланса…");
         goWaiting();
       } else if (result.provider === "tg_stars" && result.invoice_link) {
-        setPayInfo("Открываем оплату звёздами…");
         void openStarsInvoice(result.invoice_link);
         goWaiting();
       } else if (result.pay_url) {
-        setPayInfo("Переход к оплате…");
         openPayUrl(result.pay_url);
-        goWaiting(`&pay_url=${encodeURIComponent(result.pay_url)}`);
+        goWaiting({ payUrl: result.pay_url });
       } else {
         goWaiting();
       }
     } catch (e) {
       showError(e instanceof Error ? e.message : "Ошибка оплаты");
-      setPayInfo("");
-    } finally {
+      } finally {
       setPaying(false);
     }
+  };
+
+  const stepBtn: React.CSSProperties = {
+    ...btnReset,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    background: T.surface,
+    border: `1px solid ${T.border}`,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   };
 
   return (
     <Screen>
       <PageHeader title="Оплата" onBack={goBack} />
 
-      <Surface padded style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 6 }}>К оплате</div>
+      <Card>
+        <CardLabel>К оплате</CardLabel>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 32, fontWeight: 700, color: T.orange, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+          <span style={{ fontSize: 30, fontWeight: 700, color: T.orange, letterSpacing: "-0.02em", lineHeight: 1.15 }}>
             {displayPrice}
           </span>
           {hasDiscount && strikePrice ? (
-            <span style={{ fontSize: 16, fontWeight: 600, color: T.textDim, textDecoration: "line-through" }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: T.textDim, textDecoration: "line-through" }}>
               {strikePrice}
             </span>
           ) : null}
         </div>
-        <div style={{ fontSize: 13, color: T.textDim, marginTop: 8, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6, lineHeight: 1.4 }}>
           {isTrafficReset
             ? "Досрочный сброс трафика"
             : isDevicesFlow
               ? `Докупка устройств: +${extraDevices}`
               : `${months} мес · ${devices} ${deviceWord(devices)}`}
         </div>
-      </Surface>
+      </Card>
 
-      {purpose === "subscription" ? (
-        <Surface padded style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Количество устройств</div>
+      {purpose === "subscription" && !devicesPreselected ? (
+        <Card>
+          <CardLabel>Количество устройств</CardLabel>
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: 12,
               background: T.surfaceRaised,
-              borderRadius: T.radius.lg,
-              padding: "10px 12px",
+              borderRadius: T.radius.md,
+              padding: 6,
             }}
           >
             <button
@@ -301,24 +312,12 @@ export default function Payment() {
               aria-label="Меньше"
               className="blin-press"
               onClick={() => setDevices((v) => Math.max(1, v - 1))}
-              style={{
-                ...btnReset,
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                background: T.surface,
-                border: `1px solid ${T.border}`,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
+              style={stepBtn}
             >
-              <MSIcon name="remove" style={{ color: T.text }} />
+              <MSIcon name="remove" style={{ color: T.text, fontSize: 22 }} />
             </button>
             <div style={{ flex: 1, textAlign: "center", minWidth: 0 }}>
-              <div style={{ fontSize: 17, fontWeight: 600, color: T.text }}>
+              <div style={{ fontSize: 16, fontWeight: 600, color: T.text }}>
                 {devices} {deviceWord(devices)}
               </div>
               {split.extra > 0 ? (
@@ -332,29 +331,17 @@ export default function Payment() {
               aria-label="Больше"
               className="blin-press"
               onClick={() => setDevices((v) => Math.min(MAX_DEVICES, v + 1))}
-              style={{
-                ...btnReset,
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                background: T.surface,
-                border: `1px solid ${T.border}`,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexShrink: 0,
-              }}
+              style={stepBtn}
             >
-              <MSIcon name="add" style={{ color: T.text }} />
+              <MSIcon name="add" style={{ color: T.text, fontSize: 22 }} />
             </button>
           </div>
-        </Surface>
+        </Card>
       ) : null}
 
-      <Surface padded style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: T.textMuted, marginBottom: 12 }}>Способ оплаты</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <Card>
+        <CardLabel>Способ оплаты</CardLabel>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {METHODS.map((m) => {
             const active = method === m.id;
             return (
@@ -367,10 +354,10 @@ export default function Payment() {
                   ...btnReset,
                   width: "100%",
                   minHeight: 52,
-                  padding: "10px 14px",
-                  borderRadius: T.radius.lg,
-                  background: active ? "rgba(255, 107, 26, 0.55)" : T.surfaceRaised,
-                  border: "none",
+                  padding: "0 14px",
+                  borderRadius: T.radius.md,
+                  background: active ? T.orangeSoft : T.surfaceRaised,
+                  border: `1px solid ${active ? T.orange : "transparent"}`,
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
@@ -378,15 +365,16 @@ export default function Payment() {
                   boxSizing: "border-box",
                 }}
               >
-                <span style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <span style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   {m.icon}
                 </span>
-                <span style={{ flex: 1, textAlign: "left", fontSize: 16, fontWeight: 600, color: T.text }}>
+                <span style={{ flex: 1, textAlign: "left", fontSize: 15, fontWeight: 600, color: T.text }}>
                   {m.label}
                 </span>
-                {active ? (
-                  <MSIcon name="check_circle" style={{ fontSize: 22, color: "#fff", flexShrink: 0 }} />
-                ) : null}
+                <MSIcon
+                  name={active ? "radio_button_checked" : "radio_button_unchecked"}
+                  style={{ fontSize: 22, color: active ? T.orange : T.textDim, flexShrink: 0 }}
+                />
               </button>
             );
           })}
@@ -402,7 +390,11 @@ export default function Payment() {
               alignItems: "center",
               justifyContent: "space-between",
               width: "100%",
-              marginTop: 16,
+              marginTop: 14,
+              paddingTop: 14,
+              background: "transparent",
+              border: "none",
+              borderTop: `1px solid ${T.border}`,
               gap: 12,
               cursor: "pointer",
             }}
@@ -423,6 +415,7 @@ export default function Payment() {
                   height: "100%",
                   background: useRefBal ? T.orange : "rgba(255,255,255,0.15)",
                   borderRadius: 13,
+                  transition: "background 0.18s ease",
                 }}
               />
               <span
@@ -434,20 +427,23 @@ export default function Payment() {
                   height: 20,
                   background: "#fff",
                   borderRadius: "50%",
+                  transition: "left 0.18s var(--ease-out)",
                 }}
               />
             </span>
           </button>
         ) : null}
-      </Surface>
+      </Card>
 
-      {payInfo ? (
-        <div style={{ fontSize: 12, color: T.textMuted, textAlign: "center", marginBottom: 10 }}>{payInfo}</div>
+      <div style={{ marginTop: "auto", paddingTop: 8 }}>
+        <Btn disabled={paying || !quoteReady || belowMin} onClick={() => void handlePay()}>
+          {payLabel}
+        </Btn>
+      </div>
+
+      {pending ? (
+        <PaymentSheet payment={pending} returnTo={returnTo} onClose={() => setPending(null)} />
       ) : null}
-
-      <Btn disabled={paying || !quoteReady || belowMin} onClick={() => void handlePay()}>
-        {payLabel}
-      </Btn>
     </Screen>
   );
 }

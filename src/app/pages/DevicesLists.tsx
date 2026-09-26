@@ -1,16 +1,8 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BackCircleButton, MSIcon } from "../components/ui";
+import { Btn, MSIcon, PageHeader, Screen, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, revokeDevice } from "../utils/api";
-
-function PlusOutline24() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path d="M12 5v14M5 12h14" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 type Device = { id?: string | number; name?: string; last_seen?: string; lastSeen?: string };
 
@@ -45,179 +37,95 @@ export default function DevicesLists() {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "#14110E",
-        fontFamily: "'Outfit', system-ui, sans-serif",
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          width: "402px",
-          height: "803px",
-          background: "#14110E",
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            position: "absolute",
-            width: "166px",
-            height: "33px",
-            left: "73px",
-            top: "28px",
-            fontFamily: "'Outfit', system-ui, sans-serif",
-            fontWeight: 600,
-            fontSize: "27px",
-            lineHeight: "33px",
-            display: "flex",
-            alignItems: "center",
-            color: "#FFFFFF",
-          }}
-        >
-          Устройства
-        </div>
+    <Screen>
+      <PageHeader
+        title="Устройства"
+        onBack={goBack}
+        right={
+          limit != null ? (
+            <span style={{ fontSize: 14, color: T.textMuted, fontWeight: 500 }}>
+              {devices.length} / {limit}
+            </span>
+          ) : null
+        }
+      />
 
-        <BackCircleButton onClick={goBack} />
-
-        {limit != null && (
-          <div
-            style={{
-              position: "absolute",
-              left: "26px",
-              top: "68px",
-              fontSize: 13,
-              color: "#A89B8C",
-            }}
-          >
-            {devices.length} / {limit}
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {loading && <p style={{ color: T.textMuted, fontSize: 15, margin: 0 }}>Загрузка…</p>}
+        {!loading && devices.length === 0 && (
+          <p style={{ color: T.textMuted, fontSize: 15, lineHeight: 1.4, margin: 0 }}>
+            Пока нет активных устройств.
+            <br />
+            Они появятся после подключения к VPN.
+          </p>
         )}
-
-        <div
-          style={{
-            position: "absolute",
-            left: "26px",
-            right: "26px",
-            top: "87px",
-            bottom: "100px",
-            overflowY: "auto",
-          }}
-        >
-          {loading && <p style={{ color: "#A89B8C", fontSize: 15 }}>Загрузка…</p>}
-          {!loading && devices.length === 0 && (
-            <p style={{ color: "#A89B8C", fontSize: 15, lineHeight: 1.4 }}>
-              Пока нет активных устройств.
-              <br />
-              Они появятся после подключения к VPN.
-            </p>
-          )}
-          {devices.map((d, idx) => {
-            const name = d.name || `Устройство ${idx + 1}`;
-            const last = d.last_seen || d.lastSeen || "онлайн: нет данных";
-            return (
-              <div
-                key={String(d.id ?? idx)}
-                style={{
-                  position: "relative",
-                  width: "350px",
-                  height: "68px",
-                  background: "#2A241E",
-                  borderRadius: "30px",
-                  marginBottom: "7px",
-                }}
-              >
+        {devices.map((d, idx) => {
+          const id = String(d.id ?? "");
+          const name = d.name || `Устройство ${idx + 1}`;
+          const last = d.last_seen || d.lastSeen || "онлайн: нет данных";
+          return (
+            <div
+              key={String(d.id ?? idx)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                minHeight: 64,
+                padding: "10px 12px 10px 18px",
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                borderRadius: T.radius.lg,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
-                    position: "absolute",
-                    left: "27px",
-                    top: "14px",
                     fontWeight: 500,
-                    fontSize: "16px",
-                    lineHeight: "19px",
-                    color: "#FFFFFF",
+                    fontSize: 16,
+                    color: T.text,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {name}
                 </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "27px",
-                    top: "34px",
-                    fontWeight: 500,
-                    fontSize: "13px",
-                    lineHeight: "16px",
-                    color: "#A89B8C",
-                  }}
-                >
-                  {last}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleRemove(String(d.id ?? ""))}
-                  disabled={removing === String(d.id ?? "")}
-                  aria-label="Отвязать устройство"
-                  style={{
-                    position: "absolute", left: "300px", top: "18px",
-                    width: 32, height: 32, borderRadius: "50%", border: "none",
-                    background: "rgba(255,77,77,0.14)", cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    opacity: removing === String(d.id ?? "") ? 0.5 : 1,
-                  }}
-                >
-                  <MSIcon name="close" style={{ color: "#FF6B6B", fontSize: 20 }} />
-                </button>
+                <div style={{ fontSize: 13, color: T.textMuted, marginTop: 2 }}>{last}</div>
               </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => navigate("/subscription/increase")}
-          style={{
-            position: "absolute",
-            width: "350px",
-            height: "50px",
-            left: "26px",
-            top: "731px",
-            background: "rgba(51, 51, 51, 0.71)",
-            borderRadius: "21px",
-            border: "none",
-            padding: 0,
-            cursor: "pointer",
-            textAlign: "left",
-          }}
-        >
-          <span style={{ position: "absolute", width: "24px", height: "24px", left: "19px", top: "13px" }}>
-            <PlusOutline24 />
-          </span>
-          <span
-            style={{
-              position: "absolute",
-              width: "234px",
-              height: "21px",
-              left: "49px",
-              top: "14px",
-              fontFamily: "'Outfit', system-ui, sans-serif",
-              fontWeight: 600,
-              fontSize: "16px",
-              lineHeight: "19px",
-              display: "flex",
-              alignItems: "center",
-              color: "#FFFFFF",
-            }}
-          >
-            Докупить устройство
-          </span>
-        </button>
+              <button
+                type="button"
+                onClick={() => void handleRemove(id)}
+                disabled={removing === id}
+                aria-label="Отвязать устройство"
+                className="blin-press"
+                style={{
+                  ...btnReset,
+                  width: 36,
+                  height: 36,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  border: "none",
+                  background: T.dangerSoft,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  opacity: removing === id ? 0.5 : 1,
+                }}
+              >
+                <MSIcon name="close" style={{ color: T.danger, fontSize: 20 }} />
+              </button>
+            </div>
+          );
+        })}
       </div>
-    </div>
+
+      <div style={{ marginTop: "auto", paddingTop: 24 }}>
+        <Btn variant="secondary" onClick={() => navigate("/subscription/increase")}>
+          <MSIcon name="add" style={{ fontSize: 22, color: "inherit" }} />
+          Докупить устройство
+        </Btn>
+      </div>
+    </Screen>
   );
 }

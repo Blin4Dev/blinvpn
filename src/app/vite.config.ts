@@ -48,6 +48,12 @@ function rootAssets(): Plugin {
       });
     },
     closeBundle() {
+      // Страница-переходник для deep-link Incy/Happ (Telegram не открывает их схемы
+      // напрямую). Без неё /redirect.html отдавал бы само мини-приложение.
+      const redirectSrc = path.resolve(__dirname, "../site/redirect.html");
+      if (fs.existsSync(redirectSrc)) {
+        fs.copyFileSync(redirectSrc, path.resolve(__dirname, "../../dist/miniapp/redirect.html"));
+      }
       if (!fs.existsSync(ASSETS_DIR)) return;
       fs.mkdirSync(OUT_ASSETS, { recursive: true });
       for (const entry of fs.readdirSync(ASSETS_DIR)) {

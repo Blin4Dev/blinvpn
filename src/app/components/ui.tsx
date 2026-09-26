@@ -304,7 +304,7 @@ export function Screen({
             height: "100%",
             paddingLeft: pad ? 26 : undefined,
             paddingRight: pad ? 26 : undefined,
-            paddingBottom: pad ? 28 : undefined,
+            paddingBottom: pad ? "calc(28px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))" : undefined,
             boxSizing: "border-box",
             display: "flex",
             flexDirection: "column",
@@ -516,6 +516,32 @@ export function LoadingScreen({ text = "Загрузка…" }: { text?: string 
         />
         <div style={{ color: T.textMuted, fontSize: 14, fontWeight: 500 }}>{text}</div>
       </div>
+    </div>
+  );
+}
+
+/** Карточка с нормальными внутренними отступами (Surface padded даёт всего 4px сверху/снизу). */
+export function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div
+      style={{
+        background: T.surface,
+        border: `1px solid ${T.border}`,
+        borderRadius: T.radius.lg,
+        padding: 16,
+        marginBottom: 12,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function CardLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 13, fontWeight: 500, color: T.textMuted, marginBottom: 10, lineHeight: 1.2 }}>
+      {children}
     </div>
   );
 }

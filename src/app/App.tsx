@@ -3,12 +3,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Home from "./pages/Home";
 import DevicesLists from "./pages/DevicesLists";
 import ExtendSubscription from "./pages/ExtendSubscription";
-import GetStarted from "./pages/GetStarted";
 import History from "./pages/History";
 import IncreaseDevices from "./pages/IncreaseDevices";
 import ManageSubscription from "./pages/ManageSubscription";
 import Payment from "./pages/Payment";
-import PaymentWaiting from "./pages/PaymentWaiting";
 import Promocode from "./pages/Promocode";
 import Referral from "./pages/Referral";
 import Settings from "./pages/Settings";
@@ -19,8 +17,9 @@ import ChannelGate from "./pages/ChannelGate";
 import SetupPrompt from "./components/SetupPrompt";
 import { LoadingScreen } from "./components/ui";
 import { AppErrorProvider } from "./components/ErrorModal";
-import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, isTelegram, type Membership } from "./utils/api";
+import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, type Membership } from "./utils/api";
 import { trackRoute } from "./utils/navigation";
+import PaymentResume from "./components/PaymentResume";
 
 // Показываем онбординг-модалку не чаще одного раза за сессию приложения.
 const SETUP_PROMPT_DISMISSED_KEY = "blinvpn_setup_prompt_dismissed";
@@ -42,7 +41,7 @@ function AnimatedLayout() {
   useEffect(() => {
     let mounted = true;
     void fetchMe()
-      .then((me) => { if (mounted) setBlocked(me?.subscription_status === "blocked"); })
+      .then((me) => { if (mounted) setBlocked(me?.subscription_status === "blocked" || me?.subscription_status === "banned"); })
       .catch(() => { /* ignore */ });
     return () => { mounted = false; };
   }, []);
@@ -109,6 +108,7 @@ function AnimatedLayout() {
       {showSetup && !blocked && (
         <SetupPrompt onContinue={continueSetup} onClose={dismissSetup} />
       )}
+      {!blocked && <PaymentResume />}
     </div>
   );
 }
@@ -132,10 +132,7 @@ export default function App() {
   useEffect(() => {
     if (auth !== "authed") return;
     let mounted = true;
-    if (!isTelegram()) {
-      setGate("open");
-      return;
-    }
+    // Проверяем всегда: сервер сам ответит required=false для входа по почте.
     void fetchMembership()
       .then((m) => {
         if (!mounted) return;
@@ -150,12 +147,17 @@ export default function App() {
 
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "anon") return <Authentication onAuthed={() => setAuth("authed")} />;
-  if (gate === "checking") return <LoadingScreen />;
-  if (gate === "blocked" && membership) {
-    return <ChannelGate membership={membership} onPassed={() => setGate("open")} />;
-  }
 
-  return <RoutedApp />;
+  // Приложение рендерим сразу, а просьбу подписаться показываем
+  // всплывающим окном поверх него.
+  return (
+    <>
+      <RoutedApp />
+      {gate === "blocked" && membership ? (
+        <ChannelGate membership={membership} onPassed={() => setGate("open")} />
+      ) : null}
+    </>
+  );
 }
 
 function RoutedApp() {
@@ -167,9 +169,9 @@ function RoutedApp() {
           <Route path="/" element={<Home />} />
           <Route path="/history" element={<History />} />
           <Route path="/subscription" element={<ManageSubscription />} />
-          <Route path="/subscription/start" element={<GetStarted />} />
+          {/* Старая страница настройки заменена окном «Добавить подписку» */}
+          <Route path="/subscription/start" element={<Navigate to="/subscription?setup=1" replace />} />
           <Route path="/payment" element={<Payment />} />
-          <Route path="/payment/waiting" element={<PaymentWaiting />} />
           <Route path="/promocode" element={<Promocode />} />
           <Route path="/referral" element={<Referral />} />
           <Route path="/settings" element={<Settings />} />
