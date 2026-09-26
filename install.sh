@@ -258,6 +258,18 @@ server {
         return 404;
     }
 
+    # API панели доступен только на домене панели.
+    location /api/panel {
+        return 404;
+    }
+
+    # Переходник deep-link: в адресе зашифрованная ссылка на подписку — не пишем в лог.
+    location = /redirect.html {
+        access_log off;
+        proxy_pass http://127.0.0.1:9741;
+        proxy_set_header Host \$host;
+    }
+
     location /api {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host \$host;
@@ -377,6 +389,7 @@ create_env_file() {
     TELEGRAM_WEBHOOK_SECRET="$(gen_secret_hex)"
     PANEL_SETUP_TOKEN="$(gen_secret_hex)"
     INTERNAL_API_SECRET="$(gen_secret_hex)"
+    MONITOR_SECRET_KEY="$(gen_secret_hex)"
 
     cat > .env <<EOF
 # ===== Telegram =====
@@ -439,6 +452,8 @@ TELEGRAM_INITDATA_MAX_AGE=86400
 TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
 PANEL_SETUP_TOKEN=${PANEL_SETUP_TOKEN}
 INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
+# Ключ шифрования секретов нод мониторинга в базе (не менять — иначе ключи нод придётся перевыпустить)
+MONITOR_SECRET_KEY=${MONITOR_SECRET_KEY}
 MINIAPP_ALLOW_UNAUTH=0
 
 # SSL / домены
@@ -671,12 +686,17 @@ migrate_security_update() {
     secret="$(gen_secret_hex)"
     if ensure_env_var PANEL_SETUP_TOKEN "$secret" "$file"; then
         log_info "  + PANEL_SETUP_TOKEN сгенерирован"
-        log_warn "    Сброс пароля панели: /?setup_token=$(get_env_var PANEL_SETUP_TOKEN "$file")"
+        log_warn "    Сброс пароля панели: https://<панель>/#setup_token=$(get_env_var PANEL_SETUP_TOKEN "$file")&reset=1"
     fi
 
     secret="$(gen_secret_hex)"
     if ensure_env_var INTERNAL_API_SECRET "$secret" "$file"; then
         log_info "  + INTERNAL_API_SECRET сгенерирован"
+    fi
+
+    secret="$(gen_secret_hex)"
+    if ensure_env_var MONITOR_SECRET_KEY "$secret" "$file"; then
+        log_info "  + MONITOR_SECRET_KEY сгенерирован (шифрование ключей нод мониторинга)"
     fi
 
     if ensure_env_var TELEGRAM_STARS_DELIVERY "bot" "$file"; then
@@ -940,7 +960,7 @@ if [[ -f "$NGINX_CONF" ]]; then
         fix_container_data_permissions
         sudo docker-compose up -d --build
         fix_container_data_permissions
-        sudo docker-compose restart api webhook bot 2>/dev/null || true
+        sudo docker-compose restart api webhook bot monitor 2>/dev/null || true
 
         if [[ -f "$NGINX_CONF" ]]; then
             _upd_mini="$(get_env_var MINIAPP_DOMAIN .env 2>/dev/null || get_env_var WEBHOOK_DOMAIN .env 2>/dev/null || true)"
@@ -1112,7 +1132,7 @@ if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
 fi
 sudo docker-compose up -d --build
 fix_container_data_permissions
-sudo docker-compose restart api webhook bot 2>/dev/null || true
+sudo docker-compose restart api webhook bot monitor 2>/dev/null || true
 
 log_info "\nШаг 7: Telegram Stars"
 TELEGRAM_STARS_DELIVERY="$(get_env_var TELEGRAM_STARS_DELIVERY || true)"

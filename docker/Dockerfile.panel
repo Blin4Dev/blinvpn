@@ -11,4 +11,6 @@ RUN npm run build
 FROM nginx:alpine
 COPY docker/nginx-spa.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/panel/dist /usr/share/nginx/html
+# Установщик агента мониторинга: https://<панель>/node.sh
+COPY node.sh /usr/share/nginx/html/node.sh
 EXPOSE 80

@@ -57,6 +57,23 @@ services:
     depends_on:
       - api
 
+  # Мониторинг серверов (опрос агентов blinmon, пинг, VLESS, инциденты)
+  monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.monitor
+    container_name: blinvpn-monitor
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/data.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    network_mode: host
+    logging: *default-logging
+    depends_on:
+      - api
+
   miniapp:
     build:
       context: .

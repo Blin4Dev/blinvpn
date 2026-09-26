@@ -4,6 +4,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --no-audit --no-fund
 COPY src/app ./src/app
+# Страница-переходник для deep-link Incy/Happ (копируется в сборку)
+COPY src/site ./src/site
 # Картинки живут в корневом каталоге assets/ — нужны сборке для /assets/*
 COPY assets ./assets
 RUN npm run build:miniapp
