@@ -1,7 +1,9 @@
 """
 Почтовый модуль BlinVPN — без внешних релеев и без почтового демона.
 
-Приложение само доставляет письмо напрямую на почтовый сервер получателя:
+Два режима. Если в .env задан MAIL_SMTP_HOST — письма уходят через обычный
+почтовый ящик (Яндекс, Mail.ru, Gmail…) по SMTP: это проще и работает на любом
+хостинге. Иначе приложение само доставляет письмо на почтовый сервер получателя:
 находит MX-запись домена адресата и отправляет на неё по SMTP (порт 25),
 подписывая письмо ключом DKIM. Ничего не крутится в фоне — соединение
 открывается только когда есть что отправить (код входа или рассылка).
@@ -290,6 +292,7 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
     ctx.verify_mode = ssl.CERT_NONE  # оппортунистический TLS: шифруем, но не валидируем cert MX
 
     last_err = "нет доступных MX"
+    port25_blocked = False
     for host in _resolve_mx(recipient_domain):
         ip = _resolve_public_ip(host)
         if not ip:
@@ -318,7 +321,12 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
                     pass
         except Exception as exc:  # noqa: BLE001
             last_err = f"{host}: {type(exc).__name__}: {exc}"
+            if isinstance(exc, (TimeoutError, socket.timeout, ConnectionRefusedError, OSError)) and not isinstance(exc, smtplib.SMTPException):
+                port25_blocked = True
             continue
+    if port25_blocked:
+        last_err += (" — похоже, хостинг закрыл исходящий порт 25. Настройте отправку через почтовый ящик: "
+                     "sudo bash install.sh → «Настроить почту»")
     return False, last_err
 
 

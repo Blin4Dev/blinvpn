@@ -334,7 +334,7 @@ def gen_token(n: int = 48) -> str:
     return secrets.token_urlsafe(n)
 
 
-def gen_password(n: int = 14) -> str:
+def gen_password(n: int = 24) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(n))
 
