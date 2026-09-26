@@ -133,8 +133,16 @@ def _happ_crypt4_local(url: str) -> str:
 
 
 def happ_link(url: str) -> str:
+    """
+    HAPP_CRYPT_MODE (.env):
+      remote (по умолчанию) — crypt5 через API Happ; ссылка на подписку при этом
+                              уходит на сервер crypto.happ.su;
+      local                 — crypt4 шифруется на нашем сервере, ссылка никуда не уходит.
+    """
     if not url:
         raise AppLinkError("empty url")
+    if (os.getenv("HAPP_CRYPT_MODE") or "remote").strip().lower() == "local":
+        return _happ_crypt4_local(url)
     try:
         return _happ_crypt5_api(url)
     except Exception:

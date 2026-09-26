@@ -2,11 +2,12 @@
 Единая точка отправки уведомлений в форум-группу Telegram (топики) и админу.
 
 Топики (message_thread_id) настраиваются в панели и/или через .env:
-  • Выводы   (withdrawals) — запросы на вывод реф. средств + кнопка «Одобрить»
+  • Выводы   (withdrawals) — уведомления о новых заявках на вывод (обработка — в панели)
   • Коды     (codes)       — коды входа в панель
   • Бэкапы   (backups)     — файлы резервных копий БД
   • Покупки  (purchases)   — уведомления об оплатах
   • Ошибки   (errors)      — только серверные ошибки
+  • Инциденты (incidents)  — мониторинг серверов: падения, нагрузка, VLESS, оплата
 
 Настройки берутся из таблицы settings (ключи forum_*), с откатом на .env.
 Если форум не настроен, коды/уведомления уходят администратору в ЛС
@@ -28,7 +29,7 @@ try:
 except ImportError:
     import notifier  # type: ignore
 
-TOPICS = ("withdrawals", "codes", "backups", "purchases", "errors")
+TOPICS = ("withdrawals", "codes", "backups", "purchases", "errors", "incidents")
 
 # Откаты на .env (совместимость со старыми установками).
 _ENV_TOPIC_FALLBACK = {
@@ -212,18 +213,21 @@ def send_code(code: str, ip: str = "", user_agent: str = "") -> bool:
 
 
 def notify_withdrawal(withdrawal: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """Публикует запрос на вывод в топик «Выводы» с кнопками. Возвращает результат Telegram."""
+    """
+    Уведомление о новой заявке на вывод в топик «Выводы». Только информирует —
+    сама обработка (одобрить / завершить / отклонить) делается в панели.
+    """
     wid = int(withdrawal["id"])
     text = (
-        "💰 <b>Запрос на вывод</b>\n\n"
+        f"💰 <b>Новый запрос на вывод #{wid}</b>\n\n"
         f"Пользователь: {user_link(int(withdrawal['user_id']))}\n"
-        f"Сумма: {_fmt_amount(withdrawal['amount'])}₽\n"
-        f"Адрес: <code>{_esc(str(withdrawal['address']))}</code>"
+        f"Сумма: {_fmt_amount(withdrawal['amount'])}₽\n\n"
+        "Обработайте заявку в панели → Пользователи → Выводы."
     )
-    kb = {"inline_keyboard": [[
-        {"text": "✅ Одобрить", "callback_data": f"wd_ok_{wid}"},
-        {"text": "✖️ Отклонить", "callback_data": f"wd_no_{wid}"},
-    ]]}
+    kb = None
+    base = panel_url()
+    if base.startswith("https://"):
+        kb = {"inline_keyboard": [[{"text": "Открыть в панели", "url": f"{base}/withdrawals"}]]}
     return send("withdrawals", text, reply_markup=kb)
 
 
@@ -256,17 +260,7 @@ def _utf16_len(s: str) -> int:
     return len(s.encode("utf-16-le")) // 2
 
 
-def dm_withdrawal_approved(telegram_id: int, tx_link: str) -> bool:
-    """ЛС пользователю: «✔️ Вывод одобрен» (премиум-эмодзи) + ссылка на транзакцию."""
-    if not telegram_id:
-        return False
-    segments: list[tuple[str, Optional[dict]]] = [
-        ("✔️", {"type": "custom_emoji", "custom_emoji_id": EMOJI_APPROVED}),
-        (" ", None),
-        ("Вывод одобрен", {"type": "bold"}),
-        ("\n\n", None),
-        (str(tx_link), None),
-    ]
+def _send_entities(telegram_id: int, segments: list[tuple[str, Optional[dict]]]) -> bool:
     text = ""
     entities: list[dict] = []
     offset = 0
@@ -284,10 +278,30 @@ def dm_withdrawal_approved(telegram_id: int, tx_link: str) -> bool:
     }) is not None
 
 
-def remove_withdrawal_message(withdrawal: dict[str, Any]) -> bool:
-    """Удаляет сообщение-запрос из топика «Выводы» после решения."""
-    mid = withdrawal.get("forum_message_id")
-    if not mid:
+def dm_withdrawal_completed(telegram_id: int, amount: Any, tx_hash: str) -> bool:
+    """ЛС пользователю: «✔️ Вывод выполнен» + сумма + hash транзакции."""
+    if not telegram_id:
         return False
-    chat = withdrawal.get("forum_chat_id") or chat_id()
-    return delete_message(chat, int(mid))
+    return _send_entities(int(telegram_id), [
+        ("✔️", {"type": "custom_emoji", "custom_emoji_id": EMOJI_APPROVED}),
+        (" ", None),
+        ("Вывод выполнен", {"type": "bold"}),
+        (f"\n\nСумма: {_fmt_amount(amount)}₽\nHash транзакции:\n", None),
+        (str(tx_hash), {"type": "code"}),
+    ])
+
+
+def dm_withdrawal_rejected(telegram_id: int, amount: Any, reason: str, refunded: bool) -> bool:
+    """ЛС пользователю об отказе: причина и вернулись ли деньги на баланс."""
+    if not telegram_id:
+        return False
+    tail = (f"\n\n{_fmt_amount(amount)}₽ возвращены на реферальный баланс." if refunded
+            else "\n\nСредства не возвращаются.")
+    segments: list[tuple[str, Optional[dict]]] = [
+        ("❌ ", None),
+        ("Вывод отклонён", {"type": "bold"}),
+    ]
+    if reason:
+        segments.append((f"\n\nПричина: {reason}", None))
+    segments.append((tail, None))
+    return _send_entities(int(telegram_id), segments)

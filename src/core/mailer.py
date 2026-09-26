@@ -228,6 +228,40 @@ def _resolve_public_ip(host: str) -> Optional[str]:
     return None
 
 
+def _send_via_relay(to: str, message: bytes) -> tuple[bool, str]:
+    """
+    Отправка через SMTP-сервер (релей): для VPS, где исходящий порт 25 закрыт.
+    .env: MAIL_SMTP_HOST, MAIL_SMTP_PORT (587 — STARTTLS, 465 — SSL),
+          MAIL_SMTP_USER, MAIL_SMTP_PASSWORD. Сертификат сервера проверяется.
+    """
+    host = _env("MAIL_SMTP_HOST")
+    port = int(_env("MAIL_SMTP_PORT", "587") or 587)
+    user = _env("MAIL_SMTP_USER")
+    password = _env("MAIL_SMTP_PASSWORD")
+    timeout = float(_env("MAIL_TIMEOUT", "20") or 20)
+    ctx = ssl.create_default_context()
+    try:
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port, timeout=timeout, context=ctx)
+        else:
+            server = smtplib.SMTP(host, port, timeout=timeout)
+            server.ehlo()
+            server.starttls(context=ctx)
+            server.ehlo()
+        try:
+            if user:
+                server.login(user, password)
+            server.sendmail(mail_from(), [to], message)
+        finally:
+            try:
+                server.quit()
+            except Exception:  # noqa: BLE001
+                pass
+        return True, ""
+    except Exception as exc:  # noqa: BLE001
+        return False, f"SMTP {host}:{port}: {type(exc).__name__}: {exc}"
+
+
 def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[str] = None) -> tuple[bool, str]:
     """Отправляет письмо напрямую на MX получателя. Возвращает (ok, error)."""
     if not enabled():
@@ -245,6 +279,8 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
         html = f"<pre style='font-family:inherit;white-space:pre-wrap'>{_esc(text)}</pre>"
 
     message = _build_message(to, subject, html or "", text or "")
+    if _env("MAIL_SMTP_HOST"):
+        return _send_via_relay(to, message)
     recipient_domain = to.split("@")[-1]
     timeout = float(_env("MAIL_TIMEOUT", "20") or 20)
     sender = mail_from()

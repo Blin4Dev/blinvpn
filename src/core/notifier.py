@@ -96,7 +96,7 @@ def get_chat_member_status(chat_id: Any, user_id: int) -> Optional[str]:
     ('creator'|'administrator'|'member'|'restricted'|'left'|'kicked') либо None,
     если проверить нельзя (бот не админ канала / ошибка сети).
     """
-    res = call("getChatMember", {"chat_id": chat_id, "user_id": int(user_id)}, timeout=15.0)
+    res = call("getChatMember", {"chat_id": chat_id, "user_id": int(user_id)}, timeout=5.0)
     if isinstance(res, dict):
         return str(res.get("status") or "") or None
     return None

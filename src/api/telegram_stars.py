@@ -37,7 +37,7 @@ class TelegramStarsError(Exception):
 
 
 class TelegramStars:
-    def __init__(self, bot_token: Optional[str] = None, *, timeout: float = 30.0) -> None:
+    def __init__(self, bot_token: Optional[str] = None, *, timeout: float = 10.0) -> None:
         self.bot_token = bot_token or _env("TELEGRAM_BOT_TOKEN")
         self.timeout = timeout
 

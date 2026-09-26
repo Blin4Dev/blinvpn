@@ -118,7 +118,7 @@ class RemnawaveAPI:
         base_url: Optional[str] = None,
         token: Optional[str] = None,
         *,
-        timeout: float = 30.0,
+        timeout: Optional[float] = None,
         verify_ssl: bool = True,
     ) -> None:
         raw = (
@@ -127,6 +127,13 @@ class RemnawaveAPI:
         )
         self.base_url = raw.rstrip("/")
         self.token = token or _env("REMWAVE_API_KEY", "REMNAWAVE_TOKEN", "REMNAWAVE_API_TOKEN")
+        # Короткий таймаут: запросы к Remnawave идут прямо внутри обработки запросов
+        # API — при «тормозящей» панели сервер не должен виснуть по 30 секунд.
+        if timeout is None:
+            try:
+                timeout = float(_env("REMWAVE_TIMEOUT", default="10") or 10)
+            except ValueError:
+                timeout = 10.0
         self.timeout = timeout
         self.verify_ssl = verify_ssl
         if not self.token:
@@ -539,6 +546,16 @@ class RemnawaveAPI:
 
     def get_nodes(self) -> Any:
         return self.get("/api/nodes")
+
+    # ── Активные сессии (Remnawave 3.x: /api/connections, раньше /api/ip-control) ──
+
+    def connections_by_node(self, node_uuid: str) -> Any:
+        """Запускает задачу «кто подключён к ноде и с каких IP» → {jobId}."""
+        return self.post(f"/api/connections/by-node/{node_uuid}")
+
+    def connections_by_node_result(self, job_id: str) -> Any:
+        """{isCompleted, isFailed, result: {users: [{userId, ips: [{ip, lastSeen}]}]}}"""
+        return self.get(f"/api/connections/by-node/{job_id}")
 
     def get_node(self, uuid: str) -> Any:
         return self.get(f"/api/nodes/{uuid}")

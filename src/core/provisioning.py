@@ -59,9 +59,13 @@ def provision(
     traffic_limit_bytes: int = 0,
     traffic_reset_strategy: str = "MONTH",
     reset_traffic: bool = False,
+    user_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Создаёт или продлевает пользователя Remnawave до абсолютной даты expire_at.
+
+    user_id — внутренний ID пользователя BlinVPN; пишется в поле «Описание»
+    (description) пользователя Remnawave, в шаблонах подписки — {{DESCRIPTION}}.
 
     Возвращает: {ok, rw_id, short_uuid, subscription_url, error}.
     Никогда не бросает исключений — ошибки возвращаются в поле error.
@@ -105,6 +109,8 @@ def provision(
                 patch["traffic_limit_bytes"] = traffic_limit_bytes
             if email:
                 patch["email"] = email
+            if user_id:
+                patch["description"] = str(int(user_id))
             user = client.update_user(**patch)
             # Сброс трафика (например при переходе с триала на платную).
             if reset_traffic and uid is not None:
@@ -121,6 +127,7 @@ def provision(
                 status="ACTIVE",
                 telegram_id=int(telegram_id),
                 email=email or None,
+                description=str(int(user_id)) if user_id else None,
                 hwid_device_limit=int(max(1, devices)),
                 traffic_limit_bytes=traffic_limit_bytes or None,
                 traffic_limit_strategy=traffic_reset_strategy,
@@ -141,6 +148,50 @@ def provision(
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"{type(exc).__name__}: {exc}"
         return result
+
+
+def backfill_descriptions(tg_to_user_id: dict[int, int]) -> dict[str, Any]:
+    """
+    Проставляет внутренний ID BlinVPN в «Описание» всем уже существующим
+    пользователям Remnawave (сопоставление по Telegram ID). Меняет только тех,
+    у кого описание отличается. Ничего не бросает. {ok, updated, error}.
+    """
+    out: dict[str, Any] = {"ok": False, "updated": 0, "error": None}
+    if not is_configured():
+        out["error"] = "remnawave_not_configured"
+        return out
+    try:
+        client = remnawave.get_client()  # type: ignore[union-attr]
+        start, size = 0, 250
+        while True:
+            page = client.get_users(start=start, size=size)
+            if isinstance(page, dict) and "response" in page:
+                page = page["response"]
+            users = page.get("users") if isinstance(page, dict) else page
+            if not users:
+                break
+            for u in users:
+                try:
+                    tg = int(u.get("telegramId") or 0)
+                except (TypeError, ValueError):
+                    continue
+                uid = tg_to_user_id.get(tg) if tg else None
+                if not uid or str(u.get("description") or "") == str(uid) or u.get("id") is None:
+                    continue
+                try:
+                    client.update_user(id=int(u["id"]), description=str(uid))
+                    out["updated"] += 1
+                except Exception:  # noqa: BLE001
+                    pass
+            start += size
+            total = page.get("total") if isinstance(page, dict) else None
+            if (total is not None and start >= int(total)) or len(users) < size:
+                break
+        out["ok"] = True
+        return out
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
 
 
 def reset_traffic(telegram_id: int, email: Optional[str] = None) -> dict[str, Any]:
@@ -252,6 +303,60 @@ def user_first_connected_at(telegram_id: int, email: Optional[str] = None) -> Op
         return str(val) if val else None
     except Exception:  # noqa: BLE001
         return None
+
+
+def set_enabled(telegram_id: Optional[int], enabled: bool, email: Optional[str] = None) -> dict[str, Any]:
+    """Включает/отключает пользователя в Remnawave. Ничего не бросает."""
+    if not is_configured():
+        return {"ok": False, "error": "remnawave_not_configured"}
+    try:
+        client = remnawave.get_client()  # type: ignore[union-attr]
+        rw = client.find_user_by_telegram(int(telegram_id)) if telegram_id else None
+        if not rw and email:
+            try:
+                rw = client.resolve_user(email=email)
+                if isinstance(rw, dict) and "response" in rw:
+                    rw = rw["response"]
+            except Exception:  # noqa: BLE001
+                rw = None
+        if not isinstance(rw, dict) or rw.get("id") is None:
+            return {"ok": True, "already_absent": True}
+        uid = int(rw["id"])
+        if enabled:
+            client.enable_user(uid)
+        else:
+            client.disable_user(uid)
+        return {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def delete_user(telegram_id: Optional[int], email: Optional[str] = None) -> dict[str, Any]:
+    """
+    Удаляет пользователя в Remnawave (по telegram_id, затем по email).
+    {ok: True} — удалён или его там уже нет; {ok: False, error} — не удалось.
+    """
+    if not is_configured():
+        return {"ok": False, "error": "remnawave_not_configured"}
+    try:
+        client = remnawave.get_client()  # type: ignore[union-attr]
+        rw = client.find_user_by_telegram(int(telegram_id)) if telegram_id else None
+        if not rw and email:
+            try:
+                rw = client.resolve_user(email=email)
+                if isinstance(rw, dict) and "response" in rw:
+                    rw = rw["response"]
+            except Exception:  # noqa: BLE001
+                rw = None
+        if not isinstance(rw, dict):
+            return {"ok": True, "already_absent": True}
+        uid = rw.get("id")
+        if uid is None:
+            uid = rw.get("userId") or rw.get("uuid")
+        client.delete_user(int(uid) if str(uid).isdigit() else uid)
+        return {"ok": True}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def local_fallback_config(short_uuid: str) -> str:

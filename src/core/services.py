@@ -17,6 +17,10 @@ from typing import Any, Optional
 import database as db  # type: ignore
 
 PROMO_DISCOUNT_DAYS = 90
+
+# Системные промокоды (персональные скидки от бота). Их нельзя ввести вручную:
+# они хранятся с is_active = 0 и выдаются только кодом (grant_personal_discount).
+SYSTEM_PROMO_CODES = {"DRIP10"}
 MIN_WITHDRAW_RUB = 100.0
 _TON_ADDR_RE = re.compile(r"^(?:UQ|EQ|0Q|kQ)[A-Za-z0-9_-]{46}$")
 
@@ -57,7 +61,7 @@ def activate_promocode(user_id: int, code: str) -> dict[str, Any]:
     if not code:
         raise ServiceError("Пустой промокод", 400)
     promo = db.fetchone("SELECT * FROM promocodes WHERE code = ?", (code,))
-    if not promo or not promo.get("is_active"):
+    if not promo or not promo.get("is_active") or code in SYSTEM_PROMO_CODES:
         raise ServiceError("Промокод не найден", 404)
     if promo.get("expires_at"):
         exp = _parse_iso(str(promo["expires_at"]))
@@ -110,7 +114,7 @@ def grant_personal_discount(user_id: int, percent: float, hours: int, code: str 
     if not promo:
         db.execute(
             "INSERT INTO promocodes (code, name, type, value, uses_limit, uses_count, expires_at, is_active, created_at) "
-            "VALUES (?, ?, 'discount', ?, NULL, 0, NULL, 1, ?)",
+            "VALUES (?, ?, 'discount', ?, NULL, 0, NULL, 0, ?)",
             (code, "Персональная скидка", float(percent), db.utcnow_iso()),
         )
         promo = db.fetchone("SELECT * FROM promocodes WHERE code = ?", (code,))
@@ -255,6 +259,9 @@ def valid_ton_address(address: str) -> bool:
     return bool(_TON_ADDR_RE.match(a))
 
 
+WITHDRAWAL_STATUSES = ("pending", "approved", "completed", "rejected")
+
+
 def serialize_withdrawal(w: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": w.get("id"),
@@ -263,8 +270,13 @@ def serialize_withdrawal(w: dict[str, Any]) -> dict[str, Any]:
         "address": w.get("address"),
         "method": w.get("method") or "usdt_ton",
         "status": w.get("status") or "pending",
+        # Хэш транзакции (исторически колонка называется tx_link).
+        "tx_hash": w.get("tx_link"),
         "tx_link": w.get("tx_link"),
+        "reject_reason": w.get("reject_reason"),
+        "refunded": bool(w.get("refunded")),
         "created_at": w.get("created_at"),
+        "approved_at": w.get("approved_at"),
         "processed_at": w.get("processed_at"),
     }
 
@@ -287,22 +299,22 @@ def request_withdrawal(user_id: int, amount: float, address: str) -> dict[str, A
     if not db.fetchone("SELECT id FROM users WHERE id = ?", (user_id,)):
         raise ServiceError("Пользователь не найден", 404)
 
-    # Атомарная заморозка: списываем только если средств действительно хватает.
-    # Условие partner_balance >= amount в самом UPDATE исключает гонку и двойной вывод —
-    # SQLite сериализует записи, поэтому два параллельных запроса не спишут больше баланса.
-    cur = db.execute(
-        "UPDATE users SET partner_balance = partner_balance - ? WHERE id = ? AND partner_balance >= ?",
-        (amount, user_id, amount),
-    )
-    if cur.rowcount == 0:
-        raise ServiceError("Недостаточно средств на реферальном балансе", 400)
-
-    db.execute(
-        "INSERT INTO withdrawals (user_id, amount, address, method, status, created_at) "
-        "VALUES (?, ?, ?, 'usdt_ton', 'pending', ?)",
-        (user_id, amount, address.strip(), db.utcnow_iso()),
-    )
-    wid = db.last_id()
+    # Списание и заявка — одной транзакцией: либо оба шага, либо ни одного
+    # (иначе при сбое на втором шаге деньги списались бы без заявки).
+    # Условие partner_balance >= amount в самом UPDATE исключает двойной вывод.
+    with db.transaction() as tx:
+        cur = tx.execute(
+            "UPDATE users SET partner_balance = partner_balance - ? WHERE id = ? AND partner_balance >= ?",
+            (amount, user_id, amount),
+        )
+        if cur.rowcount == 0:
+            raise ServiceError("Недостаточно средств на реферальном балансе", 400)
+        ins = tx.execute(
+            "INSERT INTO withdrawals (user_id, amount, address, method, status, created_at) "
+            "VALUES (?, ?, ?, 'usdt_ton', 'pending', ?)",
+            (user_id, amount, address.strip(), db.utcnow_iso()),
+        )
+        wid = ins.lastrowid
     return db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (wid,))  # type: ignore[return-value]
 
 
@@ -313,54 +325,78 @@ def set_withdrawal_forum_ref(withdrawal_id: int, chat_id: Any, message_id: int) 
     )
 
 
-def approve_withdrawal(withdrawal_id: int, tx_link: str) -> dict[str, Any]:
-    """Одобряет заявку и фиксирует ссылку на транзакцию. Баланс уже заморожен."""
+def _get_withdrawal(withdrawal_id: int) -> dict[str, Any]:
     w = db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (withdrawal_id,))
     if not w:
         raise ServiceError("Заявка не найдена", 404)
-    if not (tx_link or "").strip():
-        raise ServiceError("Пустая ссылка на транзакцию", 400)
-    # Атомарно: переводим из pending только один раз.
+    return w
+
+
+def approve_withdrawal(withdrawal_id: int) -> dict[str, Any]:
+    """Шаг 1: заявка одобрена — админ видит адрес и делает перевод. Баланс уже заморожен."""
+    _get_withdrawal(withdrawal_id)
     cur = db.execute(
-        "UPDATE withdrawals SET status = 'approved', tx_link = ?, processed_at = ? "
-        "WHERE id = ? AND status = 'pending'",
-        (tx_link.strip(), db.utcnow_iso(), withdrawal_id),
-    )
-    if cur.rowcount == 0:
-        raise ServiceError("Заявка уже обработана", 400)
-    return db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (withdrawal_id,))  # type: ignore[return-value]
-
-
-def set_pending_tx(admin_chat_id: int, withdrawal_id: int) -> None:
-    db.execute(
-        "INSERT OR REPLACE INTO pending_tx_input (admin_chat_id, withdrawal_id, created_at) VALUES (?, ?, ?)",
-        (int(admin_chat_id), int(withdrawal_id), db.utcnow_iso()),
-    )
-
-
-def get_pending_tx(admin_chat_id: int) -> Optional[int]:
-    row = db.fetchone("SELECT withdrawal_id FROM pending_tx_input WHERE admin_chat_id = ?", (int(admin_chat_id),))
-    return int(row["withdrawal_id"]) if row else None
-
-
-def clear_pending_tx(admin_chat_id: int) -> None:
-    db.execute("DELETE FROM pending_tx_input WHERE admin_chat_id = ?", (int(admin_chat_id),))
-
-
-def reject_withdrawal(withdrawal_id: int) -> dict[str, Any]:
-    """Отклоняет заявку и ВОЗВРАЩАЕТ замороженную сумму на баланс."""
-    w = db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (withdrawal_id,))
-    if not w:
-        raise ServiceError("Заявка не найдена", 404)
-    # Атомарно переводим из pending — возврат средств делаем только если это сделали именно мы.
-    cur = db.execute(
-        "UPDATE withdrawals SET status = 'rejected', processed_at = ? WHERE id = ? AND status = 'pending'",
+        "UPDATE withdrawals SET status = 'approved', approved_at = ? WHERE id = ? AND status = 'pending'",
         (db.utcnow_iso(), withdrawal_id),
     )
     if cur.rowcount == 0:
-        raise ServiceError("Заявка уже обработана", 400)
-    db.execute(
-        "UPDATE users SET partner_balance = partner_balance + ? WHERE id = ?",
-        (float(w["amount"]), w["user_id"]),
+        raise ServiceError("Заявку можно одобрить только в статусе «Ожидает»", 400)
+    return _get_withdrawal(withdrawal_id)
+
+
+def complete_withdrawal(withdrawal_id: int, tx_hash: str) -> dict[str, Any]:
+    """Шаг 2: перевод сделан — сохраняем hash транзакции, статус «Завершено»."""
+    _get_withdrawal(withdrawal_id)
+    tx_hash = (tx_hash or "").strip()
+    if not tx_hash:
+        raise ServiceError("Укажите hash транзакции", 400)
+    if len(tx_hash) > 300:
+        raise ServiceError("Слишком длинный hash", 400)
+    cur = db.execute(
+        "UPDATE withdrawals SET status = 'completed', tx_link = ?, processed_at = ? "
+        "WHERE id = ? AND status = 'approved'",
+        (tx_hash, db.utcnow_iso(), withdrawal_id),
     )
-    return db.fetchone("SELECT * FROM withdrawals WHERE id = ?", (withdrawal_id,))  # type: ignore[return-value]
+    if cur.rowcount == 0:
+        raise ServiceError("Завершить можно только одобренную заявку", 400)
+    return _get_withdrawal(withdrawal_id)
+
+
+def reject_withdrawal(withdrawal_id: int, reason: str = "", refund: bool = True) -> dict[str, Any]:
+    """
+    Отказ (из «Ожидает» или «Одобрен»). reason — причина, refund — вернуть ли
+    замороженную сумму на реферальный баланс пользователя.
+    """
+    w = _get_withdrawal(withdrawal_id)
+    reason = (reason or "").strip()[:500]
+    # Смена статуса и возврат — одной транзакцией; возврат только если статус
+    # сменили именно мы (защита от двойного возврата).
+    with db.transaction() as tx:
+        cur = tx.execute(
+            "UPDATE withdrawals SET status = 'rejected', reject_reason = ?, refunded = ?, processed_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'approved')",
+            (reason or None, 1 if refund else 0, db.utcnow_iso(), withdrawal_id),
+        )
+        if cur.rowcount == 0:
+            raise ServiceError("Заявка уже обработана", 400)
+        if refund:
+            tx.execute(
+                "UPDATE users SET partner_balance = partner_balance + ? WHERE id = ?",
+                (float(w["amount"]), w["user_id"]),
+            )
+    return _get_withdrawal(withdrawal_id)
+
+
+def reject_open_withdrawals_for_user(user_id: int, reason: str) -> list[dict[str, Any]]:
+    """Отклоняет все незавершённые заявки пользователя с возвратом средств (при бане)."""
+    rows = db.fetchall(
+        "SELECT id FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'approved')",
+        (int(user_id),),
+    )
+    done: list[dict[str, Any]] = []
+    for r in rows:
+        try:
+            done.append(reject_withdrawal(int(r["id"]), reason, refund=True))
+        except ServiceError:
+            pass
+    return done

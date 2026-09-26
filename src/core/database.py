@@ -85,6 +85,29 @@ def cursor() -> Iterator[sqlite3.Cursor]:
         raise
 
 
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """
+    Несколько запросов одной транзакцией (всё или ничего):
+
+        with db.transaction() as tx:
+            tx.execute(...)
+            tx.execute(...)
+
+    BEGIN IMMEDIATE сразу берёт блокировку на запись — параллельный писатель
+    подождёт (busy_timeout), а не прочитает промежуточное состояние.
+    Внутри блока нельзя вызывать db.execute() — он коммитит сам.
+    """
+    conn = connect()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def execute(sql: str, params: tuple | list = ()) -> sqlite3.Cursor:
     conn = connect()
     try:
@@ -448,6 +471,13 @@ CREATE TABLE IF NOT EXISTS temp_2fa (
 -- stage: '3d' | '2d' | '1d' | 'expired'. cycle_expires_at — то значение
 -- expires_at, для которого отправлено напоминание: при продлении подписки оно
 -- меняется, и напоминания рассылаются заново для нового срока.
+-- Общий чёрный список Telegram ID (скачивается из BLACKLIST_URL, см. blacklist.py)
+CREATE TABLE IF NOT EXISTS blacklist (
+    telegram_id INTEGER PRIMARY KEY,
+    reason TEXT,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sub_reminders (
     subscription_id INTEGER NOT NULL,
     stage TEXT NOT NULL,
@@ -456,6 +486,91 @@ CREATE TABLE IF NOT EXISTS sub_reminders (
     PRIMARY KEY (subscription_id, stage),
     FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
 );
+
+-- ── Мониторинг серверов (агент blinmon, см. node.sh / monitoring.py) ──────────
+CREATE TABLE IF NOT EXISTS mon_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 5055,
+    secret_enc TEXT NOT NULL,              -- ключ агента, зашифрован (MONITOR_SECRET_KEY)
+    enabled INTEGER NOT NULL DEFAULT 0,    -- 0 — ещё не запущен / остановлен
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    last_seen TEXT,                        -- последний успешный ответ агента
+    last_error TEXT,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    agent_version TEXT,
+    boot_id TEXT,
+    cursor INTEGER NOT NULL DEFAULT 0,
+    speed_cursor INTEGER NOT NULL DEFAULT 0,
+    uptime INTEGER,
+    cores INTEGER,
+    live_json TEXT,
+    speed_running INTEGER NOT NULL DEFAULT 0,
+    vless_enc TEXT,                        -- VLESS-ключ для проверки, зашифрован
+    vless_ok INTEGER,
+    vless_checked_at TEXT,
+    vless_fail_count INTEGER NOT NULL DEFAULT 0,
+    vless_error TEXT,
+    pay_date TEXT,
+    pay_url TEXT,
+    pay_notified TEXT                      -- какие напоминания уже отправлены для pay_date
+);
+
+CREATE TABLE IF NOT EXISTS mon_metrics (
+    node_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    cpu REAL, cpu_max REAL,
+    ram_used INTEGER, ram_total INTEGER,
+    disk_used INTEGER, disk_total INTEGER,
+    disk_read INTEGER, disk_write INTEGER,
+    net_rx INTEGER, net_tx INTEGER,
+    load1 REAL,
+    PRIMARY KEY (node_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS mon_pings (
+    node_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    sent INTEGER NOT NULL,
+    lost INTEGER NOT NULL,
+    rtt_ms REAL,
+    agent_ok INTEGER,
+    PRIMARY KEY (node_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS mon_speed (
+    node_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    down REAL, up REAL, ping_ms REAL,
+    manual INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    PRIMARY KEY (node_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS mon_vless (
+    node_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    ms REAL,
+    error TEXT,
+    PRIMARY KEY (node_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS mon_incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    severity TEXT NOT NULL,               -- critical | warning | info
+    title TEXT NOT NULL,
+    details TEXT,
+    started_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_mon_inc_node ON mon_incidents(node_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_mon_inc_open ON mon_incidents(node_id, kind, resolved_at);
 
 CREATE INDEX IF NOT EXISTS idx_users_tg ON users(telegram_id);
 CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id);
@@ -496,6 +611,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             # Кэш проверки обязательной подписки на канал (Telegram-вход).
             "channel_ok": "ALTER TABLE users ADD COLUMN channel_ok INTEGER NOT NULL DEFAULT 0",
             "channel_checked_at": "ALTER TABLE users ADD COLUMN channel_checked_at TEXT",
+            # Причина блокировки (например, «Чёрный список: Шаринг»).
+            "ban_reason": "ALTER TABLE users ADD COLUMN ban_reason TEXT",
+            # Админ разблокировал вручную — чёрный список больше не трогает.
+            "blacklist_ignored": "ALTER TABLE users ADD COLUMN blacklist_ignored INTEGER NOT NULL DEFAULT 0",
         },
         "mailings": {
             "channel": "ALTER TABLE mailings ADD COLUMN channel TEXT NOT NULL DEFAULT 'telegram'",
@@ -506,10 +625,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
             # Возвраты (Platega cancel).
             "refunded_at": "ALTER TABLE payments ADD COLUMN refunded_at TEXT",
             "refund_info": "ALTER TABLE payments ADD COLUMN refund_info TEXT",
+            # Когда платёж «занят» на выдачу — для восстановления после падения процесса.
+            "processing_at": "ALTER TABLE payments ADD COLUMN processing_at TEXT",
+            # Куда вернуть пользователя после оплаты и видел ли он результат
+            # (чтобы после закрытия/перезагрузки приложения показать «Оплата прошла»).
+            "return_to": "ALTER TABLE payments ADD COLUMN return_to TEXT",
+            "result_seen_at": "ALTER TABLE payments ADD COLUMN result_seen_at TEXT",
         },
         "withdrawals": {
             "forum_chat_id": "ALTER TABLE withdrawals ADD COLUMN forum_chat_id TEXT",
             "forum_message_id": "ALTER TABLE withdrawals ADD COLUMN forum_message_id INTEGER",
+            # Новый процесс: pending → approved (адрес показан админу) → completed (hash)
+            # либо rejected (с причиной и выбором: вернуть на баланс или нет).
+            "approved_at": "ALTER TABLE withdrawals ADD COLUMN approved_at TEXT",
+            "reject_reason": "ALTER TABLE withdrawals ADD COLUMN reject_reason TEXT",
+            "refunded": "ALTER TABLE withdrawals ADD COLUMN refunded INTEGER NOT NULL DEFAULT 0",
         },
         "subscriptions": {
             # Заморозка подписки (пауза отсчёта дней).
@@ -517,6 +647,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "frozen_remaining": "ALTER TABLE subscriptions ADD COLUMN frozen_remaining INTEGER",
             # Когда последний раз замораживали (для лимита «не чаще раза в сутки»).
             "last_freeze_at": "ALTER TABLE subscriptions ADD COLUMN last_freeze_at TEXT",
+            # Неоплаченная подписка удаляется через 7 дней после окончания:
+            # строка остаётся для истории в панели со статусом 'Deleted'.
+            "deleted_at": "ALTER TABLE subscriptions ADD COLUMN deleted_at TEXT",
+            # Запрет продления (ставит админ): подписку нельзя продлить, после
+            # окончания она сразу удаляется. Докупка устройств/сброс трафика — можно.
+            "no_renew": "ALTER TABLE subscriptions ADD COLUMN no_renew INTEGER NOT NULL DEFAULT 0",
+            # Анти-абуз: когда выдано предупреждение (первое нарушение не банит).
+            "aa_warned_at": "ALTER TABLE subscriptions ADD COLUMN aa_warned_at TEXT",
         },
     }
     for table, cols in add_columns.items():
@@ -541,6 +679,30 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_act_unique "
             "ON promocode_activations(promocode_id, user_id)"
         )
+    except sqlite3.Error:
+        pass
+    # Токены сессий теперь хранятся хэшами. Старые (открытым текстом) удаляем
+    # один раз: веб-пользователи и админ просто войдут заново.
+    try:
+        done = conn.execute("SELECT value FROM settings WHERE key = 'sessions_hashed'").fetchone()
+        if done is None:
+            for t in ("app_sessions", "panel_sessions", "temp_2fa"):
+                conn.execute(f"DELETE FROM {t}")
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('sessions_hashed', '1')")
+    except sqlite3.Error:
+        pass
+    # Системный промокод персональной скидки (DRIP10) раньше создавался активным —
+    # его мог ввести кто угодно и получить скидку на 90 дней. Прячем его и снимаем
+    # такие «ручные» активации (настоящая персональная скидка живёт ≤ 2 суток).
+    try:
+        row = conn.execute("SELECT id FROM promocodes WHERE code = 'DRIP10'").fetchone()
+        if row is not None:
+            conn.execute("UPDATE promocodes SET is_active = 0 WHERE id = ?", (row["id"],))
+            conn.execute(
+                "DELETE FROM promocode_activations WHERE promocode_id = ? "
+                "AND julianday(expires_at) - julianday(created_at) > 2",
+                (row["id"],),
+            )
     except sqlite3.Error:
         pass
     # Защита от повторной обработки одного и того же платежа провайдера
@@ -597,7 +759,14 @@ def _seed_defaults(conn: sqlite3.Connection) -> None:
         "offer_text": DEFAULT_OFFER,
         "privacy_text": DEFAULT_PRIVACY,
         "extra_device_price": "40",
-        "default_included_devices": "2",
+        # Цена подписки на 1 устройство (₽/мес). Каждое следующее — extra_device_price.
+        "base_price": "99",
+        # Пробная подписка
+        "trial_days": "3",
+        "trial_traffic_gb": "5",
+        "trial_devices": "1",
+        # Трафик платной подписки, ГБ/мес
+        "paid_traffic_gb": "100",
         "backup_enabled": "0",
         "backup_interval_hours": "12",
         "backup_last": "",
@@ -608,6 +777,14 @@ def _seed_defaults(conn: sqlite3.Connection) -> None:
         # Анти-абуз (сканирование HWID/IP из Remnawave). 1 = включён.
         "antiabuse_enabled": "1",
     }
+    # Переход на модель «базовая цена + доп. устройство»: для существующей БД
+    # базовой ценой становится цена старого тарифа на 1 устройство.
+    try:
+        old_one = conn.execute("SELECT price_rub FROM plans WHERE devices = 1").fetchone()
+        if old_one is not None:
+            defaults["base_price"] = str(int(float(old_one["price_rub"])) if float(old_one["price_rub"]).is_integer() else float(old_one["price_rub"]))
+    except sqlite3.Error:
+        pass
     for k, v in defaults.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
