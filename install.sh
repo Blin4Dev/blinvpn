@@ -19,12 +19,73 @@ on_error() {
 }
 trap 'on_error $LINENO' ERR
 
+# UTF-8-локаль: иначе Backspace в терминале стирает русскую букву не целиком (по байту),
+# и в .env попадает «половина» символа — docker-compose потом падает с UnicodeDecodeError.
+if locale -a 2>/dev/null | grep -qiE '^(C|en_US)\.utf-?8$'; then
+    export LC_ALL="$(locale -a 2>/dev/null | grep -iE '^C\.utf-?8$' | head -n1)"
+    [[ -z "$LC_ALL" ]] && export LC_ALL="$(locale -a 2>/dev/null | grep -iE '^en_US\.utf-?8$' | head -n1)"
+fi
+
+# Убирает битые байты (неполные UTF-8 символы), \r и пробелы по краям.
+clean_input() {
+    local v="$1"
+    if command -v iconv >/dev/null 2>&1; then
+        v="$(printf '%s' "$v" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || printf '%s' "$v")"
+    fi
+    v="${v//$'\r'/}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    printf '%s' "$v"
+}
+
 prompt() {
     local message="$1"
     local __var="$2"
     local value
     read -r -p "$message" value < /dev/tty
+    value="$(clean_input "$value")"
     printf -v "$__var" '%s' "$value"
+}
+
+# prompt с проверкой: повторяет вопрос, пока ответ не подойдёт под регулярку.
+# Пустой ответ допустим, только если allow_empty=1 (тогда подставится значение по умолчанию).
+prompt_valid() {
+    local message="$1" __var="$2" regex="$3" hint_text="$4" allow_empty="${5:-0}"
+    local value
+    while true; do
+        read -r -p "$message" value < /dev/tty
+        value="$(clean_input "$value")"
+        if [[ -z "$value" && "$allow_empty" == "1" ]]; then break; fi
+        if [[ "$value" =~ $regex ]]; then break; fi
+        log_warn "     ✗ ${hint_text}. Попробуйте ещё раз (проверьте раскладку — нужны латинские буквы)."
+    done
+    printf -v "$__var" '%s' "$value"
+}
+
+# .env должен быть в чистом UTF-8, иначе docker-compose не запустится.
+# Битые байты вырезаем (копия исходника сохраняется), строки с ними показываем.
+ensure_env_utf8() {
+    local f="${1:-.env}"
+    [[ -f "$f" ]] || return 0
+    command -v iconv >/dev/null 2>&1 || return 0
+    if iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1; then
+        return 0
+    fi
+    local backup="${f}.broken-$(date +%Y%m%d-%H%M%S)"
+    cp "$f" "$backup"
+    log_warn "⚠️  В ${f} есть повреждённые символы (обычно — русская буква, стёртая наполовину при вводе)."
+    log_warn "   Исходный файл сохранён: ${backup}. Проблемные строки:"
+    local n=0 line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        if ! printf '%s' "$line" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+            # значение не печатаем — там могут быть секреты
+            printf '     строка %s: %s\n' "$n" "$(printf '%s' "${line%%=*}" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
+        fi
+    done < "$f"
+    iconv -f UTF-8 -t UTF-8 -c "$f" > "${f}.tmp" && cat "${f}.tmp" > "$f" && rm -f "${f}.tmp"
+    chmod 600 "$f" 2>/dev/null || true
+    log_warn "   Битые символы удалены. Проверьте значения в этих строках: sudo nano ${f}"
 }
 
 confirm() {
@@ -93,7 +154,6 @@ ensure_packages() {
     declare -A packages=(
         [git]='git'
         [docker]='docker.io'
-        [docker-compose]='docker-compose'
         [nginx]='nginx'
         [curl]='curl'
         [certbot]='certbot'
@@ -118,6 +178,45 @@ ensure_packages() {
         unset DEBCONF_NONINTERACTIVE_SEEN
     else
         log_info "Все необходимые пакеты уже установлены."
+    fi
+}
+
+# Docker Compose: предпочитаем v2 (`docker compose`). Старый docker-compose 1.29 (python)
+# несовместим с новыми версиями Docker и сыпет ошибками вроде «KeyError: 'id'».
+ensure_compose() {
+    if sudo docker compose version >/dev/null 2>&1; then
+        log_success "✔ Docker Compose v2 установлен."
+        return 0
+    fi
+    log_warn "Docker Compose v2 не найден — устанавливаем…"
+    export DEBIAN_FRONTEND=noninteractive
+    sudo apt-get update -qq || true
+    sudo apt-get install -y --no-install-recommends docker-compose-v2 2>/dev/null \
+        || sudo apt-get install -y --no-install-recommends docker-compose-plugin 2>/dev/null || true
+    unset DEBIAN_FRONTEND
+    if ! sudo docker compose version >/dev/null 2>&1; then
+        # Последний вариант — официальный бинарник плагина
+        local arch; arch="$(uname -m)"; [[ "$arch" == "aarch64" ]] && arch="aarch64" || arch="x86_64"
+        sudo mkdir -p /usr/local/lib/docker/cli-plugins
+        sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose && sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose || true
+    fi
+    if sudo docker compose version >/dev/null 2>&1; then
+        log_success "✔ Docker Compose v2 установлен."
+    elif command -v docker-compose >/dev/null 2>&1; then
+        log_warn "Не удалось поставить Compose v2 — работаю через старый docker-compose."
+    else
+        log_error "Docker Compose не установлен. Установите пакет docker-compose-v2 и запустите снова."
+        exit 1
+    fi
+}
+
+# Обёртка: v2, если есть, иначе старый docker-compose.
+dc() {
+    if sudo docker compose version >/dev/null 2>&1; then
+        sudo docker compose "$@"
+    else
+        sudo docker-compose "$@"
     fi
 }
 
@@ -348,6 +447,138 @@ gen_secret_hex() {
     openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p
 }
 
+# ── Почта: выбор способа отправки (коды входа на сайт и email-рассылки) ──
+# Проще всего — через обычный почтовый ящик (Яндекс/Mail.ru/Gmail) по SMTP.
+# Прямая отправка со своего сервера требует открытого порта 25 и DNS-записей.
+MAIL_ENABLED="0"; MAIL_DOMAIN=""; MAIL_FROM=""; MAIL_FROM_NAME="BlinVPN"
+MAIL_SMTP_HOST=""; MAIL_SMTP_PORT=""; MAIL_SMTP_USER=""; MAIL_SMTP_PASSWORD=""
+DKIM_SELECTOR="mail"; DKIM_PRIVATE_KEY_PATH=""
+
+# Проверка входа в SMTP (python3 есть в любой Ubuntu/Debian). Печатает ошибку, код 0/1.
+smtp_login_test() {
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 - "$1" "$2" "$3" "$4" <<'PY'
+import smtplib, ssl, sys
+host, port, user, pwd = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+try:
+    ctx = ssl.create_default_context()
+    if port == 465:
+        s = smtplib.SMTP_SSL(host, port, timeout=15, context=ctx)
+    else:
+        s = smtplib.SMTP(host, port, timeout=15); s.ehlo(); s.starttls(context=ctx); s.ehlo()
+    s.login(user, pwd); s.quit()
+except smtplib.SMTPAuthenticationError:
+    print("неверный логин или пароль (нужен именно пароль приложения, а не обычный пароль от почты)"); sys.exit(1)
+except Exception as e:
+    print(f"{type(e).__name__}: {e}"); sys.exit(1)
+PY
+}
+
+# Открыт ли исходящий порт 25 (многие хостинги его закрывают).
+port25_open() {
+    timeout 6 bash -c 'exec 3<>/dev/tcp/gmail-smtp-in.l.google.com/25' 2>/dev/null
+}
+
+choose_mail_mode() {
+    local default_domain="$1" choice provider host port user pass err
+    section "Почта (коды входа на сайт и email-рассылки)"
+    echo -e "  Нужна, чтобы люди могли входить на сайт по почте. Как отправлять письма?"
+    step "1)" "Через почтовый ящик — Яндекс, Mail.ru или Gmail ${DIM}(проще всего, рекомендуем)${NC}"
+    step "2)" "Напрямую с этого сервера ${DIM}(нужен открытый порт 25 и DNS-записи)${NC}"
+    step "3)" "Не отправлять ${DIM}(вход только через Telegram; включить можно позже)${NC}"
+    prompt "  Ваш выбор [1/2/3] (Enter = 1): " choice
+    choice="${choice:-1}"
+
+    if [[ "$choice" == "3" ]]; then
+        MAIL_ENABLED="0"; MAIL_DOMAIN="$default_domain"; MAIL_FROM="no-reply@${default_domain}"
+        return 0
+    fi
+
+    if [[ "$choice" == "2" ]]; then
+        log_info "  Проверяю, открыт ли исходящий порт 25…"
+        if ! port25_open; then
+            log_warn "  ✗ Порт 25 закрыт хостингом — напрямую письма не дойдут."
+            if confirm "  Настроить отправку через почтовый ящик? (y/n): "; then
+                choice="1"
+            else
+                log_warn "  Оставляю прямую отправку. Попросите хостинг открыть порт 25 или позже выберите «Настроить почту»."
+            fi
+        else
+            log_success "  ✔ Порт 25 открыт."
+        fi
+        if [[ "$choice" == "2" ]]; then
+            MAIL_ENABLED="1"
+            prompt "  ${BOLD}Домен для писем${NC} (по умолч. ${default_domain}): " MAIL_DOMAIN
+            MAIL_DOMAIN="$(sanitize_domain "${MAIL_DOMAIN:-$default_domain}")"; MAIL_DOMAIN="${MAIL_DOMAIN:-$default_domain}"
+            MAIL_FROM="no-reply@${MAIL_DOMAIN}"
+            DKIM_PRIVATE_KEY_PATH="data/dkim/${MAIL_DOMAIN}.private"
+            return 0
+        fi
+    fi
+
+    # ── Через почтовый ящик (SMTP) ──
+    echo
+    step "1)" "Яндекс Почта (в т.ч. почта на своём домене в Яндекс 360)"
+    step "2)" "Mail.ru"
+    step "3)" "Gmail"
+    step "4)" "Другой SMTP-сервер"
+    prompt "  Где почтовый ящик? [1-4] (Enter = 1): " provider
+    provider="${provider:-1}"
+    case "$provider" in
+        2) host="smtp.mail.ru"; port="465"
+           hint "Пароль приложения: Mail.ru → Настройки → Безопасность → «Пароли для внешних приложений»." ;;
+        3) host="smtp.gmail.com"; port="465"
+           hint "Нужна двухэтапная аутентификация. Пароль приложения: myaccount.google.com/apppasswords" ;;
+        4) prompt_valid "  ${BOLD}SMTP-сервер${NC} (например smtp.example.com): " host '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' "Имя сервера вида smtp.example.com"
+           prompt_valid "  ${BOLD}Порт${NC} (465 или 587, Enter = 465): " port '^(465|587|25|2525)$' "Порт 465 или 587" 1
+           port="${port:-465}" ;;
+        *) host="smtp.yandex.ru"; port="465"
+           hint "Пароль приложения: id.yandex.ru → Безопасность → «Пароли приложений» → Почта." ;;
+    esac
+    while true; do
+        prompt_valid "  ${BOLD}Адрес почты${NC} (с него уйдут письма): " user '^[^@[:space:]]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' "Адрес вида name@yandex.ru"
+        read -r -s -p "  ${BOLD}Пароль приложения${NC} (ввод скрыт): " pass < /dev/tty; echo
+        pass="$(clean_input "$pass")"; pass="${pass// /}"   # Google показывает пароль с пробелами
+        log_info "  Проверяю вход в ${host}…"
+        if err="$(smtp_login_test "$host" "$port" "$user" "$pass")"; then
+            log_success "  ✔ Вход в почту работает."
+            break
+        fi
+        log_warn "  ✗ Не удалось войти: ${err}"
+        confirm "  Ввести заново? (y — да, n — сохранить как есть) " || break
+    done
+    MAIL_ENABLED="1"
+    MAIL_SMTP_HOST="$host"; MAIL_SMTP_PORT="$port"; MAIL_SMTP_USER="$user"; MAIL_SMTP_PASSWORD="$pass"
+    MAIL_FROM="$user"; MAIL_DOMAIN="${user##*@}"
+    DKIM_PRIVATE_KEY_PATH=""
+}
+
+# Для существующей установки: «Настроить почту» из меню install.sh
+mail_setup_flow() {
+    local d
+    d="$(get_env_var MINIAPP_DOMAIN .env 2>/dev/null || true)"
+    choose_mail_mode "${d:-example.com}"
+    set_env_var MAIL_ENABLED "$MAIL_ENABLED" .env
+    set_env_var MAIL_DOMAIN "$MAIL_DOMAIN" .env
+    set_env_var MAIL_FROM "$MAIL_FROM" .env
+    set_env_var MAIL_FROM_NAME "$MAIL_FROM_NAME" .env
+    set_env_var MAIL_SMTP_HOST "$MAIL_SMTP_HOST" .env
+    set_env_var MAIL_SMTP_PORT "$MAIL_SMTP_PORT" .env
+    set_env_var MAIL_SMTP_USER "$MAIL_SMTP_USER" .env
+    set_env_var MAIL_SMTP_PASSWORD "$MAIL_SMTP_PASSWORD" .env
+    set_env_var DKIM_SELECTOR "$DKIM_SELECTOR" .env
+    set_env_var DKIM_PRIVATE_KEY_PATH "$DKIM_PRIVATE_KEY_PATH" .env
+    chmod 600 .env 2>/dev/null || true
+    if [[ "$MAIL_ENABLED" == "1" && -z "$MAIL_SMTP_HOST" ]]; then
+        setup_mail_server || true
+    fi
+    ensure_env_utf8 .env
+    log_info "Перезапускаю сервисы, чтобы применить настройки почты…"
+    dc up -d api webhook bot 2>/dev/null || dc up -d
+    log_success "✔ Почта настроена."
+    print_mail_dns
+}
+
 create_env_file() {
     local domain="$1"
     local panel_domain="$2"
@@ -356,35 +587,27 @@ create_env_file() {
     section "Настройка переменных окружения"
 
     section "Основной Telegram-бот"
-    prompt "  ${BOLD}Токен бота${NC}  (основной бот): " TELEGRAM_BOT_TOKEN
-    prompt "  ${BOLD}ID админа${NC}   (ваш Telegram ID): " TELEGRAM_ADMIN_ID
-    prompt "  ${BOLD}Username бота${NC} (без @, по умолч. blinvpn_bot): " BOT_USERNAME_INPUT
+    prompt_valid "  ${BOLD}Токен бота${NC}  (основной бот): " TELEGRAM_BOT_TOKEN \
+        '^[0-9]{5,}:[A-Za-z0-9_-]{30,}$' "Токен выглядит так: 1234567890:AAH…, его выдаёт @BotFather"
+    prompt_valid "  ${BOLD}ID админа${NC}   (ваш Telegram ID): " TELEGRAM_ADMIN_ID \
+        '^[0-9]{3,15}$' "ID — только цифры (узнать можно у @userinfobot)"
+    prompt_valid "  ${BOLD}Username бота${NC} (без @, по умолч. blinvpn_bot): " BOT_USERNAME_INPUT \
+        '^@?[A-Za-z0-9_]{3,32}$' "Username — латиница, цифры и _" 1
     BOT_USERNAME="${BOT_USERNAME_INPUT:-blinvpn_bot}"
+    BOT_USERNAME="${BOT_USERNAME#@}"
 
     # Форум-группа для служебных уведомлений настраивается в ПАНЕЛИ
     # (Настройки → Форум), а не здесь.
 
     section "Remnawave · панель VPN"
-    prompt "  ${BOLD}Panel URL${NC}  (по умолч. http://localhost:3000): " REMWAVE_PANEL_URL_INPUT
+    prompt_valid "  ${BOLD}Panel URL${NC}  (по умолч. http://localhost:3000): " REMWAVE_PANEL_URL_INPUT \
+        '^https?://[A-Za-z0-9._:/-]+$' "Адрес вида https://panel.example.com" 1
     REMWAVE_PANEL_URL="${REMWAVE_PANEL_URL_INPUT:-http://localhost:3000}"
-    prompt "  ${BOLD}API Token${NC}  (из панели Remnawave): " REMWAVE_API_KEY
+    REMWAVE_PANEL_URL="${REMWAVE_PANEL_URL%/}"
+    prompt_valid "  ${BOLD}API Token${NC}  (из панели Remnawave): " REMWAVE_API_KEY \
+        '^[!-~]{10,}$' "Токен — латинские символы без пробелов (Remnawave → API Tokens)"
 
-    # ── Почта (коды входа + email-рассылки, no-reply@домен) ──
-    # Без релеев и без почтового демона: приложение само шлёт письма напрямую
-    # на MX получателя и подписывает их DKIM. Нужен только DKIM-ключ + DNS-записи.
-    section "Почта (коды входа и email-рассылки)"
-    echo -e "  Письма уходят напрямую с ${BOLD}no-reply@вашего-домена${NC} — без внешних сервисов."
-    if confirm "  Включить отправку почты? (y/n): "; then
-        MAIL_ENABLED="1"
-    else
-        MAIL_ENABLED="0"
-    fi
-    prompt "  ${BOLD}Домен для писем${NC} (по умолч. ${domain}): " MAIL_DOMAIN_INPUT
-    MAIL_DOMAIN="${MAIL_DOMAIN_INPUT:-$domain}"
-    MAIL_FROM_NAME="BlinVPN"
-    MAIL_FROM="no-reply@${MAIL_DOMAIN}"
-    DKIM_SELECTOR="mail"
-    DKIM_PRIVATE_KEY_PATH="data/dkim/${MAIL_DOMAIN}.private"
+    choose_mail_mode "$domain"
 
     TELEGRAM_WEBHOOK_SECRET="$(gen_secret_hex)"
     PANEL_SETUP_TOKEN="$(gen_secret_hex)"
@@ -421,11 +644,18 @@ PLATEGA_FAILED_URL=https://${domain}/payment/waiting
 # Telegram Stars: bot = polling (рекомендуется), webhook = /api/telegram/webhook
 TELEGRAM_STARS_DELIVERY=bot
 
-# ===== Почта (прямая доставка на MX + DKIM, без релеев) =====
+# ===== Почта (коды входа на сайт и рассылки) =====
+# Если задан MAIL_SMTP_HOST — письма уходят через почтовый ящик (SMTP),
+# иначе — напрямую на MX получателя с DKIM-подписью (нужен открытый порт 25).
+# Перенастроить: sudo bash install.sh → «Настроить почту».
 MAIL_ENABLED=${MAIL_ENABLED}
 MAIL_DOMAIN=${MAIL_DOMAIN}
 MAIL_FROM=${MAIL_FROM}
 MAIL_FROM_NAME=${MAIL_FROM_NAME}
+MAIL_SMTP_HOST=${MAIL_SMTP_HOST}
+MAIL_SMTP_PORT=${MAIL_SMTP_PORT}
+MAIL_SMTP_USER=${MAIL_SMTP_USER}
+MAIL_SMTP_PASSWORD=${MAIL_SMTP_PASSWORD}
 DKIM_SELECTOR=${DKIM_SELECTOR}
 DKIM_PRIVATE_KEY_PATH=${DKIM_PRIVATE_KEY_PATH}
 
@@ -482,6 +712,7 @@ MAIL_SERVER_DOMAIN=""
 setup_mail_server() {
     local maildomain selector keydir pubkey
     [[ "$(get_env_var MAIL_ENABLED 2>/dev/null || echo 0)" == "1" ]] || return 0
+    [[ -z "$(get_env_var MAIL_SMTP_HOST 2>/dev/null || true)" ]] || return 0   # через почтовый ящик DKIM не нужен
     maildomain="$(get_env_var MAIL_DOMAIN 2>/dev/null || true)"
     [[ -n "$maildomain" ]] || { log_warn "MAIL_DOMAIN не задан — почта пропущена."; return 0; }
 
@@ -514,6 +745,11 @@ setup_mail_server() {
 print_mail_dns() {
     local maildomain serverip selector
     [[ "$(get_env_var MAIL_ENABLED 2>/dev/null || echo 0)" == "1" ]] || return 0
+    if [[ -n "$(get_env_var MAIL_SMTP_HOST 2>/dev/null || true)" ]]; then
+        printf "\n  ${GREEN}✔ Почта: письма уходят через %s (%s)${NC}\n" \
+            "$(get_env_var MAIL_SMTP_HOST 2>/dev/null)" "$(get_env_var MAIL_SMTP_USER 2>/dev/null)"
+        return 0
+    fi
     maildomain="$(get_env_var MAIL_DOMAIN 2>/dev/null || true)"
     [[ -n "$maildomain" ]] || return 0
     selector="$(get_env_var DKIM_SELECTOR 2>/dev/null || echo mail)"
@@ -894,10 +1130,11 @@ replace_domains_flow() {
     update_env_domains "$new_miniapp" "$new_panel"
 
     section "Перезапуск Docker"
-    if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
-        sudo docker-compose down
+    ensure_env_utf8 .env
+    if [[ -n "$(dc ps -q 2>/dev/null)" ]]; then
+        dc down
     fi
-    sudo docker-compose up -d --build
+    dc up -d --build
 
     if [[ "$new_miniapp" != "$cur_miniapp" ]]; then
         section "Telegram Stars"
@@ -951,16 +1188,18 @@ if [[ -f "$NGINX_CONF" ]]; then
         exit 1
     fi
     cd "$PROJECT_DIR"
+    ensure_compose
 
     if [[ "${BLINVPN_POST_UPDATE:-}" == "1" ]]; then
         unset BLINVPN_POST_UPDATE
         section "Пост-обновление"
         migrate_security_update ".env"
-        sudo docker-compose down --remove-orphans
+        ensure_env_utf8 .env
+        dc down --remove-orphans
         fix_container_data_permissions
-        sudo docker-compose up -d --build
+        dc up -d --build
         fix_container_data_permissions
-        sudo docker-compose restart api webhook bot monitor 2>/dev/null || true
+        dc restart api webhook bot monitor 2>/dev/null || true
 
         if [[ -f "$NGINX_CONF" ]]; then
             _upd_mini="$(get_env_var MINIAPP_DOMAIN .env 2>/dev/null || get_env_var WEBHOOK_DOMAIN .env 2>/dev/null || true)"
@@ -984,9 +1223,10 @@ if [[ -f "$NGINX_CONF" ]]; then
     section "Существующая установка — выберите действие"
     step "1)" "Обновить код и перезапустить контейнеры (по умолчанию)"
     step "2)" "Заменить домен(ы) и перевыпустить сертификаты"
-    step "3)" "Выход"
+    step "3)" "Настроить почту (коды входа на сайт)"
+    step "4)" "Выход"
     echo
-    prompt "Ваш выбор [1/2/3] (Enter = 1): " ACTION_CHOICE
+    prompt "Ваш выбор [1/2/3/4] (Enter = 1): " ACTION_CHOICE
     ACTION_CHOICE="${ACTION_CHOICE:-1}"
 
     case "$ACTION_CHOICE" in
@@ -995,6 +1235,10 @@ if [[ -f "$NGINX_CONF" ]]; then
             exit 0
             ;;
         3)
+            mail_setup_flow
+            exit 0
+            ;;
+        4)
             log_info "Выход без изменений."
             exit 0
             ;;
@@ -1023,6 +1267,7 @@ log_info "\nСуществующая конфигурация не найден�
 
 ensure_packages
 ensure_services
+ensure_compose
 ensure_certbot_nginx
 
 log_info "\nШаг 2: клонирование репозитория"
@@ -1126,13 +1371,14 @@ else
 fi
 
 log_info "\nШаг 6: Docker"
+ensure_env_utf8 .env
 fix_container_data_permissions
-if [[ -n "$(sudo docker-compose ps -q 2>/dev/null)" ]]; then
-    sudo docker-compose down
+if [[ -n "$(dc ps -q 2>/dev/null)" ]]; then
+    dc down
 fi
-sudo docker-compose up -d --build
+dc up -d --build
 fix_container_data_permissions
-sudo docker-compose restart api webhook bot monitor 2>/dev/null || true
+dc restart api webhook bot monitor 2>/dev/null || true
 
 log_info "\nШаг 7: Telegram Stars"
 TELEGRAM_STARS_DELIVERY="$(get_env_var TELEGRAM_STARS_DELIVERY || true)"
@@ -1161,7 +1407,7 @@ if [[ -f "$PANEL_CREDS_FILE" ]]; then
     sudo rm -f "$PANEL_CREDS_FILE" 2>/dev/null || rm -f "$PANEL_CREDS_FILE" 2>/dev/null || true
 else
     log_warn "Не удалось получить логин/пароль автоматически."
-    log_warn "Посмотрите их в логах: ${BOLD}sudo docker-compose logs api | grep -A3 'доступ в панель'${NC}"
+    log_warn "Посмотрите их в логах: ${BOLD}dc logs api | grep -A3 'доступ в панель'${NC}"
 fi
 
 printf "\n"
