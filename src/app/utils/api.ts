@@ -28,6 +28,8 @@ export type AppUser = {
   is_partner?: boolean;
   partner_balance?: number;
   discount?: Discount;
+  /** Принял оферту и политику конфиденциальности. */
+  terms_accepted?: boolean;
 };
 
 /** Активная скидка пользователя (для зачёркнутой цены). Возвращает percent 0, если нет. */
@@ -86,6 +88,30 @@ function initDataHeader(): Record<string, string> {
   return headers;
 }
 
+/** Ошибка API: помимо текста хранит detail ответа (например, предупреждение об объединении аккаунтов). */
+export class ApiError extends Error {
+  status: number;
+  detail: any;
+  constructor(message: string, status: number, detail: any) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/** Предупреждение об объединении аккаунтов (когда email/Telegram уже есть у другого аккаунта). */
+export type MergePreview = {
+  merge: true;
+  other: { id: number; label: string };
+  result: { days: number; devices: number };
+  link_changes: boolean;
+  text: string;
+};
+
+export function mergeFromError(e: unknown): MergePreview | null {
+  return e instanceof ApiError && e.detail && typeof e.detail === "object" && e.detail.merge ? (e.detail.merge as MergePreview) : null;
+}
+
 export async function appFetch<T = unknown>(
   path: string,
   options: RequestInit = {},
@@ -102,7 +128,7 @@ export async function appFetch<T = unknown>(
     const msg =
       (body && (body.detail?.message || body.detail || body.error)) ||
       `Ошибка ${res.status}`;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    throw new ApiError(typeof msg === "string" ? msg : JSON.stringify(msg), res.status, body?.detail);
   }
   return body as T;
 }
@@ -247,6 +273,9 @@ export type PaymentQuote = {
   charge: number;
   provider_min: number;
   is_stars: boolean;
+  /** Цена без скидки и процент скидки (промокод / акция / бонус за опрос). */
+  full_price?: number;
+  discount_percent?: number;
 };
 
 /** Предпросмотр цены (итог + сколько спишется с реф. баланса), без создания платежа. */
@@ -336,6 +365,11 @@ export function openSupportWithError(errorLog: string, supportBase = "https://t.
 
 // ── Аккаунт / безопасность ─────────────────────────────────
 
+export async function acceptTerms(): Promise<AppUser> {
+  const b = await appFetch<{ user: AppUser }>("/me/terms", { method: "POST" });
+  return b.user;
+}
+
 export async function fetchMe(): Promise<AppUser | null> {
   try {
     const b = await appFetch<{ user: AppUser }>("/me");
@@ -352,10 +386,10 @@ export async function requestBindEmailCode(email: string): Promise<EmailRequestR
   });
 }
 
-export async function updateEmail(email: string, code: string): Promise<AppUser> {
+export async function updateEmail(email: string, code: string, merge = false): Promise<AppUser> {
   const b = await appFetch<{ user: AppUser }>("/me/email", {
     method: "PUT",
-    body: JSON.stringify({ email, code }),
+    body: JSON.stringify({ email, code, merge }),
   });
   return b.user;
 }
@@ -367,7 +401,7 @@ export async function unbindEmail(): Promise<AppUser> {
 
 // ── Авторизация: email-код + сессии ────────────────────────
 
-export type EmailRequestResult = { ok: boolean; throttled: boolean; resend_after: number; dev_code?: string };
+export type EmailRequestResult = { ok: boolean; throttled: boolean; resend_after: number; dev_code?: string; merge?: MergePreview };
 
 export async function requestEmailCode(email: string): Promise<EmailRequestResult> {
   return appFetch<EmailRequestResult>("/auth/email/request", {
@@ -461,8 +495,8 @@ export type TelegramOAuthPayload = {
   hash: string;
 };
 
-export async function bindTelegram(payload: TelegramOAuthPayload): Promise<AppUser> {
-  const b = await appFetch<{ user: AppUser }>("/me/telegram", {
+export async function bindTelegram(payload: TelegramOAuthPayload, merge = false): Promise<AppUser> {
+  const b = await appFetch<{ user: AppUser }>(`/me/telegram${merge ? "?merge=1" : ""}`, {
     method: "PUT",
     body: JSON.stringify(payload),
   });

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import {
   Key, Gift, Percent, X, CheckCircle, CreditCard, ArrowUpRight, ArrowDownLeft, Hash, Ban, Clock, Edit2, Copy, Database, Wallet, Plus, Send, Trash2, Save, RefreshCw, Shield, ArrowLeft, ClipboardList, ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { UserActionModal } from '../../components/UserActionModal';
-import { DCard, InfoRow, Spinner } from '../../components/ui';
-import { apiFetch, copyToClipboard, parseErr } from '../../lib/api';
-import { DEFAULT_REF_RATE, fmtDateTime, relTime } from '../../lib/format';
+import { DCard, InfoRow, Modal, PaymentStatusBadge, Spinner, refundedRowStyle } from '../../components/ui';
+import { apiFetch, copyToClipboard, mergeInfo, parseErr } from '../../lib/api';
+import { DEFAULT_REF_RATE, fmtDateTime, relTime, whenRu } from '../../lib/format';
 import type { PaymentRow, ToastType } from '../../lib/types';
 import { ExchangeModal, TransferModal } from './SubscriptionActions';
 
@@ -56,6 +57,8 @@ export const UserDetailPage: React.FC<{
   const [emailDraft, setEmailDraft] = useState('');
   const [promoDraft, setPromoDraft] = useState('');
   const [special, setSpecial] = useState<'' | 'exchange' | 'transfer'>('');
+  // Привязка email/Telegram, который уже есть у другого аккаунта: предупреждение об объединении
+  const [mergeAsk, setMergeAsk] = useState<{ act: string; value: any; message: string; merge: any } | null>(null);
 
   const load = async () => {
     try { setDetail(await apiFetch(`/panel/users/${userId}/detail`)); }
@@ -81,15 +84,19 @@ export const UserDetailPage: React.FC<{
 
   useEffect(() => { setLoading(true); setRw(null); setSurvey(null); void load(); void loadPayments(); void loadRw(); void loadSurvey(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userId]);
 
-  const doAction = async (act: string, value: any = null, notify = false, confirmMsg?: string) => {
+  const doAction = async (act: string, value: any = null, notify = false, confirmMsg?: string, confirm = false) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     setBusy(true);
     try {
-      const res = await apiFetch(`/panel/users/${userId}/action`, { method: 'POST', body: JSON.stringify({ action: act, value, notify }) });
+      const res = await apiFetch(`/panel/users/${userId}/action`, { method: 'POST', body: JSON.stringify({ action: act, value, notify, confirm }) });
       if (res && res.deleted) { onToast('Готово', 'Аккаунт удалён', 'success'); onBack(); return; }
-      onToast('Готово', 'Действие выполнено', 'success');
+      onToast('Готово', confirm ? 'Аккаунты объединены' : 'Действие выполнено', 'success');
       await load(); await loadPayments(); await loadRw();
-    } catch (e) { onToast('Ошибка', parseErr(e), 'error'); }
+    } catch (e) {
+      const m = mergeInfo(e);
+      if (m) setMergeAsk({ act, value, ...m });
+      else onToast('Ошибка', parseErr(e), 'error');
+    }
     finally { setBusy(false); }
   };
 
@@ -253,6 +260,16 @@ export const UserDetailPage: React.FC<{
         )}
       </DCard>
 
+      {mergeAsk && (
+        <Modal onClose={() => setMergeAsk(null)} title="Объединить аккаунты?" icon={AlertTriangle} width={520}
+          footer={<><button className="btn" onClick={() => setMergeAsk(null)}>Отмена</button>
+            <button className="btn solid" disabled={busy} onClick={async () => { const a = mergeAsk; setMergeAsk(null); await doAction(a.act, a.value, false, undefined, true); }}>Объединить</button></>}>
+          <div className="sub" style={{ marginBottom: 12 }}>
+            {mergeAsk.message}. Второй аккаунт — <b style={{ color: 'var(--text)' }}>{mergeAsk.merge.other?.label}</b> (#{mergeAsk.merge.other?.id}).
+          </div>
+          <div className="inset" style={{ padding: 14, whiteSpace: 'pre-line', lineHeight: 1.6, fontSize: 14 }}>{mergeAsk.merge.text}</div>
+        </Modal>
+      )}
       {special === 'exchange' && sub && <ExchangeModal userId={userId} current={sub.devices_limit ?? 1} onClose={() => setSpecial('')} onDone={() => { setSpecial(''); void load(); void loadRw(); }} onToast={onToast} />}
       {special === 'transfer' && <TransferModal userId={userId} onClose={() => setSpecial('')} onDone={(tid) => { setSpecial(''); if (window.confirm('Подписка перенесена. Открыть карточку получателя?')) onOpenUser(tid); else { void load(); void loadRw(); } }} onToast={onToast} />}
       <DCard title="Подписка" icon={Key}>
@@ -375,7 +392,10 @@ export const UserDetailPage: React.FC<{
                     <div key={d.hwid} className="inset flex items-center justify-between gap-2" style={{ padding: '8px 10px' }}>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 500 }}>{[d.platform, d.device_model].filter(Boolean).join(' · ') || 'Устройство'}</div>
-                        <div className="sub mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>{d.hwid}</div>
+                        <div className="sub" style={{ fontSize: 12 }}>
+                          активность: {whenRu(d.updated_at || d.created_at)}{d.created_at ? ` · добавлено ${whenRu(d.created_at)}` : ''}
+                        </div>
+                        <div className="faint mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280, fontSize: 11 }}>{d.hwid}</div>
                       </div>
                       <button className="icon-btn danger" title="Отвязать" onClick={() => void unlinkDevice(d.hwid)}><Trash2 size={14} /></button>
                     </div>
@@ -395,7 +415,7 @@ export const UserDetailPage: React.FC<{
               <thead><tr><th>Дата</th><th>Провайдер</th><th>Сумма</th><th>Назначение</th><th>Статус</th><th></th></tr></thead>
               <tbody>
                 {payments.map((pm) => (
-                  <tr key={String(pm.id)}>
+                  <tr key={String(pm.id)} style={refundedRowStyle(pm.status)}>
                     <td className="muted mono">{fmtDateTime(pm.created_at)}</td>
                     <td>{pm.provider || '—'}</td>
                     <td className="mono">
@@ -403,7 +423,7 @@ export const UserDetailPage: React.FC<{
                       {pm.referral_applied ? <span className="sub" style={{ marginLeft: 6 }}>+{pm.referral_applied}₽ реф.</span> : null}
                     </td>
                     <td className="sub">{pm.description || pm.purpose || '—'}</td>
-                    <td><span className={`badge ${pm.status === 'paid' || pm.status === 'completed' ? 'solid' : pm.status === 'failed' ? 'danger' : pm.status === 'refunded' ? 'danger' : 'mute'}`}>{pm.status}</span></td>
+                    <td><PaymentStatusBadge status={pm.status} /></td>
                     <td>
                       {pm.refundable ? (
                         <button className="btn sm danger" disabled={busy} onClick={() => void doRefund(pm)}>Возврат</button>

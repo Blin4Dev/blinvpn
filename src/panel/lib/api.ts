@@ -56,5 +56,20 @@ export const copyToClipboard = async (text: string) => {
 
 export const parseErr = (e: unknown): string => {
   const msg = e instanceof Error ? e.message : String(e);
-  try { const j = JSON.parse(msg); return j.detail || j.error || msg; } catch { return msg; }
+  try {
+    const j = JSON.parse(msg);
+    const d = j.detail;
+    if (d && typeof d === 'object') return d.message || j.error || msg;
+    return d || j.error || msg;
+  } catch { return msg; }
+};
+
+/** Данные предупреждения об объединении аккаунтов из ответа 409 (или null). */
+export const mergeInfo = (e: unknown): { message: string; merge: any } | null => {
+  const msg = e instanceof Error ? e.message : String(e);
+  try {
+    const j = JSON.parse(msg);
+    if (j?.detail?.merge) return { message: j.detail.message, merge: j.detail.merge };
+  } catch { /* не JSON */ }
+  return null;
 };

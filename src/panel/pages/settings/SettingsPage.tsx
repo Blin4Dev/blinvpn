@@ -9,8 +9,13 @@ import { LegalSettingsTab } from './LegalTab';
 import { PricesSettingsTab } from './PricesTab';
 import { SquadsPage } from './SquadsTab';
 
-export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void }> = ({ onToast }) => {
-  const [activeTab, setActiveTab] = useState<'prices' | 'offer' | 'privacy' | 'squads' | 'backups' | 'forum'>('prices');
+type Tab = 'prices' | 'offer' | 'privacy' | 'squads' | 'backups' | 'forum';
+
+export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void; tab?: Tab; onTab?: (t: Tab) => void }> = ({ onToast, tab, onTab }) => {
+  // Вкладка хранится в адресе (/settings/forum и т.п.), если её передали сверху
+  const [ownTab, setOwnTab] = useState<Tab>('prices');
+  const activeTab = tab ?? ownTab;
+  const setActiveTab = (t: Tab) => { if (onTab) onTab(t); else setOwnTab(t); };
   const tabs = [
     { id: 'prices', icon: DollarSign, label: 'Цены' },
     { id: 'offer', icon: FileText, label: 'Оферта' },

@@ -4,13 +4,21 @@ import { useSmartBack } from "../utils/navigation";
 import { appFetch } from "../utils/api";
 
 type HistoryItem = {
-  id: number;
+  id: number | string;
+  title?: string;
+  method?: string;
   amount?: number;
+  stars?: number | null;
+  direction?: "in" | "out";
   status?: string;
   payment_method?: string;
   description?: string | null;
   created_at?: string;
 };
+
+function fmtAmount(v: number): string {
+  return v.toLocaleString("ru-RU", { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 });
+}
 
 function formatWhen(iso?: string): string {
   if (!iso) return "—";
@@ -27,6 +35,7 @@ function formatWhen(iso?: string): string {
 }
 
 function titleFor(item: HistoryItem): string {
+  if (item.title) return item.title;
   const method = item.payment_method || "";
   if (method === "referral") return "Бонус за друга";
   if (item.description) return String(item.description);
@@ -98,22 +107,29 @@ export default function History() {
                   </div>
                   <div style={{ fontSize: 13, color: T.textMuted, marginTop: 3 }}>
                     {formatWhen(item.created_at)}
+                    {item.method ? ` · ${item.method}` : ""}
+                    {item.status === "refunded" ? " · деньги возвращены" : ""}
                   </div>
                 </div>
-                {item.amount != null && Number(item.amount) !== 0 && (
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      fontSize: 15,
-                      color: T.text,
-                      whiteSpace: "nowrap",
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {Number(item.amount) > 0 ? "+" : ""}
-                    {item.amount} ₽
-                  </div>
-                )}
+                {item.amount != null && Number(item.amount) !== 0 && (() => {
+                  const out = item.direction ? item.direction === "out" : Number(item.amount) < 0;
+                  const refunded = item.status === "refunded";
+                  const value = Math.abs(Number(item.amount));
+                  return (
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        fontSize: 15,
+                        color: refunded ? T.textMuted : out ? T.text : T.orange,
+                        textDecoration: refunded ? "line-through" : "none",
+                        whiteSpace: "nowrap",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {item.stars ? `${out ? "−" : "+"}${item.stars} ⭐` : `${out ? "−" : "+"}${fmtAmount(value)} ₽`}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}

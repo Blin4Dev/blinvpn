@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Home, DollarSign, Users, Mail, Gift, Percent, Link, Settings, Menu, X, Wallet, Lock, BarChart2, ClipboardList, Server,
 } from 'lucide-react';
@@ -49,37 +49,76 @@ export const NAV = [
   { group: 'Другое', items: [{ name: 'Мониторинг', icon: Server }, { name: 'Настройки', icon: Settings }] },
 ];
 
-// Прямые ссылки из форума / уведомлений: /withdrawals, /users/123
-export function initialRoute(): { page: string; userId: number | null; nodeId?: number | null } {
-  try {
-    const path = window.location.pathname.replace(/\/+$/, '');
-    if (path === '/monitoring') {
-      const n = new URLSearchParams(window.location.search).get('node');
-      return { page: 'Мониторинг', userId: null, nodeId: n && /^\d+$/.test(n) ? Number(n) : null };
-    }
-    const m = path.match(/^\/users\/(\d+)$/);
-    if (m) return { page: 'Пользователи', userId: Number(m[1]) };
-    if (path === '/withdrawals') return { page: 'Выводы', userId: null };
-    if (path === '/statistics') return { page: 'Статистика', userId: null };
-  } catch { /* ignore */ }
-  return { page: 'Главная', userId: null };
+// Адреса страниц панели: у каждой свой путь, работают F5, «Назад» браузера и прямые ссылки
+// (в том числе из форума: /withdrawals, /users/123).
+const PAGE_PATHS: Record<string, string> = {
+  'Главная': '/', 'Статистика': '/statistics', 'Финансы': '/finance',
+  'Пользователи': '/users', 'Выводы': '/withdrawals', 'Опрос': '/survey',
+  'Рассылка': '/mailing', 'Промокоды': '/promocodes', 'Акции': '/promotions', 'Ссылки': '/links',
+  'Мониторинг': '/monitoring', 'Настройки': '/settings',
+};
+export const SETTINGS_TABS = ['prices', 'offer', 'privacy', 'squads', 'forum', 'backups'] as const;
+export type SettingsTab = typeof SETTINGS_TABS[number];
+
+type Route = { page: string; userId: number | null; nodeId: number | null; tab: SettingsTab };
+
+export function parseRoute(pathname: string, search: string): Route {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  const base: Route = { page: 'Главная', userId: null, nodeId: null, tab: 'prices' };
+  const u = path.match(/^\/users\/(\d+)$/);
+  if (u) return { ...base, page: 'Пользователи', userId: Number(u[1]) };
+  if (path === '/monitoring') {
+    const n = new URLSearchParams(search).get('node');
+    return { ...base, page: 'Мониторинг', nodeId: n && /^\d+$/.test(n) ? Number(n) : null };
+  }
+  const st = path.match(/^\/settings(?:\/([a-z]+))?$/);
+  if (st) {
+    const tab = (SETTINGS_TABS as readonly string[]).includes(st[1] || '') ? (st[1] as SettingsTab) : 'prices';
+    return { ...base, page: 'Настройки', tab };
+  }
+  const page = Object.keys(PAGE_PATHS).find((k) => PAGE_PATHS[k] === path);
+  return page ? { ...base, page } : base;
+}
+
+export function buildPath(r: Route): string {
+  if (r.userId != null) return `/users/${r.userId}`;
+  if (r.page === 'Мониторинг' && r.nodeId != null) return `/monitoring?node=${r.nodeId}`;
+  if (r.page === 'Настройки') return r.tab === 'prices' ? '/settings' : `/settings/${r.tab}`;
+  return PAGE_PATHS[r.page] || '/';
 }
 
 export function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [route0] = useState(initialRoute);
+  const [route0] = useState(() => parseRoute(window.location.pathname, window.location.search));
   const [activePage, setActivePage] = useState(route0.page);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [detailUserId, setDetailUserId] = useState<number | null>(route0.userId);
-  const [monNodeId, setMonNodeId] = useState<number | null>(route0.nodeId ?? null);
+  const [monNodeId, setMonNodeId] = useState<number | null>(route0.nodeId);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>(route0.tab);
+  const firstRun = useRef(true);
+
+  // Состояние → адрес: каждый переход добавляет запись в историю браузера
   useEffect(() => {
-    // Адрес повторяет открытую страницу только для мониторинга (/monitoring, /monitoring?node=ID),
-    // для остальных возвращаем корень, чтобы F5 не «залипал» на старой ссылке.
-    const want = detailUserId != null ? '/'
-      : activePage === 'Мониторинг' ? (monNodeId != null ? `/monitoring?node=${monNodeId}` : '/monitoring')
-      : activePage === 'Статистика' ? '/statistics' : '/';
-    if (window.location.pathname + window.location.search !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
-  }, [activePage, monNodeId, detailUserId]);
+    const want = buildPath({ page: activePage, userId: detailUserId, nodeId: monNodeId, tab: settingsTab });
+    const cur = window.location.pathname + window.location.search;
+    if (cur === want) return;  // после «Назад» адрес уже совпадает — ничего не добавляем
+    try {
+      if (firstRun.current) window.history.replaceState(null, '', want);
+      else window.history.pushState(null, '', want);
+    } catch { /* ignore */ }
+  }, [activePage, monNodeId, detailUserId, settingsTab]);
+  useEffect(() => { firstRun.current = false; }, []);  // после первого синка адреса
+
+  // «Назад»/«Вперёд» в браузере → состояние
+  useEffect(() => {
+    const onPop = () => {
+      const r = parseRoute(window.location.pathname, window.location.search);
+      setActivePage(r.page); setDetailUserId(r.userId); setMonNodeId(r.nodeId); setSettingsTab(r.tab);
+      window.scrollTo(0, 0);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [userSearch, setUserSearch] = useState('');
   const [massActionType, setMassActionType] = useState<string | null>(null);
 
@@ -154,7 +193,7 @@ export function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
               {activePage === 'Ссылки' && <TrackingLinksPage onToast={addToast} />}
               {activePage === 'Опрос' && <SurveyPage onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} />}
               {activePage === 'Мониторинг' && <MonitoringPage onToast={addToast} nodeId={monNodeId} setNodeId={setMonNodeId} />}
-              {activePage === 'Настройки' && <SettingsPage onToast={addToast} />}
+              {activePage === 'Настройки' && <SettingsPage onToast={addToast} tab={settingsTab} onTab={setSettingsTab} />}
             </>
           )}
         </div>

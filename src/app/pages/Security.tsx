@@ -10,8 +10,25 @@ import {
   requestBindEmailCode,
   unbindEmail,
   updateEmail,
+  mergeFromError,
+  type MergePreview,
   type TelegramOAuthPayload,
 } from "../utils/api";
+import ConfirmDialog from "../components/ConfirmDialog";
+
+/** Текст предупреждения об объединении аккаунтов. */
+function MergeText({ m, what }: { m: MergePreview; what: string }) {
+  return (
+    <>
+      <div style={{ marginBottom: 10 }}>
+        {what} уже привязан к другому аккаунту ({m.other.label}). Если продолжить, аккаунты объединятся в этот:
+      </div>
+      <div style={{ whiteSpace: "pre-line", color: T.text, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "10px 12px" }}>
+        {m.text}
+      </div>
+    </>
+  );
+}
 
 function isTelegramContext(): boolean {
   try {
@@ -38,6 +55,10 @@ export default function Security() {
   const inTelegram = isTelegramContext();
   const [botUsername, setBotUsername] = useState("");
   const [showTgWidget, setShowTgWidget] = useState(false);
+  // Объединение аккаунтов: предупреждение перед привязкой email/Telegram, который уже занят
+  const [emailMerge, setEmailMerge] = useState<MergePreview | null>(null);
+  const [emailMergeOk, setEmailMergeOk] = useState(false);
+  const [tgMerge, setTgMerge] = useState<{ m: MergePreview; payload: TelegramOAuthPayload } | null>(null);
 
   const load = async () => {
     const me = await fetchMe();
@@ -85,8 +106,37 @@ export default function Security() {
       setUser(updated);
       setShowTgWidget(false);
     } catch (e) {
+      const m = mergeFromError(e);
+      if (m) {
+        setTgMerge({ m, payload: { ...payload } });
+        return;
+      }
       setError(e instanceof Error ? e.message : "Не удалось привязать Telegram");
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmTgMerge = async () => {
+    if (!tgMerge) return;
+    setBusy(true);
+    setError("");
+    try {
+      const p = tgMerge.payload;
+      const clean: TelegramOAuthPayload = { id: p.id, hash: p.hash };
+      if (p.first_name) clean.first_name = p.first_name;
+      if (p.last_name) clean.last_name = p.last_name;
+      if (p.username) clean.username = p.username;
+      if (p.photo_url) clean.photo_url = p.photo_url;
+      if (p.auth_date != null && p.auth_date !== "") clean.auth_date = p.auth_date;
+      const updated = await bindTelegram(clean, true);
+      setUser(updated);
+      setShowTgWidget(false);
+      setInfo("Аккаунты объединены");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось объединить аккаунты");
+    } finally {
+      setTgMerge(null);
       setBusy(false);
     }
   };
@@ -105,6 +155,8 @@ export default function Security() {
     setInfo("");
     try {
       const r = await requestBindEmailCode(value);
+      setEmailMerge(r.merge ?? null);
+      setEmailMergeOk(false);
       setEmailStep("code");
       setResendIn(r.resend_after || 60);
       setInfo(
@@ -128,12 +180,20 @@ export default function Security() {
     setBusy(true);
     setError("");
     try {
-      const updated = await updateEmail(value, emailCode.trim());
+      const updated = await updateEmail(value, emailCode.trim(), emailMergeOk);
       setUser(updated);
       setEmailStep("idle");
       setEmailCode("");
-      setInfo("");
+      setInfo(emailMergeOk ? "Аккаунты объединены" : "");
+      setEmailMerge(null);
+      setEmailMergeOk(false);
     } catch (e) {
+      const m = mergeFromError(e);
+      if (m) {
+        setEmailMerge(m);
+        setEmailMergeOk(false);
+        return;
+      }
       setError(e instanceof Error ? e.message : "Неверный код");
     } finally {
       setBusy(false);
@@ -158,6 +218,28 @@ export default function Security() {
   return (
     <Screen>
       <PageHeader title="Безопасность" onBack={goBack} />
+
+      {emailStep === "code" && emailMerge && !emailMergeOk && (
+        <ConfirmDialog
+          title="Объединить аккаунты?"
+          confirmText="Продолжить"
+          onConfirm={() => setEmailMergeOk(true)}
+          onCancel={() => { setEmailMerge(null); setEmailStep("email"); setEmailCode(""); setInfo(""); }}
+        >
+          <MergeText m={emailMerge} what="Этот email" />
+        </ConfirmDialog>
+      )}
+      {tgMerge && (
+        <ConfirmDialog
+          title="Объединить аккаунты?"
+          confirmText="Объединить"
+          busy={busy}
+          onConfirm={() => void confirmTgMerge()}
+          onCancel={() => setTgMerge(null)}
+        >
+          <MergeText m={tgMerge.m} what="Этот Telegram" />
+        </ConfirmDialog>
+      )}
 
       <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.5, marginBottom: 8 }}>
         Способы входа и восстановление доступа.
@@ -278,6 +360,11 @@ export default function Security() {
               <div style={{ fontSize: 13, color: T.textMuted }}>
                 Код отправлен на {emailDraft.trim()}
               </div>
+              {emailMerge && emailMergeOk && (
+                <div style={{ fontSize: 13, color: T.orange, lineHeight: 1.4 }}>
+                  После подтверждения аккаунты объединятся: {emailMerge.result.days.toString().replace(".", ",")} дн., {emailMerge.result.devices} устр.
+                </div>
+              )}
               <Field
                 type="text"
                 inputMode="numeric"

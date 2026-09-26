@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ArrowUpRight, Activity,
 } from 'lucide-react';
-import { PageHead, Stat } from '../components/ui';
+import { PageHead, PaymentStatusBadge, Stat, refundedRowStyle } from '../components/ui';
 import { apiFetch, parseErr } from '../lib/api';
 import { fmtDateTime, fmtInt, fmtMoney } from '../lib/format';
 import type { PaymentRow, ToastType } from '../lib/types';
@@ -43,7 +43,7 @@ export const FinancePage: React.FC<{ onToast: (t: string, m: string, ty?: ToastT
             <tbody>
               {payments.length === 0 ? <tr className="empty-row"><td colSpan={6}>Пока нет платежей</td></tr>
                 : payments.map((pm) => (
-                  <tr key={String(pm.id)}>
+                  <tr key={String(pm.id)} style={refundedRowStyle(pm.status)}>
                     <td className="muted mono">{fmtDateTime(pm.created_at)}</td>
                     <td className="click" onClick={() => pm.user_id && onOpenUser(Number(pm.user_id))}>{pm.username ? `@${pm.username}` : `id${pm.user_id}`}</td>
                     <td className="mono">
@@ -51,7 +51,7 @@ export const FinancePage: React.FC<{ onToast: (t: string, m: string, ty?: ToastT
                       {pm.referral_applied ? <span className="sub" style={{ marginLeft: 6 }}>+{pm.referral_applied}₽ реф.</span> : null}
                     </td>
                     <td className="sub">{pm.description || pm.purpose || '—'}<div className="faint" style={{ fontSize: 11 }}>{pm.method || pm.provider || ''}</div></td>
-                    <td><span className={`badge ${pm.status === 'paid' || pm.status === 'completed' ? 'solid' : pm.status === 'failed' ? 'danger' : pm.status === 'refunded' ? 'danger' : 'mute'}`}>{pm.status}</span></td>
+                    <td><PaymentStatusBadge status={pm.status} /></td>
                     <td>
                       {pm.refundable ? (
                         <button className="btn sm danger" disabled={refBusy === String(pm.payment_id)} onClick={() => void doRefund(pm)}>Возврат</button>

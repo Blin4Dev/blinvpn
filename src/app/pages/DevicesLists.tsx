@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Btn, MSIcon, PageHeader, Screen, T, btnReset } from "../components/ui";
 import { useSmartBack } from "../utils/navigation";
 import { appFetch, revokeDevice } from "../utils/api";
+import { formatWhenRu } from "../utils/date";
 
 type Device = { id?: string | number; name?: string; last_seen?: string; lastSeen?: string };
 
@@ -62,7 +63,8 @@ export default function DevicesLists() {
         {devices.map((d, idx) => {
           const id = String(d.id ?? "");
           const name = d.name || `Устройство ${idx + 1}`;
-          const last = d.last_seen || d.lastSeen || "онлайн: нет данных";
+          const seen = formatWhenRu(d.last_seen || d.lastSeen);
+          const last = seen ? `Последняя активность: ${seen}` : "Активность: нет данных";
           return (
             <div
               key={String(d.id ?? idx)}

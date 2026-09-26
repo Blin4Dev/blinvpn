@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  DollarSign, Users, Key, Gift, CreditCard, Hash, Trophy, UserPlus, Clock, Smartphone, Zap, Wallet, RefreshCw,
+  DollarSign, Users, Key, Gift, CreditCard, Hash, Trophy, UserPlus, Clock, Smartphone, Wallet, RefreshCw,
 } from 'lucide-react';
-import { Columns, Funnel, HBarChart, Legend, LineChart } from '../components/charts';
+import { Columns, Funnel, HBarChart } from '../components/charts';
 import { Delta, Kpi, PageHead, Panel, Row, Segmented, Spinner, StatSection } from '../components/ui';
 import { apiFetch } from '../lib/api';
-import { fmtInt, fmtMoney, gb, hoursStr, pctStr, toSeries } from '../lib/format';
+import { fmtInt, fmtMoney, gb, pctStr, toSeries } from '../lib/format';
 
 export const PERIOD_OPTS = [
   { value: '7d', label: '7 дней' }, { value: '30d', label: '30 дней' }, { value: '90d', label: '90 дней' },
@@ -18,6 +18,8 @@ export const StatisticsPage: React.FC<{ onOpenUser: (id: number) => void }> = ({
   const [period, setPeriod] = useState<StatPeriod>('30d');
   const [s, setS] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [today, setToday] = useState<any>(null);
+  useEffect(() => { apiFetch('/panel/dashboard').then(setToday).catch(() => { /* без блока «Сегодня» */ }); }, []);
   useEffect(() => {
     let alive = true; setLoading(true);
     apiFetch(`/panel/statistics?period=${period}`).then((d) => { if (alive) setS(d); }).catch(console.error).finally(() => { if (alive) setLoading(false); });
@@ -32,7 +34,6 @@ export const StatisticsPage: React.FC<{ onOpenUser: (id: number) => void }> = ({
   if (!s) return <div className="flex flex-col gap-6">{head}<div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div></div>;
 
   const m = s.money; const u = s.users; const f = s.funnel; const sb = s.subs; const rf = s.referrals;
-  const times = s.timeline.map((x: any) => Date.parse(x.t + 'T00:00:00+03:00') / 1000);
   const bucketName = s.bucket === 'day' ? 'по дням' : s.bucket === 'week' ? 'по неделям' : 'по месяцам';
   const cmp = period === 'all' ? '' : 'к прошлому периоду';
   const sumPairs = (rows: any[]) => rows.map((r: any) => ({ label: `${r.name} · ${fmtInt(r.count)}`, value: r.sum }));
@@ -40,6 +41,16 @@ export const StatisticsPage: React.FC<{ onOpenUser: (id: number) => void }> = ({
   return (
     <div className="flex flex-col gap-8" style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .2s' }}>
       {head}
+
+      {today && (
+        <StatSection title="Сегодня">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Kpi title="Заработано сегодня" icon={DollarSign} value={fmtMoney(today.revenue.today)} foot={`вчера к этому часу — ${fmtMoney(today.revenue.yesterday_same_time)}`} />
+            <Kpi title="Новых сегодня" icon={UserPlus} value={`+${fmtInt(today.users.today)}`} foot={`вчера +${fmtInt(today.users.yesterday)} · за неделю +${fmtInt(today.users.week)}`} />
+            <Kpi title="Активных подписок" icon={Key} value={fmtInt(today.subs.active_paid)} foot={`и ${fmtInt(today.subs.active_trial)} пробных`} />
+          </div>
+        </StatSection>
+      )}
 
       <StatSection title="Деньги" sub="Только успешные платежи. Оплаты звёздами посчитаны в рублях по цене тарифа.">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -77,22 +88,7 @@ export const StatisticsPage: React.FC<{ onOpenUser: (id: number) => void }> = ({
         </div>
       </StatSection>
 
-      <StatSection title="Пользователи" sub="«Путь пользователя» считается по тем, кто пришёл за выбранный период.">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <Kpi title="Всего пользователей" icon={Users} value={fmtInt(u.total)} foot={`${fmtInt(u.banned)} забанено · ${fmtInt(u.blacklisted)} в чёрном списке`} />
-          <Kpi title="Новых" icon={UserPlus} value={`+${fmtInt(u.new)}`} foot={period === 'all' ? '' : <Delta v={u.new_delta} suffix={cmp} />} />
-          <Kpi title="Оплатили после пробного" icon={Zap} value={pctStr(f.trial_conv_all)} foot={`за всё время · из ${fmtInt(f.trial_total)} взявших пробный`} />
-          <Kpi title="От регистрации до оплаты" icon={Clock} value={hoursStr(f.hours_to_pay_median)} foot="обычно проходит столько времени" />
-        </div>
-        <Panel title={`Новые пользователи, пробные и первые покупки ${bucketName}`}>
-          <LineChart range="7d" times={times} height={200} format={(v) => fmtInt(v)}
-            series={[
-              { name: 'новые', color: '#fff', values: s.timeline.map((x: any) => x.new_users) },
-              { name: 'пробные', color: '#60a5fa', values: s.timeline.map((x: any) => x.trials) },
-              { name: 'первые покупки', color: '#34d399', values: s.timeline.map((x: any) => x.first) },
-            ]} />
-          <div style={{ marginTop: 10 }}><Legend items={[{ name: 'новые', color: '#fff' }, { name: 'пробные', color: '#60a5fa' }, { name: 'первые покупки', color: '#34d399' }]} /></div>
-        </Panel>
+      <StatSection title="Пользователи" sub="«Путь пользователя» считается по тем, кто пришёл за выбранный период. Новые пользователи по дням — на главной.">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Panel title="Путь пользователя" className="lg:col-span-1">
             <Funnel steps={[{ label: 'Пришли', value: f.registered }, { label: 'Взяли пробный', value: f.trial }, { label: 'Оплатили', value: f.paid }]} />

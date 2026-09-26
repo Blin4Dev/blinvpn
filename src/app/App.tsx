@@ -20,6 +20,7 @@ import { AppErrorProvider } from "./components/ErrorModal";
 import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, type Membership } from "./utils/api";
 import { trackRoute } from "./utils/navigation";
 import PaymentResume from "./components/PaymentResume";
+import TermsGate from "./pages/TermsGate";
 
 // Показываем онбординг-модалку не чаще одного раза за сессию приложения.
 const SETUP_PROMPT_DISMISSED_KEY = "blinvpn_setup_prompt_dismissed";
@@ -82,8 +83,8 @@ function AnimatedLayout() {
     : "none";
 
   useEffect(() => {
-    trackRoute(`${location.pathname}${location.search}`);
-  }, [location.pathname, location.search]);
+    trackRoute(`${location.pathname}${location.search}`, navType === "REPLACE");
+  }, [location.pathname, location.search, navType]);
 
   return (
     <div
@@ -117,6 +118,8 @@ export default function App() {
   const [auth, setAuth] = useState<"checking" | "authed" | "anon">("checking");
   const [gate, setGate] = useState<"checking" | "open" | "blocked">("checking");
   const [membership, setMembership] = useState<Membership | null>(null);
+  // Согласие с документами: при первом входе (и у тех, кто ещё не соглашался)
+  const [terms, setTerms] = useState<"checking" | "ok" | "need">("checking");
 
   useEffect(() => {
     let mounted = true;
@@ -127,6 +130,15 @@ export default function App() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (auth !== "authed") return;
+    let mounted = true;
+    void fetchMe()
+      .then((me) => { if (mounted) setTerms(me && me.terms_accepted === false ? "need" : "ok"); })
+      .catch(() => mounted && setTerms("ok"));
+    return () => { mounted = false; };
+  }, [auth]);
 
   // Обязательная подписка на канал — только для Telegram-входа.
   useEffect(() => {
@@ -153,7 +165,9 @@ export default function App() {
   return (
     <>
       <RoutedApp />
-      {gate === "blocked" && membership ? (
+      {terms === "need" ? (
+        <TermsGate onAccepted={() => setTerms("ok")} />
+      ) : gate === "blocked" && membership ? (
         <ChannelGate membership={membership} onPassed={() => setGate("open")} />
       ) : null}
     </>

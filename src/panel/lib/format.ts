@@ -70,3 +70,23 @@ export const fmtDateRu = (iso: string): string => {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(dt.getDate())}.${p(dt.getMonth() + 1)}.${dt.getFullYear()}`;
 };
+
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+/** «только что», «5 минут назад», «сегодня в 14:05», «вчера в 09:30», «3 сентября в 18:00». */
+export const whenRu = (iso: string | null | undefined): string => {
+  if (!iso) return '—';
+  const d = new Date(iso); if (isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const min = Math.floor((now.getTime() - d.getTime()) / 60000);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (min < 1) return 'только что';
+  if (min < 60) {
+    const a = min % 10, b = min % 100;
+    return `${min} ${a === 1 && b !== 11 ? 'минуту' : a >= 2 && a <= 4 && (b < 12 || b > 14) ? 'минуты' : 'минут'} назад`;
+  }
+  const day0 = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day0(now) - day0(d)) / 86400000);
+  if (days === 0) return `сегодня в ${hm}`;
+  if (days === 1) return `вчера в ${hm}`;
+  return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}${d.getFullYear() === now.getFullYear() ? '' : ` ${d.getFullYear()}`} в ${hm}`;
+};

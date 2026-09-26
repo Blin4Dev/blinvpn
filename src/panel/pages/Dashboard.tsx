@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  DollarSign, Key, CheckCircle, AlertCircle, UserPlus, Bell, ChevronDown, AlertTriangle, BarChart2,
+  DollarSign, CheckCircle, AlertCircle, Bell, ChevronDown, AlertTriangle, BarChart2, Users, Zap, Clock,
 } from 'lucide-react';
-import { Kpi, PageHead, Spinner } from '../components/ui';
+import { Legend, LineChart } from '../components/charts';
+import { Delta, Kpi, PageHead, Panel, Spinner } from '../components/ui';
 import { apiFetch } from '../lib/api';
-import { fmtInt, fmtMoney } from '../lib/format';
+import { fmtInt, fmtMoney, hoursStr, pctStr } from '../lib/format';
 
 export const TODO_STYLE: Record<string, { c: string; icon: React.ElementType }> = {
   critical: { c: 'var(--danger)', icon: AlertCircle },
@@ -24,14 +25,32 @@ export const Dashboard: React.FC<{ onNavigate: (page: string) => void; onOpenUse
   );
   if (!d) return <div className="flex flex-col gap-6">{head}<div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}><Spinner size={24} /></div></div>;
   const r = d.revenue;
+  const ub = d.users_block;
+  const times = (ub?.timeline || []).map((x: any) => Date.parse(x.t + 'T00:00:00+03:00') / 1000);
   return (
-    <div className="flex flex-col gap-6" style={{ maxWidth: 1000 }}>
+    <div className="flex flex-col gap-6">
       {head}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Kpi title="Заработано сегодня" icon={DollarSign} value={fmtMoney(r.today)} foot={`вчера к этому часу — ${fmtMoney(r.yesterday_same_time)}`} />
-        <Kpi title="Новых сегодня" icon={UserPlus} value={`+${fmtInt(d.users.today)}`} foot={`вчера +${fmtInt(d.users.yesterday)}`} />
-        <Kpi title="Активных подписок" icon={Key} value={fmtInt(d.subs.active_paid)} foot={`и ${fmtInt(d.subs.active_trial)} пробных`} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Kpi title="Всего пользователей" icon={Users} value={fmtInt(ub.users.total)}
+          foot={`${fmtInt(ub.users.banned)} забанено · ${fmtInt(ub.users.blacklisted)} в чёрном списке`} />
+        <Kpi title={`Доход за ${r.month_name}`} icon={DollarSign} value={fmtMoney(r.cal_month)}
+          foot={<Delta v={r.cal_month_delta} suffix="к прошлому месяцу" />}
+          hint={`Прошлый месяц к этому же дню — ${fmtMoney(r.prev_month_same)}, за весь прошлый месяц — ${fmtMoney(r.prev_month)}`} />
+        <Kpi title="Оплатили после пробного" icon={Zap} value={pctStr(ub.funnel.trial_conv_all)}
+          foot={`за всё время · из ${fmtInt(ub.funnel.trial_total)} взявших пробный`} />
+        <Kpi title="От регистрации до оплаты" icon={Clock} value={hoursStr(ub.funnel.hours_to_pay_median)}
+          foot="обычно проходит столько времени" />
       </div>
+
+      <Panel title="Новые пользователи, пробные и первые покупки за 30 дней">
+        <LineChart range="7d" times={times} height={200} format={(v) => fmtInt(v)}
+          series={[
+            { name: 'новые', color: '#fff', values: ub.timeline.map((x: any) => x.new_users) },
+            { name: 'пробные', color: '#60a5fa', values: ub.timeline.map((x: any) => x.trials) },
+            { name: 'первые покупки', color: '#34d399', values: ub.timeline.map((x: any) => x.first) },
+          ]} />
+        <div style={{ marginTop: 10 }}><Legend items={[{ name: 'новые', color: '#fff' }, { name: 'пробные', color: '#60a5fa' }, { name: 'первые покупки', color: '#34d399' }]} /></div>
+      </Panel>
 
       <div className="card" style={{ padding: 20 }}>
         <h3 className="h-sec mb-4">Нужно сделать</h3>

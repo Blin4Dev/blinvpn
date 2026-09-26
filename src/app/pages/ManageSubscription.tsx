@@ -41,6 +41,8 @@ export default function ManageSubscription() {
   // Продление запрещено администратором: кнопки «Продлить» нет
   const [noRenew, setNoRenew] = useState(false);
   const [appSheet, setAppSheet] = useState(false);
+  // В пробной подписке докупать устройства нельзя
+  const [isTrial, setIsTrial] = useState(false);
 
   const closeSheet = () => {
     setAppSheet(false);
@@ -65,7 +67,7 @@ export default function ManageSubscription() {
         const data = await appFetch<{
           status?: string;
           until?: string | null;
-          key?: { devices_limit?: number; days_left?: number | null; no_renew?: boolean } | null;
+          key?: { devices_limit?: number; days_left?: number | null; no_renew?: boolean; type?: string } | null;
           expired_key?: { expiry_date?: string | null } | null;
           delete_at?: string | null;
         }>("/subscription");
@@ -83,6 +85,7 @@ export default function ManageSubscription() {
         }
         setUntilIso(data.until);
         setNoRenew(!!data.key?.no_renew);
+        setIsTrial(data.key?.type === "trial" || data.status === "trial");
       } catch { /* placeholder */ } finally {
         setLoaded(true);
       }
@@ -225,13 +228,15 @@ export default function ManageSubscription() {
         />
       </div>
 
-      <SectionLabel>Дополнительно</SectionLabel>
+      {(!isTrial || trafficResetPrice > 0) && <SectionLabel>Дополнительно</SectionLabel>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <ActionButton
-          icon="add_circle"
-          title="Докупить устройство"
-          onClick={() => navigate("/subscription/increase")}
-        />
+        {!isTrial && (
+          <ActionButton
+            icon="add_circle"
+            title="Докупить устройство"
+            onClick={() => navigate("/subscription/increase")}
+          />
+        )}
         {trafficResetPrice > 0 && (
           <ActionButton
             icon="refresh"

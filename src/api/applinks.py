@@ -10,8 +10,9 @@
   • happ  — happ://crypt5/... через внешний API согласно документации:
             POST https://crypto.happ.su/api-v2.php  body {"url": "<url>"}
             (на выходе — готовая зашифрованная ссылка happ://crypt5/...).
-            Есть офлайн-fallback на локальный crypt4 (RSA-4096 PKCS#1 v1.5),
-            если внешний сервис недоступен.
+            Ответ: JSON {"encrypted_link": "happ://crypt5/..."}. Если API недоступен —
+            отдаём happ://add/<url> (без шифрования). Устаревший локальный crypt4
+            (RSA-4096 PKCS#1 v1.5) — только при HAPP_CRYPT_MODE=local.
             Док: https://www.happ.su/main/ru/dev-docs/crypto-link
   • other — просто ссылка на подписку без шифрования.
 
@@ -98,24 +99,34 @@ def _happ_crypt5_api(url: str) -> str:
     with urllib.request.urlopen(req, timeout=_HAPP_TIMEOUT) as resp:
         raw = resp.read().decode("utf-8", "replace").strip()
 
-    # Ответ может быть либо plain-text ссылкой, либо JSON с полем link/url/result.
+    # Официальный ответ: JSON {"encrypted_link": "happ://crypt5/..."}. На всякий случай
+    # принимаем и другие поля/plain-text: берём первую строку, начинающуюся с happ://.
+    def _find_link(obj: object) -> str:
+        if isinstance(obj, str):
+            return obj if obj.strip().strip('"').startswith("happ://") else ""
+        if isinstance(obj, dict):
+            for k in ("encrypted_link", "link", "url", "result", "encrypted", "data"):
+                if k in obj:
+                    found = _find_link(obj[k])
+                    if found:
+                        return found
+            for v in obj.values():
+                found = _find_link(v)
+                if found:
+                    return found
+        if isinstance(obj, list):
+            for v in obj:
+                found = _find_link(v)
+                if found:
+                    return found
+        return ""
+
     link = raw
     if raw[:1] in ("{", "["):
         try:
-            data = json.loads(raw)
+            link = _find_link(json.loads(raw))
         except ValueError:
-            data = None
-        if isinstance(data, dict):
-            link = (
-                data.get("link")
-                or data.get("url")
-                or data.get("result")
-                or data.get("encrypted")
-                or data.get("data")
-                or ""
-            )
-        elif isinstance(data, list) and data:
-            link = str(data[0])
+            link = ""
     link = str(link).strip().strip('"')
     if not link.startswith("happ://"):
         raise AppLinkError(f"unexpected crypt5 response: {raw[:200]!r}")
@@ -135,9 +146,10 @@ def _happ_crypt4_local(url: str) -> str:
 def happ_link(url: str) -> str:
     """
     HAPP_CRYPT_MODE (.env):
-      remote (по умолчанию) — crypt5 через API Happ; ссылка на подписку при этом
-                              уходит на сервер crypto.happ.su;
-      local                 — crypt4 шифруется на нашем сервере, ссылка никуда не уходит.
+      remote (по умолчанию) — crypt5 через API Happ (ссылка на подписку уходит на crypto.happ.su);
+      local                 — устаревший crypt4 на нашем сервере (новые версии Happ могут его не принять).
+    Если API Happ недоступен — отдаём обычную ссылку добавления happ://add/<url>
+    (без шифрования, но гарантированно рабочую), а не crypt4, который Happ считает недействительным.
     """
     if not url:
         raise AppLinkError("empty url")
@@ -145,9 +157,13 @@ def happ_link(url: str) -> str:
         return _happ_crypt4_local(url)
     try:
         return _happ_crypt5_api(url)
-    except Exception:
-        # Внешний сервис недоступен — не роняем выдачу ссылки, отдаём crypt4.
-        return _happ_crypt4_local(url)
+    except Exception as exc:
+        global LAST_HAPP_ERROR
+        LAST_HAPP_ERROR = f"{type(exc).__name__}: {exc}"
+        return "happ://add/" + url
+
+
+LAST_HAPP_ERROR: str | None = None
 
 
 def build_link(app: str, url: str, name: str | None = "BlinVPN") -> str:

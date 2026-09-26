@@ -177,3 +177,19 @@ export const DCard: React.FC<{ title?: React.ReactNode; icon?: React.ElementType
     {children}
   </div>
 );
+
+// Статус платежа по-русски. Возврат — серым: деньги ушли обратно, в статистике не учитывается.
+const PAY_STATUS: Record<string, { cls: string; label: string }> = {
+  paid: { cls: 'solid', label: 'Оплачен' },
+  completed: { cls: 'solid', label: 'Оплачен' },
+  refunded: { cls: 'mute', label: 'Возврат' },
+  failed: { cls: 'danger', label: 'Ошибка' },
+  pending: { cls: 'mute', label: 'Ожидает' },
+  processing: { cls: 'mute', label: 'Обработка' },
+};
+export const PaymentStatusBadge: React.FC<{ status?: string | null }> = ({ status }) => {
+  const m = PAY_STATUS[String(status || '')] || { cls: 'mute', label: status || '—' };
+  return <span className={`badge ${m.cls}`}>{m.label}</span>;
+};
+export const refundedRowStyle = (status?: string | null): React.CSSProperties | undefined =>
+  status === 'refunded' ? { opacity: 0.5 } : undefined;

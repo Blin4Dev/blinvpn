@@ -31,6 +31,9 @@ export default function IncreaseDevices() {
   const [expiry, setExpiry] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [quoteBusy, setQuoteBusy] = useState(false);
+  const [fullPrice, setFullPrice] = useState(0);
+  const [discount, setDiscount] = useState(0);
+  const [isTrial, setIsTrial] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -47,6 +50,7 @@ export default function IncreaseDevices() {
         setCurrent(cur);
         setTarget(Math.min(MAX_DEVICES, cur + 1));
         if (k?.id) setSubId(Number(k.id));
+        if (k?.type === "trial") setIsTrial(true);
         if (k?.expiry_date) setExpiry(String(k.expiry_date));
         let dl = Number(k?.days_left ?? NaN);
         if (!Number.isFinite(dl) && k?.expiry_date) {
@@ -67,7 +71,7 @@ export default function IncreaseDevices() {
   const extra = Math.max(0, total_ - current);
 
   useEffect(() => {
-    if (extra <= 0) {
+    if (extra <= 0 || isTrial || !loaded) {
       setTotal(0);
       return;
     }
@@ -84,14 +88,21 @@ export default function IncreaseDevices() {
         use_referral_balance: false,
       });
       if (!alive) return;
-      if (q) setTotal(Math.round(q.price));
-      else setTotal(Math.round(extra * pricePerDevice * (Math.min(daysLeft, 3650) / 30)));
+      if (q) {
+        setTotal(Math.round(q.price));
+        setFullPrice(Math.round(q.full_price ?? q.price));
+        setDiscount(Number(q.discount_percent || 0));
+      } else {
+        setTotal(Math.round(extra * pricePerDevice * (Math.min(daysLeft, 3650) / 30)));
+        setFullPrice(0);
+        setDiscount(0);
+      }
       setQuoteBusy(false);
     })();
     return () => {
       alive = false;
     };
-  }, [extra, subId, pricePerDevice, daysLeft]);
+  }, [extra, subId, pricePerDevice, daysLeft, isTrial, loaded]);
 
   const stepBtn = (disabled: boolean): React.CSSProperties => ({
     ...btnReset,
@@ -127,7 +138,14 @@ export default function IncreaseDevices() {
         ) : null}
       </Card>
 
-      {maxAdd === 0 && loaded ? (
+      {isTrial ? (
+        <Card>
+          <div style={{ fontSize: 15, fontWeight: 600, color: T.text, marginBottom: 6 }}>Недоступно в пробной подписке</div>
+          <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.45 }}>
+            Докупать устройства можно после оформления подписки. При оформлении сразу выберите нужное число устройств.
+          </div>
+        </Card>
+      ) : maxAdd === 0 && loaded ? (
         <Card>
           <div style={{ fontSize: 14, color: T.textMuted, lineHeight: 1.45 }}>
             В подписке уже максимум — {MAX_DEVICES} устройств.
@@ -186,16 +204,31 @@ export default function IncreaseDevices() {
             }}
           >
             <div style={{ fontSize: 14, color: T.textMuted }}>За остаток срока</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: T.orange }}>{priceText}</div>
+            <div style={{ textAlign: "right" }}>
+              {!quoteBusy && discount > 0 && fullPrice > total ? (
+                <span style={{ fontSize: 15, fontWeight: 600, color: T.textDim, textDecoration: "line-through", marginRight: 8 }}>
+                  {fullPrice} ₽
+                </span>
+              ) : null}
+              <span style={{ fontSize: 22, fontWeight: 700, color: T.orange }}>{priceText}</span>
+            </div>
           </div>
+          {!quoteBusy && discount > 0 && fullPrice > total ? (
+            <div style={{ fontSize: 13, color: T.textMuted, marginTop: 6, textAlign: "right" }}>
+              ваша скидка {Math.round(discount)}%
+            </div>
+          ) : null}
         </Card>
       )}
 
-      <div style={{ fontSize: 13, color: T.textDim, lineHeight: 1.45, padding: "0 4px" }}>
+      {!isTrial && <div style={{ fontSize: 13, color: T.textDim, lineHeight: 1.45, padding: "0 4px" }}>
         {pricePerDevice} ₽ в месяц за устройство — платите только за оставшиеся дни. Дата окончания подписки не меняется.
-      </div>
+      </div>}
 
       <div style={{ marginTop: "auto", paddingTop: 16 }}>
+        {isTrial ? (
+          <Btn onClick={() => navigate("/subscription/extend")}>Оформить подписку</Btn>
+        ) : (
         <Btn
           disabled={extra === 0 || total <= 0 || quoteBusy}
           onClick={() =>
@@ -204,6 +237,7 @@ export default function IncreaseDevices() {
         >
           {extra > 0 && total > 0 && !quoteBusy ? `Оплатить ${total} ₽` : "Оплатить"}
         </Btn>
+        )}
       </div>
     </Screen>
   );
