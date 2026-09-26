@@ -26,6 +26,7 @@ METHOD_LABELS = {
 PURPOSE_LABELS = {"first": "Первая покупка", "renew": "Продление", "devices": "Докупка устройств",
                   "traffic_reset": "Сброс трафика", "other": "Другое"}
 WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+MONTHS_FULL = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
 MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 
@@ -475,6 +476,16 @@ def dashboard() -> dict[str, Any]:
     r_prev7, _ = rev_between(day0 - timedelta(days=13), day0 - timedelta(days=6))
     r_30, _ = rev_between(day0 - timedelta(days=29), now)
 
+    # Доход за календарный месяц (МСК) и прошлый месяц к этому же дню
+    m0_day = today.replace(day=1)
+    m0 = datetime.combine(m0_day, datetime.min.time(), MSK).astimezone(timezone.utc)
+    pm_day = (m0_day - timedelta(days=1)).replace(day=1)
+    pm0 = datetime.combine(pm_day, datetime.min.time(), MSK).astimezone(timezone.utc)
+    r_month, n_month = rev_between(m0, now)
+    same_point = min(now - m0, m0 - pm0)
+    r_prev_month_same, _ = rev_between(pm0, pm0 + same_point)
+    r_prev_month, _ = rev_between(pm0, m0)
+
     new_today = sum(1 for u in users if _in(u["t"], day0, now))
     new_yday = sum(1 for u in users if _in(u["t"], day0 - timedelta(days=1), day0))
     new_7 = sum(1 for u in users if _in(u["t"], day0 - timedelta(days=6), now))
@@ -560,11 +571,17 @@ def dashboard() -> dict[str, Any]:
     return {
         "revenue": {"today": _money(r_today), "yesterday": _money(r_yday), "yesterday_same_time": _money(r_yday_same),
                     "payments_today": n_today, "payments_yesterday": n_yday,
-                    "week": _money(r_7), "week_delta": _delta(r_7, r_prev7), "month": _money(r_30)},
+                    "week": _money(r_7), "week_delta": _delta(r_7, r_prev7), "month": _money(r_30),
+                    "cal_month": _money(r_month), "cal_month_payments": n_month,
+                    "prev_month": _money(r_prev_month), "prev_month_same": _money(r_prev_month_same),
+                    "cal_month_delta": _delta(r_month, r_prev_month_same),
+                    "month_name": MONTHS_FULL[today.month - 1]},
         "users": {"total": len(users), "today": new_today, "yesterday": new_yday, "week": new_7},
         "subs": {"active_paid": act_paid, "active_trial": act_trial},
         "series": series,
         "todo": todo,
+        # Блок «Пользователи» с «Статистики» за последние 30 дней
+        "users_block": _users_block(),
         "recent": [{
             "user_id": r["user_id"],
             "who": f"@{r['username']}" if r.get("username") else (r.get("email") or f"id{r.get('telegram_id') or r['user_id']}"),
@@ -573,3 +590,8 @@ def dashboard() -> dict[str, Any]:
             "at": r.get("paid_at") or r.get("created_at"),
         } for r in recent],
     }
+
+
+def _users_block() -> dict[str, Any]:
+    st30 = statistics("30d")
+    return {"users": st30["users"], "funnel": st30["funnel"], "timeline": st30["timeline"], "bucket": st30["bucket"]}

@@ -50,7 +50,7 @@ def _extract(user: dict[str, Any]) -> dict[str, Any]:
 
 def provision(
     *,
-    telegram_id: int,
+    telegram_id: Optional[int],
     username: Optional[str],
     expire_at: datetime,
     devices: int = 1,
@@ -87,7 +87,13 @@ def provision(
 
     try:
         client = remnawave.get_client()  # type: ignore[union-attr]
-        existing = client.find_user_by_telegram(int(telegram_id))
+        # Ищем пользователя Remnawave: по Telegram, а у тех, кто вошёл только по почте
+        # (сайт), — по email и по служебному имени web_<id>.
+        existing = client.find_user_by_telegram(int(telegram_id)) if telegram_id else None
+        if not existing and email:
+            existing = _resolve_quiet(client, email=email)
+        if not existing and not telegram_id and user_id:
+            existing = _resolve_quiet(client, username=f"web_{int(user_id)}")
         squad_list = list(squads or [])
 
         if existing:
@@ -119,13 +125,14 @@ def provision(
                 except Exception:  # noqa: BLE001
                     pass
         else:
-            uname = username or f"tg_{telegram_id}"
-            uname = "".join(c if c.isalnum() or c in "_-" else "_" for c in uname)[:36] or f"tg_{telegram_id}"
+            fallback = f"tg_{telegram_id}" if telegram_id else f"web_{int(user_id or 0)}"
+            uname = (username or fallback) if telegram_id else fallback
+            uname = "".join(c if c.isalnum() or c in "_-" else "_" for c in uname)[:36] or fallback
             user = client.create_user(
                 username=uname,
                 expire_at=expire_at,
                 status="ACTIVE",
-                telegram_id=int(telegram_id),
+                telegram_id=int(telegram_id) if telegram_id else None,
                 email=email or None,
                 description=str(int(user_id)) if user_id else None,
                 hwid_device_limit=int(max(1, devices)),
@@ -148,6 +155,17 @@ def provision(
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"{type(exc).__name__}: {exc}"
         return result
+
+
+def _resolve_quiet(client: Any, **kw: Any) -> Optional[dict[str, Any]]:
+    """resolve_user без исключений: None, если не найден."""
+    try:
+        rw = client.resolve_user(**kw)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(rw, dict) and "response" in rw:
+        rw = rw["response"]
+    return rw if isinstance(rw, dict) and (rw.get("uuid") or rw.get("id")) else None
 
 
 def backfill_descriptions(tg_to_user_id: dict[int, int]) -> dict[str, Any]:

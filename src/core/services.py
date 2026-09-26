@@ -202,6 +202,31 @@ def register_tracking_click(
     return link
 
 
+def reverse_tracking_payment(user_id: int, amount: float) -> None:
+    """При возврате снимает выручку, начисленную трекинговой ссылке этим платежом."""
+    if amount is None or float(amount) <= 0:
+        return
+    row = db.fetchone("SELECT tracking_code FROM users WHERE id = ?", (user_id,))
+    code = (row or {}).get("tracking_code")
+    if not code:
+        return
+    link = db.fetchone("SELECT id FROM tracking_links WHERE code = ?", (code,))
+    if not link:
+        return
+    link_id = int(link["id"])
+    db.execute("UPDATE tracking_links SET total_revenue = MAX(0, total_revenue - ?) WHERE id = ?",
+               (float(amount), link_id))
+    lu = db.fetchone("SELECT id, total_spent FROM tracking_link_users WHERE link_id = ? AND user_id = ?",
+                     (link_id, user_id))
+    if lu:
+        left = max(0.0, float(lu.get("total_spent") or 0) - float(amount))
+        db.execute("UPDATE tracking_link_users SET total_spent = ?, has_paid = ? WHERE id = ?",
+                   (left, 1 if left > 0 else 0, lu["id"]))
+        if left <= 0:
+            db.execute("UPDATE tracking_links SET paid_users = MAX(0, paid_users - 1) WHERE id = ?", (link_id,))
+    _recalc_conversion(link_id)
+
+
 def credit_tracking_payment(user_id: int, amount: float) -> None:
     """При успешной оплате начисляет выручку трекинговой ссылке пользователя."""
     if amount is None or float(amount) <= 0:

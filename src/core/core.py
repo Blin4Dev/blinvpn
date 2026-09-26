@@ -843,6 +843,8 @@ def serialize_app_user(u: dict[str, Any]) -> dict[str, Any]:
         "is_partner": bool(u.get("is_partner")),
         "partner_balance": float(u.get("partner_balance") or 0),
         "discount": active_discount_for_user(int(u["id"])),
+        # Принял ли оферту и политику конфиденциальности (без этого приложение не пускает дальше)
+        "terms_accepted": bool(u.get("terms_accepted_at")),
     }
 
 
@@ -1016,10 +1018,11 @@ def serialize_transaction(tx: Optional[dict[str, Any]]) -> dict[str, Any]:
 def _grant_fresh_subscription(user_id: int, days: int) -> None:
     """Новая подписка из панели: в Remnawave (если есть Telegram) и в БД."""
     user = get_user(user_id)
-    if user and user.get("telegram_id"):
+    if user and (user.get("telegram_id") or user.get("email")):
         new_exp = utcnow() + timedelta(days=days)
         prov = provisioning.provision(
-            user_id=int(user["id"]), telegram_id=int(user["telegram_id"]), username=user.get("username"), expire_at=new_exp,
+            user_id=int(user["id"]), telegram_id=int(user["telegram_id"]) if user.get("telegram_id") else None,
+            username=user.get("username"), expire_at=new_exp,
             devices=1, squads=fulfillment.vpn_squads(), email=user.get("email"),
             traffic_limit_bytes=fulfillment.paid_traffic_gb() * fulfillment.GB,
             traffic_reset_strategy=fulfillment.RESET_STRATEGY,
@@ -1093,6 +1096,13 @@ def _rw_find_user(user: dict[str, Any]):
             rw = unwrap_rw(client.resolve_user(email=user["email"]))
         except Exception:  # noqa: BLE001
             rw = None
+    if not rw and not user.get("telegram_id"):
+        try:
+            rw = unwrap_rw(client.resolve_user(username=f"web_{int(user['id'])}"))
+        except Exception:  # noqa: BLE001
+            rw = None
+    if not isinstance(rw, dict) or not (rw.get("uuid") or rw.get("id")):
+        rw = None
     return client, rw
 
 
@@ -1646,6 +1656,7 @@ class UserActionBody(BaseModel):
     value: Any = None
     notify: bool = False
     subscription_id: Optional[int] = None
+    confirm: bool = False  # подтверждено объединение аккаунтов (SET_EMAIL / SET_TELEGRAM_ID)
 
 
 class MassActionBody(BaseModel):
@@ -1800,6 +1811,7 @@ class EmailVerifyBody(BaseModel):
     email: str
     code: str
     ref: Optional[str] = None  # реферальный код с сайта (?ref=…) — только при регистрации
+    merge: bool = False       # подтверждено объединение с аккаунтом, где этот email уже есть
 
 
 class OauthLoginBody(OauthBody):
@@ -2178,7 +2190,7 @@ def panel_payments(
     rows = db.fetchall(
         "SELECT p.*, u.username AS u_username, u.telegram_id AS u_tg "
         "FROM payments p LEFT JOIN users u ON u.id = p.user_id "
-        "WHERE p.status IN ('paid', 'completed') "
+        "WHERE p.status IN ('paid', 'completed', 'refunded') "
         "ORDER BY p.id DESC LIMIT ? OFFSET ?",
         (limit, offset),
     )
@@ -2320,7 +2332,7 @@ def panel_user_payments(user_id: int, _: dict = Depends(require_panel)) -> list[
     if not get_user(user_id):
         raise HTTPException(404, detail="User not found")
     rows = db.fetchall(
-        "SELECT * FROM payments WHERE user_id = ? AND status IN ('paid', 'completed') "
+        "SELECT * FROM payments WHERE user_id = ? AND status IN ('paid', 'completed', 'refunded') "
         "ORDER BY id DESC LIMIT 100",
         (user_id,),
     )
@@ -2357,18 +2369,35 @@ def panel_user_payments(user_id: int, _: dict = Depends(require_panel)) -> list[
         result.append({
             "id": f"tx-{t['id']}",
             "payment_id": t.get("payment_id"),
-            "provider": t.get("payment_method"),
+            "provider": {"referral": "рефералка", "referral_reversal": "рефералка", "panel": "панель"}.get(
+                str(t.get("payment_method") or ""), t.get("payment_method")),
             "method": t.get("payment_method"),
             "amount": t.get("amount"),
             "currency": "RUB",
             "stars": None,
             "status": t.get("status"),
-            "purpose": t.get("description") or "transaction",
+            "purpose": _panel_tx_label(t),
+            "description": _panel_tx_label(t),
             "created_at": t.get("created_at"),
             "paid_at": t.get("created_at") if t.get("status") == "completed" else None,
         })
     result.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
     return result
+
+
+def _panel_tx_label(t: dict[str, Any]) -> str:
+    """Понятная подпись операции без платежа (рефералка, ручные начисления) для панели."""
+    m = str(t.get("payment_method") or "")
+    desc = str(t.get("description") or "")
+    ref = re.search(r"user (\d+)", desc)
+    who = f" от #{ref.group(1)}" if ref else ""
+    if m == "referral":
+        return f"Бонус за приглашённого{who}"
+    if m == "referral_reversal":
+        return f"Бонус снят: возврат{who}"
+    if m == "panel":
+        return "Начислено вручную" if float(t.get("amount") or 0) >= 0 else "Списано вручную"
+    return desc or "Операция"
 
 
 # ── Возвраты (Platega cancel) ────────────────────────────────
@@ -2425,27 +2454,98 @@ def _reverse_referral_bonus(payment: dict[str, Any]) -> None:
         pass
 
 
+def _refund_undo_plan(payment: dict[str, Any]) -> dict[str, Any]:
+    """Что отменить при возврате: из grant_info, а для старых платежей — по полям платежа."""
+    info = db.loads(payment.get("grant_info"), None) if payment.get("grant_info") else None
+    if isinstance(info, dict) and info.get("kind"):
+        return info
+    purpose = payment.get("purpose") or "subscription"
+    if purpose == "traffic_reset":
+        return {"kind": "traffic_reset"}
+    if purpose == "devices":
+        return {"kind": "devices", "sub_id": payment.get("subscription_id"),
+                "added_devices": max(1, int(payment.get("extra_devices") or 1))}
+    return {"kind": "extend", "sub_id": payment.get("subscription_id"),
+            "added_seconds": int(fulfillment.DAYS_PER_MONTH * max(1, int(payment.get("months") or 1)) * 86400),
+            "added_devices": 0, "upgraded_trial": False, "legacy": True}
+
+
 def _revoke_subscription_for_payment(payment: dict[str, Any]) -> None:
-    """Отзывает подписку, оплаченную возвращённым платежом (доступ VPN снимается)."""
+    """
+    Отменяет ровно то, что дал возвращённый платёж:
+    - новая подписка → отзывается целиком;
+    - продление → срок уменьшается на купленные дни (и лишние устройства снимаются),
+      а если это был апгрейд пробной — подписка снова становится пробной;
+    - докупка устройств → лимит уменьшается на купленные устройства;
+    - сброс трафика → подписку не трогаем.
+    Если после отмены срок уже закончился — подписка отзывается.
+    """
     try:
-        sub_id = payment.get("subscription_id")
-        if sub_id:
-            db.execute(
-                "UPDATE subscriptions SET status = 'Refunded', expires_at = ? WHERE id = ?",
-                (db.utcnow_iso(), sub_id),
-            )
+        plan = _refund_undo_plan(payment)
+        kind = plan.get("kind")
+        if kind == "traffic_reset":
+            return
+        sub_id = plan.get("sub_id") or payment.get("subscription_id")
+        sub = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (sub_id,)) if sub_id else None
         user = get_user(int(payment["user_id"]))
-        if user:
-            client, rw = _rw_find_user(user)
+        if not sub or not user:
+            return
+        client, rw = _rw_find_user(user)
+        now = utcnow()
+
+        def _revoke_fully() -> None:
+            db.execute("UPDATE subscriptions SET status = 'Refunded', expires_at = ? WHERE id = ?",
+                       (iso(now), sub["id"]))
             if client and rw:
                 try:
                     client.disable_user(_rw_num_id(rw))
                 except Exception:  # noqa: BLE001
                     pass
-            try:
-                sync_user_status_from_subs(int(user["id"]))
-            except Exception:  # noqa: BLE001
-                pass
+
+        if kind == "new":
+            _revoke_fully()
+        elif kind == "devices":
+            new_dev = max(1, int(sub.get("devices_limit") or 1) - int(plan.get("added_devices") or 0))
+            db.execute("UPDATE subscriptions SET devices_limit = ? WHERE id = ?", (new_dev, sub["id"]))
+            if client and rw:
+                try:
+                    client.update_user(id=_rw_num_id(rw), hwid_device_limit=new_dev)
+                except Exception:  # noqa: BLE001
+                    pass
+        else:  # extend
+            cur_exp = parse_iso(sub.get("expires_at")) or now
+            new_exp = cur_exp - timedelta(seconds=int(plan.get("added_seconds") or 0))
+            new_dev = max(1, int(sub.get("devices_limit") or 1) - max(0, int(plan.get("added_devices") or 0)))
+            if new_exp <= now:
+                _revoke_fully()
+            else:
+                to_trial = bool(plan.get("upgraded_trial"))
+                if to_trial:
+                    new_dev = max(1, int(plan.get("prev_devices") or 1))
+                    tr_limit = plan.get("prev_traffic_limit")
+                    tr_limit = int(tr_limit) if tr_limit is not None else fulfillment.trial_traffic_gb()
+                    squads = plan.get("prev_squads_json") or db.dumps(fulfillment.trial_squads())
+                    db.execute(
+                        "UPDATE subscriptions SET expires_at = ?, devices_limit = ?, type = 'trial', "
+                        "traffic_limit = ?, squads_json = ?, status = 'Active' WHERE id = ?",
+                        (iso(new_exp), new_dev, tr_limit, squads, sub["id"]),
+                    )
+                else:
+                    db.execute("UPDATE subscriptions SET expires_at = ?, devices_limit = ? WHERE id = ?",
+                               (iso(new_exp), new_dev, sub["id"]))
+                if client and rw:
+                    patch: dict[str, Any] = {"id": _rw_num_id(rw), "expire_at": new_exp, "hwid_device_limit": new_dev}
+                    if to_trial:
+                        patch["active_internal_squads"] = db.loads(squads, []) or fulfillment.trial_squads()
+                        patch["traffic_limit_bytes"] = int(tr_limit) * fulfillment.GB
+                    try:
+                        client.update_user(**patch)
+                    except Exception:  # noqa: BLE001
+                        pass
+        try:
+            sync_user_status_from_subs(int(user["id"]))
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001
         pass
 
@@ -2464,6 +2564,10 @@ def _finalize_refund(payment_id: str, p: dict[str, Any], admin: dict[str, Any],
     db.execute("UPDATE transactions SET status = 'refunded' WHERE payment_id = ?", (payment_id,))
     _reverse_referral_bonus(p)  # для звёзд (XTR) это no-op — реф. бонус там не начислялся
     _revoke_subscription_for_payment(p)
+    try:
+        services.reverse_tracking_payment(int(p["user_id"]), float(p.get("amount") or 0))
+    except Exception:  # noqa: BLE001
+        pass
     try:
         is_stars = p.get("provider") == "tg_stars"
         amt = p.get("stars") if is_stars else p.get("amount")
@@ -2918,7 +3022,12 @@ def panel_user_action(user_id: int, body: UserActionBody, _: dict = Depends(requ
         new_tg = int(float(value))
         clash = db.fetchone("SELECT id FROM users WHERE telegram_id = ? AND id != ?", (new_tg, user_id))
         if clash:
-            raise HTTPException(409, detail="Этот Telegram ID уже привязан к другому аккаунту")
+            other = get_user(int(clash["id"]))
+            assert other is not None
+            if not body.confirm:
+                raise HTTPException(409, detail={"message": "Этот Telegram ID уже есть у другого аккаунта — аккаунты будут объединены",
+                                                 "merge": merge_preview(user, other)})
+            merge_accounts(user_id, int(other["id"]))
         db.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (new_tg, user_id))
     elif action == "UNBIND_TELEGRAM":
         if not user.get("email"):
@@ -2930,7 +3039,12 @@ def panel_user_action(user_id: int, body: UserActionBody, _: dict = Depends(requ
             raise HTTPException(400, detail="Некорректный email")
         clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (new_email, user_id))
         if clash:
-            raise HTTPException(409, detail="Этот email уже привязан к другому аккаунту")
+            other = get_user(int(clash["id"]))
+            assert other is not None
+            if not body.confirm:
+                raise HTTPException(409, detail={"message": "Этот email уже есть у другого аккаунта — аккаунты будут объединены",
+                                                 "merge": merge_preview(user, other)})
+            merge_accounts(user_id, int(other["id"]))
         db.execute("UPDATE users SET email = ? WHERE id = ?", (new_email, user_id))
     elif action == "UNBIND_EMAIL":
         if not user.get("telegram_id"):
@@ -3306,6 +3420,169 @@ def panel_transfer(user_id: int, body: TransferBody, _: dict = Depends(require_p
         ))
         _notify_user(src, f"🔁 Ваша подписка передана пользователю {_user_label(dst)}.")
     return {"success": True, **plan}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ОБЪЕДИНЕНИЕ АККАУНТОВ
+# Когда к аккаунту привязывают email или Telegram, который уже есть у другого
+# аккаунта, аккаунты объединяются: дни подписок складываются, устройств берётся
+# больше из двух, балансы суммируются, история и рефералы переезжают.
+# Остаётся аккаунт, к которому привязывают (keep); второй (drop) удаляется.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _live_any_sub(user_id: int) -> Optional[dict[str, Any]]:
+    """Действующая подписка (платная или пробная) с оставшимся сроком."""
+    now_iso = iso()
+    return db.fetchone(
+        "SELECT * FROM subscriptions WHERE user_id = ? AND status = 'Active' AND expires_at > ? "
+        "ORDER BY CASE WHEN type = 'trial' THEN 1 ELSE 0 END, expires_at DESC, id DESC LIMIT 1",
+        (user_id, now_iso),
+    )
+
+
+def _sub_left(sub: Optional[dict[str, Any]]) -> timedelta:
+    if not sub:
+        return timedelta(0)
+    exp = parse_iso(sub.get("expires_at"))
+    return max(timedelta(0), (exp - utcnow())) if exp else timedelta(0)
+
+
+def _days_str(td: timedelta) -> str:
+    d = td.total_seconds() / 86400
+    if d <= 0:
+        return "0 дн."
+    return (f"{d:.1f}".rstrip("0").rstrip(".").replace(".", ",")) + " дн."
+
+
+def merge_preview(keep: dict[str, Any], drop: dict[str, Any]) -> dict[str, Any]:
+    """Что произойдёт при объединении — для предупреждения в панели и мини-приложении."""
+    if int(keep["id"]) == int(drop["id"]):
+        raise HTTPException(400, detail={"message": "Это тот же аккаунт"})
+    if drop.get("is_banned"):
+        raise HTTPException(409, detail={"message": "Второй аккаунт заблокирован — объединить нельзя. Напишите в поддержку."})
+    ks, ds = _live_any_sub(int(keep["id"])), _live_any_sub(int(drop["id"]))
+    kl, dl = _sub_left(ks), _sub_left(ds)
+    kd = int((ks or {}).get("devices_limit") or 0)
+    dd = int((ds or {}).get("devices_limit") or 0)
+    total = kl + dl
+    devices = max(kd, dd)
+    fmt_side = lambda s, left, dev: (f"{_days_str(left)}, {dev} {_dev_word(dev)}" if s else "нет подписки")
+    lines = [
+        f"Этот аккаунт: {fmt_side(ks, kl, kd)}",
+        f"Другой аккаунт: {fmt_side(ds, dl, dd)}",
+    ]
+    if ks or ds:
+        lines.append(f"После объединения: {_days_str(total)}, {devices} {_dev_word(devices)}")
+    bal = float(drop.get("balance") or 0) + float(drop.get("partner_balance") or 0)
+    if bal > 0:
+        lines.append(f"Баланс другого аккаунта ({bal:.2f} ₽) перейдёт сюда".replace(".00", ""))
+    # Ссылка на подписку другого аккаунта перестанет работать, если сохраняется ссылка этого
+    link_changes = bool(ks and ds)
+    if link_changes:
+        lines.append("Ссылка на подписку другого аккаунта перестанет работать — в приложении надо будет добавить подписку заново")
+    lines.append("Платежи, история и приглашённые друзья перейдут сюда, другой аккаунт будет удалён")
+    return {
+        "merge": True,
+        "other": {"id": drop["id"], "label": _user_label(drop)},
+        "keep": {"days": round(kl.total_seconds() / 86400, 1), "devices": kd, "has_sub": bool(ks)},
+        "drop": {"days": round(dl.total_seconds() / 86400, 1), "devices": dd, "has_sub": bool(ds)},
+        "result": {"days": round(total.total_seconds() / 86400, 1), "devices": devices},
+        "link_changes": link_changes,
+        "text": "\n".join(lines),
+    }
+
+
+def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
+    """Переносит всё с drop на keep и удаляет drop. Идентификаторы (tg/email) выставляет вызывающий."""
+    keep, drop = get_user(keep_id), get_user(drop_id)
+    if not keep or not drop:
+        raise HTTPException(404, detail={"message": "Пользователь не найден"})
+    preview = merge_preview(keep, drop)
+    now = utcnow()
+    ks, ds = _live_any_sub(keep_id), _live_any_sub(drop_id)
+    client, rw_keep = _rw_find_user(keep)
+    _, rw_drop = _rw_find_user(drop)
+
+    final_sub_id: Optional[int] = None
+    with db.transaction():
+        if ks and ds:
+            new_exp = now + _sub_left(ks) + _sub_left(ds)
+            dev = max(int(ks.get("devices_limit") or 1), int(ds.get("devices_limit") or 1))
+            to_paid = ks.get("type") == "trial" and ds.get("type") != "trial"
+            db.execute(
+                "UPDATE subscriptions SET expires_at = ?, devices_limit = ?, status = 'Active'"
+                + (", type = 'vpn', traffic_limit = ?, squads_json = ?" if to_paid else "") + " WHERE id = ?",
+                ((iso(new_exp), dev, ds.get("traffic_limit"), ds.get("squads_json"), ks["id"]) if to_paid
+                 else (iso(new_exp), dev, ks["id"])),
+            )
+            db.execute("UPDATE subscriptions SET status = 'Deleted', deleted_at = ? WHERE id = ?", (iso(now), ds["id"]))
+            final_sub_id = int(ks["id"])
+        elif ds:
+            # Подписка есть только у второго аккаунта — переезжает целиком
+            db.execute("UPDATE subscriptions SET status = 'Deleted', deleted_at = ? "
+                       "WHERE user_id = ? AND status != 'Deleted'", (iso(now), keep_id))
+            final_sub_id = int(ds["id"])
+        elif ks:
+            final_sub_id = int(ks["id"])
+        # Все строки, привязанные к drop, — на keep (подписки, платежи, история, выводы, опрос…)
+        tables = [r["name"] for r in db.fetchall("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        for t in tables:
+            cols = {c["name"] for c in db.fetchall(f"PRAGMA table_info({t})")}
+            if "user_id" in cols and t != "users":
+                db.execute(f"UPDATE OR IGNORE {t} SET user_id = ? WHERE user_id = ?", (keep_id, drop_id))
+                db.execute(f"DELETE FROM {t} WHERE user_id = ?", (drop_id,))
+        db.execute("UPDATE users SET referred_by = ? WHERE referred_by = ? AND id != ?", (keep_id, drop_id, keep_id))
+        db.execute(
+            "UPDATE users SET balance = balance + ?, partner_balance = partner_balance + ?, "
+            "partner_rate = MAX(partner_rate, ?), is_partner = MAX(is_partner, ?), "
+            "referred_by = COALESCE(referred_by, CASE WHEN ? = id THEN NULL ELSE ? END), "
+            "tracking_code = COALESCE(tracking_code, ?) WHERE id = ?",
+            (float(drop.get("balance") or 0), float(drop.get("partner_balance") or 0),
+             float(drop.get("partner_rate") or 0), int(drop.get("is_partner") or 0),
+             drop.get("referred_by"), drop.get("referred_by"), drop.get("tracking_code"), keep_id),
+        )
+        drop_tg, drop_email = drop.get("telegram_id"), drop.get("email")
+        db.execute("DELETE FROM users WHERE id = ?", (drop_id,))
+        # Аккаунт получает недостающие способы входа второго
+        if drop_tg and not keep.get("telegram_id"):
+            db.execute("UPDATE users SET telegram_id = ?, username = COALESCE(username, ?) WHERE id = ?",
+                       (drop_tg, drop.get("username"), keep_id))
+        if drop_email and not keep.get("email"):
+            db.execute("UPDATE users SET email = ? WHERE id = ?", (drop_email, keep_id))
+
+    # Remnawave: оставляем одного пользователя на итоговую подписку
+    fresh = get_user(keep_id) or keep
+    if client:
+        try:
+            final = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (final_sub_id,)) if final_sub_id else None
+            keep_rw_id = _rw_num_id(rw_keep) if rw_keep else None
+            drop_rw_id = _rw_num_id(rw_drop) if rw_drop else None
+            if final and ds and not ks and drop_rw_id and not keep_rw_id:
+                # Подписка и её ссылка — у второго аккаунта: переводим его пользователя Remnawave на этот
+                patch: dict[str, Any] = {"id": drop_rw_id, "description": str(keep_id)}
+                if fresh.get("telegram_id"):
+                    patch["telegram_id"] = int(fresh["telegram_id"])
+                if fresh.get("email"):
+                    patch["email"] = fresh["email"]
+                client.update_user(**patch)
+            else:
+                if drop_rw_id and drop_rw_id != keep_rw_id:
+                    client.delete_user(drop_rw_id)
+                if final and keep_rw_id:
+                    client.update_user(id=keep_rw_id, expire_at=parse_iso(final["expires_at"]),
+                                       hwid_device_limit=int(final.get("devices_limit") or 1), status="ACTIVE",
+                                       email=fresh.get("email") or None)
+                elif final and not keep_rw_id:
+                    _rw_sync_expiry(fresh)
+        except Exception as exc:  # noqa: BLE001
+            forum.report_error("Объединение аккаунтов: не удалось обновить Remnawave",
+                               f"keep={keep_id} drop={drop_id}: {type(exc).__name__}: {exc}")
+    sync_user_status_from_subs(keep_id)
+    try:
+        forum.send("errors", f"🔗 Аккаунты объединены: #{drop_id} → {forum.user_link(keep_id)}")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"merged": True, **preview}
 
 
 @app.post("/api/panel/users/mass-action")
@@ -4605,8 +4882,11 @@ def app_me_email_request(body: UpdateEmailBody, user: dict = Depends(_app_user_f
     if not _valid_email(email):
         raise HTTPException(400, detail={"message": "Введите корректный email"})
     clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
+    merge = None
     if clash:
-        raise HTTPException(409, detail={"message": "Этот email уже используется"})
+        other = get_user(int(clash["id"]))
+        if other:
+            merge = merge_preview(get_user(int(user["id"])) or user, other)  # бросит 409, если объединить нельзя
 
     allowed, retry = ratelimit.rate_limit(f"emailbind:{user['id']}", 3, 300)
     if allowed:
@@ -4620,9 +4900,21 @@ def app_me_email_request(body: UpdateEmailBody, user: dict = Depends(_app_user_f
     if not throttled:
         send_login_code(email, code)
     resp: dict[str, Any] = {"ok": True, "throttled": throttled, "resend_after": EMAIL_CODE_RESEND}
+    if merge:
+        resp["merge"] = merge  # мини-приложение покажет предупреждение об объединении
     if ENV != "production" and not mailer.is_configured():
         resp["dev_code"] = code
     return resp
+
+
+@app.post("/api/app/me/terms")
+def app_me_accept_terms(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
+    """Согласие с офертой и политикой конфиденциальности (обязательно при первом входе)."""
+    db.execute("UPDATE users SET terms_accepted_at = COALESCE(terms_accepted_at, ?) WHERE id = ?",
+               (iso(), user["id"]))
+    fresh = get_user(int(user["id"]))
+    assert fresh is not None
+    return {"user": serialize_app_user(fresh)}
 
 
 @app.put("/api/app/me/email")
@@ -4632,15 +4924,21 @@ def app_me_email(body: EmailVerifyBody, user: dict = Depends(_app_user_from_init
     if not _valid_email(email):
         raise HTTPException(400, detail={"message": "Некорректный email"})
     _email_verify_limits(email, None)
+    clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
+    other = get_user(int(clash["id"])) if clash else None
+    if other and not body.merge:
+        # Код не тратим: сначала пользователь должен согласиться на объединение
+        raise HTTPException(409, detail={"message": "Этот email уже есть у другого аккаунта",
+                                         "merge": merge_preview(get_user(int(user["id"])) or user, other)})
     if not verify_email_code(email, body.code or ""):
         raise HTTPException(401, detail={"message": "Неверный или истёкший код"})
-    clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
-    if clash:
-        raise HTTPException(409, detail={"message": "Этот email уже используется"})
+    merged = None
+    if other:
+        merged = merge_accounts(int(user["id"]), int(other["id"]))
     db.execute("UPDATE users SET email = ? WHERE id = ?", (email, user["id"]))
     fresh = get_user(int(user["id"]))
     assert fresh is not None
-    return {"user": serialize_app_user(fresh)}
+    return {"user": serialize_app_user(fresh), "merged": merged}
 
 
 @app.delete("/api/app/me/email")
@@ -4656,15 +4954,22 @@ def app_me_email_unbind(user: dict = Depends(_app_user_from_init)) -> dict[str, 
 
 
 @app.put("/api/app/me/telegram")
-def app_me_telegram(body: OauthBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Привязать/изменить Telegram (веб-вход). Отвязать нельзя."""
+def app_me_telegram(body: OauthBody, merge: bool = Query(False),
+                    user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
+    """Привязать/изменить Telegram (веб-вход). Отвязать нельзя.
+    Если этот Telegram уже есть у другого аккаунта — 409 с предупреждением, а с ?merge=1 аккаунты объединяются."""
     validated = validate_oauth_login(body.model_dump())
     new_tg = int(validated.get("id") or 0)
     if not new_tg:
         raise HTTPException(400, detail={"message": "Нет Telegram id"})
     clash = db.fetchone("SELECT id FROM users WHERE telegram_id = ? AND id != ?", (new_tg, user["id"]))
     if clash:
-        raise HTTPException(409, detail={"message": "Этот Telegram уже привязан к другому аккаунту"})
+        other = get_user(int(clash["id"]))
+        assert other is not None
+        if not merge:
+            raise HTTPException(409, detail={"message": "Этот Telegram уже есть у другого аккаунта",
+                                             "merge": merge_preview(get_user(int(user["id"])) or user, other)})
+        merge_accounts(int(user["id"]), int(other["id"]))
     db.execute(
         "UPDATE users SET telegram_id = ?, username = COALESCE(?, username) WHERE id = ?",
         (new_tg, validated.get("username"), user["id"]),
@@ -4783,6 +5088,8 @@ def app_activate_trial(user: dict = Depends(require_channel_dep)) -> dict[str, A
         raise HTTPException(429, detail={"message": f"Слишком часто. Повторите через {retry} сек."})
     fresh = get_user(int(user["id"]))
     assert fresh is not None
+    if not fresh.get("terms_accepted_at"):
+        raise HTTPException(403, detail={"message": "Сначала примите условия оферты и политику конфиденциальности"})
     if not trial_enabled():
         raise HTTPException(403, detail={"message": "Пробный период сейчас недоступен"})
     if not fresh.get("telegram_id"):
@@ -4847,6 +5154,10 @@ def app_subscription_applink(
             raise HTTPException(503, detail={"message": "Модуль шифрования недоступен"})
         try:
             link = applinks.build_link(which, sub_url, name="BlinVPN")
+            if which == "happ" and link.startswith("happ://add/") and getattr(applinks, "LAST_HAPP_ERROR", None):
+                forum.report_error("Happ: сервис шифрования недоступен — выдана ссылка без шифрования",
+                                   str(applinks.LAST_HAPP_ERROR))
+                applinks.LAST_HAPP_ERROR = None
         except Exception as exc:  # noqa: BLE001
             forum.report_error(f"Не удалось сформировать ссылку {which}", f"{type(exc).__name__}: {exc}")
             raise HTTPException(502, detail={"message": "Не удалось сформировать ссылку. Попробуйте ещё раз или выберите «Другое приложение»."})
@@ -4943,15 +5254,17 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
         sub = None
         if body.subscription_id:
             sub = db.fetchone(
-                "SELECT expires_at FROM subscriptions WHERE id = ? AND user_id = ?",
+                "SELECT expires_at, type FROM subscriptions WHERE id = ? AND user_id = ?",
                 (body.subscription_id, user["id"]),
             )
         if not sub:
             sub = db.fetchone(
-                "SELECT expires_at FROM subscriptions WHERE user_id = ? AND status = 'Active' "
+                "SELECT expires_at, type FROM subscriptions WHERE user_id = ? AND status = 'Active' "
                 "ORDER BY id DESC LIMIT 1",
                 (user["id"],),
             )
+        if sub and sub.get("type") == "trial":
+            raise HTTPException(400, detail={"message": "В пробной подписке докупить устройства нельзя — сначала оформите подписку"})
         exp = parse_iso(sub.get("expires_at")) if sub else None
         remaining_days = (exp - utcnow()).total_seconds() / 86400.0 if exp else 0
         if remaining_days <= 0:
@@ -4977,6 +5290,8 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
 
     # Скидка (сброс трафика скидкой не облагается). Промо/акция + бонус за опрос
     # суммируются.
+    full_price = round(float(price), 2)
+    percent = 0.0
     if purpose != "traffic_reset":
         percent = float(effective_discount(int(user["id"]))["percent"])
         if percent > 0:
@@ -4984,7 +5299,7 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
             stars = int(discounted(stars, percent))
 
     return {"price": round(float(price), 2), "stars": int(stars), "months": months,
-            "extra": extra, "purpose": purpose}
+            "extra": extra, "purpose": purpose, "full_price": full_price, "discount_percent": percent}
 
 
 def _referral_preview(user_id: int, price: float, method: str, use_ref: bool) -> dict[str, Any]:
@@ -5014,6 +5329,8 @@ def app_payment_quote(body: CreatePaymentBody, user: dict = Depends(_app_user_fr
         "purpose": q["purpose"],
         "price": q["price"],
         "stars": q["stars"],
+        "full_price": q.get("full_price"),
+        "discount_percent": q.get("discount_percent") or 0,
         "referral_applied": prev["referral_applied"],
         "charge": 0 if is_stars else prev["charge"],
         "provider_min": prev["provider_min"],
@@ -5028,6 +5345,8 @@ def app_payment_create(body: CreatePaymentBody, user: dict = Depends(require_cha
     if not allowed:
         raise HTTPException(429, detail={"message": f"Слишком часто. Повторите через {retry} сек."})
 
+    if not user.get("terms_accepted_at"):
+        raise HTTPException(403, detail={"message": "Сначала примите условия оферты и политику конфиденциальности"})
     q = _compute_order_price(user, body)
     price = q["price"]
     stars = q["stars"]
@@ -5423,11 +5742,92 @@ def app_withdraw(body: WithdrawBody, user: dict = Depends(require_channel_dep)) 
 
 @app.get("/api/app/history")
 def app_history(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
+    uid = int(user["id"])
     items = db.fetchall(
-        "SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC, id DESC",
-        (user["id"],),
+        # Только проведённые операции и возвраты: неоплаченные/отменённые платежи не показываем
+        "SELECT t.*, p.purpose AS p_purpose, p.method AS p_method, p.provider AS p_provider, "
+        "p.stars AS p_stars, p.amount AS p_amount, p.extra_devices AS p_extra, p.grant_info AS p_grant, "
+        "p.id AS p_id FROM transactions t "
+        "LEFT JOIN payments p ON p.payment_id = t.payment_id AND p.user_id = t.user_id "
+        "WHERE t.user_id = ? AND t.status IN ('completed', 'refunded') "
+        "ORDER BY t.created_at DESC, t.id DESC",
+        (uid,),
     )
-    return {"items": [serialize_transaction(tx) for tx in items]}
+    # Самая первая оплата подписки — «Покупка», все следующие — «Продление»
+    first = db.fetchone(
+        "SELECT MIN(id) AS id FROM payments WHERE user_id = ? AND purpose IN ('subscription', 'extend') "
+        "AND status IN ('paid', 'completed', 'refunded')", (uid,))
+    first_id = (first or {}).get("id")
+    out = [_history_item(tx, first_id) for tx in items]
+    # Выводы реферальных средств (отклонённые не показываем — деньги остались на балансе)
+    wd_status = {"pending": "на рассмотрении", "approved": "одобрен, ждёт перевода", "completed": "выплачено"}
+    for w in db.fetchall("SELECT * FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'approved', 'completed')", (uid,)):
+        out.append({
+            "id": f"w{w['id']}", "title": "Вывод средств", "method": wd_status.get(w["status"], ""),
+            "amount": round(float(w.get("amount") or 0), 2), "stars": None, "direction": "out",
+            "status": "completed", "created_at": w.get("created_at"),
+            "payment_method": "withdrawal", "description": "Вывод средств",
+        })
+    out.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    return {"items": out}
+
+
+_HISTORY_METHOD = {"sbp": "СБП", "card": "картой", "sberpay": "SberPay", "tg_stars": "звёздами",
+                   "stars": "звёздами", "balance": "с реф. баланса", "crypto": "криптой"}
+
+
+def _history_item(tx: dict[str, Any], first_sub_payment_id: Any = None) -> dict[str, Any]:
+    """
+    Строка истории для мини-приложения. Названия — только из списка:
+    Покупка подписки / Продление подписки / Покупка устройства (3 → 4) / Сброс трафика /
+    Начисление баланса / Списание баланса / Вывод средств / Бонус за друга.
+    Покупки — расход (−), бонусы и начисления — доход (+).
+    """
+    method = str(tx.get("payment_method") or "")
+    amount = float(tx.get("amount") or 0)
+    stars = None
+    if tx.get("p_purpose"):  # операция связана с нашим платежом
+        purpose = str(tx["p_purpose"])
+        if purpose == "devices":
+            g = db.loads(tx.get("p_grant"), {}) if tx.get("p_grant") else {}
+            before, after = (g or {}).get("devices_before"), (g or {}).get("devices_after")
+            if before and after:
+                title = f"Покупка устройства ({before} → {after})"
+            else:
+                n = int(tx.get("p_extra") or 1)
+                title = f"Покупка устройства (+{n})"
+        elif purpose == "traffic_reset":
+            title = "Сброс трафика"
+        else:
+            # Оплата с реф. баланса и увеличение устройств при продлении — всё равно подписка
+            title = "Покупка подписки" if tx.get("p_id") == first_sub_payment_id else "Продление подписки"
+        pm = str(tx.get("p_method") or tx.get("p_provider") or "")
+        sub = _HISTORY_METHOD["balance"] if tx.get("p_provider") == "balance" else _HISTORY_METHOD.get(pm.lower(), "")
+        if pm == "tg_stars" and tx.get("p_stars"):
+            stars = int(tx["p_stars"])
+        amount = -abs(float(tx.get("p_amount") if tx.get("p_amount") is not None else amount))
+        direction = "out"
+    elif method == "referral":
+        title, sub, direction = "Бонус за друга", "", "in"
+    elif method == "referral_reversal":
+        title, sub, direction = "Бонус за друга", "отменён: друг вернул оплату", "out"
+    elif amount >= 0:
+        title, sub, direction = "Начисление баланса", "", "in"
+    else:
+        title, sub, direction = "Списание баланса", "", "out"
+    return {
+        "id": tx["id"],
+        "title": title,
+        "method": sub,
+        "amount": round(abs(amount), 2),
+        "stars": stars,
+        "direction": direction,
+        "status": tx.get("status"),
+        "created_at": tx.get("created_at"),
+        # старые поля — на случай старой версии мини-приложения в кэше
+        "payment_method": tx.get("payment_method"),
+        "description": title,
+    }
 
 
 

@@ -352,7 +352,7 @@ def grant_trial(user: dict[str, Any]) -> dict[str, Any]:
     панели, по умолчанию 3 дня, 5 ГБ, 1 устройство), сброс «Ежемесячно».
     Вызывающий обязан проверить, что триал ещё не использовался и что он включён.
     """
-    telegram_id = int(user["telegram_id"])
+    telegram_id = int(user["telegram_id"]) if user.get("telegram_id") else None
     t_days, t_gb, t_dev = trial_days(), trial_traffic_gb(), trial_devices()
     new_exp = utcnow() + timedelta(days=t_days)
     prov = provisioning.provision(
@@ -461,7 +461,8 @@ def grant_subscription(
     """
     months = max(1, int(months or 1))
     added_days = DAYS_PER_MONTH * months
-    telegram_id = int(user["telegram_id"])
+    # У вошедших только по почте (сайт) Telegram нет — Remnawave найдёт их по email.
+    telegram_id = int(user["telegram_id"]) if user.get("telegram_id") else None
     username = user.get("username")
     email = user.get("email")
 
@@ -489,6 +490,9 @@ def grant_subscription(
             "expires_at": sub.get("expires_at"),
             "devices": new_devices,
             "remnawave": prov,
+            "undo": {"kind": "devices", "sub_id": sub["id"],
+                     "added_devices": new_devices - int(sub.get("devices_limit") or 1),
+                     "devices_before": int(sub.get("devices_limit") or 1), "devices_after": new_devices},
         }
 
     # Найти целевую подписку для продления (та же логика, что и в ценообразовании).
@@ -501,6 +505,7 @@ def grant_subscription(
         if base < utcnow():
             base = utcnow()
         new_exp = base + timedelta(days=added_days)
+        prev_devices = int(target.get("devices_limit") or 1)
         # При апгрейде с триала HWID берём именно оплаченный (а не max со старым=1).
         new_devices = total_devices if upgrading_trial else max(int(target.get("devices_limit") or 1), total_devices)
         new_devices = max(1, new_devices)
@@ -524,6 +529,16 @@ def grant_subscription(
             "expires_at": iso(new_exp),
             "devices": new_devices,
             "remnawave": prov,
+            # Для возврата: сколько времени и устройств добавил именно этот платёж,
+            # и в каком состоянии была пробная подписка до апгрейда.
+            "undo": {"kind": "extend", "sub_id": target["id"],
+                     "added_seconds": int((new_exp - base).total_seconds()),
+                     "added_devices": new_devices - prev_devices,
+                     "upgraded_trial": bool(upgrading_trial),
+                     "prev_devices": prev_devices,
+                     "prev_expires_at": target.get("expires_at"),
+                     "prev_traffic_limit": target.get("traffic_limit"),
+                     "prev_squads_json": target.get("squads_json")},
         }
 
     # Новая подписка (нет ни платной, ни триала).
@@ -542,6 +557,7 @@ def grant_subscription(
         "expires_at": sub.get("expires_at"),
         "devices": int(sub.get("devices_limit") or total_devices),
         "remnawave": prov,
+        "undo": {"kind": "new", "sub_id": sub["id"]},
     }
 
 
@@ -640,9 +656,10 @@ def fulfill_payment(
     now = db.utcnow_iso()
     db.execute(
         "UPDATE payments SET status = 'paid', paid_at = ?, subscription_id = ?, "
-        "provider_payment_id = COALESCE(?, provider_payment_id) "
+        "provider_payment_id = COALESCE(?, provider_payment_id), grant_info = ? "
         "WHERE payment_id = ? AND status = 'processing'",
-        (now, grant.get("subscription_id"), provider_payment_id or stars_charge_id, payment_id),
+        (now, grant.get("subscription_id"), provider_payment_id or stars_charge_id,
+         db.dumps(grant.get("undo") or {"kind": _purpose}), payment_id),
     )
     db.execute(
         "UPDATE transactions SET status = 'completed' WHERE payment_id = ?",

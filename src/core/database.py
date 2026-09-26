@@ -607,6 +607,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         },
         "users": {
             "tracking_code": "ALTER TABLE users ADD COLUMN tracking_code TEXT",
+            # Когда пользователь принял оферту и политику конфиденциальности (при первом входе).
+            "terms_accepted_at": "ALTER TABLE users ADD COLUMN terms_accepted_at TEXT",
             "first_start_at": "ALTER TABLE users ADD COLUMN first_start_at TEXT",
             # Кэш проверки обязательной подписки на канал (Telegram-вход).
             "channel_ok": "ALTER TABLE users ADD COLUMN channel_ok INTEGER NOT NULL DEFAULT 0",
@@ -631,6 +633,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             # (чтобы после закрытия/перезагрузки приложения показать «Оплата прошла»).
             "return_to": "ALTER TABLE payments ADD COLUMN return_to TEXT",
             "result_seen_at": "ALTER TABLE payments ADD COLUMN result_seen_at TEXT",
+            # Что именно выдал платёж (для частичной отмены при возврате).
+            "grant_info": "ALTER TABLE payments ADD COLUMN grant_info TEXT",
         },
         "withdrawals": {
             "forum_chat_id": "ALTER TABLE withdrawals ADD COLUMN forum_chat_id TEXT",
