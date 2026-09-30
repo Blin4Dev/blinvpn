@@ -443,7 +443,8 @@ def _is_placeholder(cfgs: list[Any]) -> bool:
     return total > 0 and total == fake
 
 
-def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -> list[dict[str, Any]]:
+def _fetch_cfgs(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -> list[Any]:
+    """сырой xray json от xbm (список конфигов)."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", short_uuid or ""):
         raise XbmError("Неверная ссылка подписки")
     headers = {"User-Agent": ua}
@@ -460,8 +461,12 @@ def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -
         raise XbmError("XBM вернул не Xray JSON — проверьте Response Rules в Remnawave", 502)
     if not isinstance(cfgs, list):
         cfgs = [cfgs]
-    if _is_placeholder(cfgs):
-        raise XbmError("Remnawave отдала заглушку (лимит устройств, подписка неактивна или нужен HWID) — выберите другого пользователя", 409)
+    if not any(isinstance(c, dict) and isinstance(c.get("outbounds"), list) for c in cfgs):
+        raise XbmError("XBM вернул не Xray JSON — проверьте Response Rules в Remnawave", 502)
+    return cfgs
+
+
+def _locations_from_cfgs(cfgs: list[Any]) -> list[dict[str, Any]]:
     out = []
     for c in cfgs:
         if not isinstance(c, dict):
@@ -483,6 +488,40 @@ def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -
             "reserve": reserve,
         })
     return out
+
+
+def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -> list[dict[str, Any]]:
+    cfgs = _fetch_cfgs(short_uuid, ua=ua, hwid=hwid)
+    if _is_placeholder(cfgs):
+        raise XbmError("Remnawave отдала заглушку (лимит устройств, подписка неактивна или нужен HWID) — выберите другого пользователя", 409)
+    return _locations_from_cfgs(cfgs)
+
+
+def check_xray_json(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -> dict[str, Any]:
+    """проверка response rules: достаточно валидного xray json (заглушка тоже ок)."""
+    cfgs = _fetch_cfgs(short_uuid, ua=ua, hwid=hwid)
+    locs = [] if _is_placeholder(cfgs) else _locations_from_cfgs(cfgs)
+    return {
+        "ok": True,
+        "placeholder": _is_placeholder(cfgs),
+        "servers": sum(len(l.get("servers") or []) for l in locs[:1]),
+    }
+
+
+def sample_subscriptions(limit: int = 8) -> list[dict[str, Any]]:
+    """активные подписки для проверки (свежие первые)."""
+    rows = db.fetchall(
+        "SELECT id, user_id, short_uuid FROM subscriptions "
+        "WHERE status = 'Active' AND short_uuid IS NOT NULL AND short_uuid != '' "
+        "ORDER BY id DESC LIMIT ?",
+        (max(1, min(int(limit), 20)),),
+    ) or []
+    return [dict(r) for r in rows]
+
+
+def sample_short_uuid() -> Optional[str]:
+    rows = sample_subscriptions(1)
+    return str(rows[0]["short_uuid"]) if rows else None
 
 
 # очередь заданий host_runner (data/host/jobs → results)
@@ -540,12 +579,6 @@ def job_result(jid: str) -> dict[str, Any]:
     except (OSError, ValueError):
         return {"id": jid, "status": "running", "log": []}
     return {k: data.get(k) for k in ("id", "status", "log", "result", "error", "started_at", "finished_at")}
-
-
-def sample_short_uuid() -> Optional[str]:
-    r = db.fetchone("SELECT short_uuid FROM subscriptions WHERE status = 'Active' AND short_uuid IS NOT NULL "
-                    "AND short_uuid != '' ORDER BY id DESC LIMIT 1")
-    return str(r["short_uuid"]) if r else None
 
 
 def response_rules_text() -> str:

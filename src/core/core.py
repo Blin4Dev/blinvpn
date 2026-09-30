@@ -7408,19 +7408,46 @@ def panel_xbm_rules(_: dict = Depends(require_owner)) -> dict[str, Any]:
 
 @app.post("/api/panel/xbm/check")
 def panel_xbm_check(_: dict = Depends(require_owner)) -> dict[str, Any]:
-    """проверка response rules: xbm отдаёт xray json."""
+    """проверка response rules: xbm отдаёт xray json (заглушка тоже ok)."""
     if not xbm.health().get("running"):
         raise HTTPException(409, detail={"message": "XBM не запущен"})
-    su = xbm.sample_short_uuid()
-    if not su:
+    subs = xbm.sample_subscriptions(8)
+    if not subs:
         raise HTTPException(409, detail={"message": "Нет ни одной активной подписки — проверьте позже"})
-    try:
-        locs = xbm.preview(su)
-    except xbm.XbmError as e:
-        raise HTTPException(e.status, detail={"message": e.message})
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, detail={"message": f"XBM недоступен: {type(exc).__name__}"})
-    return {"ok": True, "servers": sum(len(l.get("servers") or []) for l in locs[:1])}
+
+    def _hwid_for(user_id: int) -> Optional[str]:
+        user = get_user(int(user_id))
+        try:
+            client, rw = _rw_find_user(user) if user else (None, None)
+            if not client or not rw:
+                return None
+            raw = unwrap_rw(client.get_user_hwid_devices(_rw_num_id(rw)))
+            items = raw.get("devices") if isinstance(raw, dict) else raw
+            if items:
+                return str((items[0] or {}).get("hwid") or "") or None
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    last_err: Optional[xbm.XbmError] = None
+    for sub in subs:
+        su = str(sub.get("short_uuid") or "")
+        hwid = _hwid_for(int(sub["user_id"])) if sub.get("user_id") is not None else None
+        try:
+            return xbm.check_xray_json(su, hwid=hwid)
+        except xbm.XbmError as e:
+            last_err = e
+            if e.status == 429:
+                raise HTTPException(429, detail={"message": e.message})
+            # не json / не xray — rules точно не те, дальше пробовать бессмысленно
+            if e.status == 502 and "не Xray JSON" in (e.message or ""):
+                raise HTTPException(502, detail={"message": e.message})
+            continue
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, detail={"message": f"XBM недоступен: {type(exc).__name__}"})
+    if last_err:
+        raise HTTPException(last_err.status, detail={"message": last_err.message})
+    raise HTTPException(502, detail={"message": "XBM недоступен"})
 
 
 def _xbm_sync_loop() -> None:
