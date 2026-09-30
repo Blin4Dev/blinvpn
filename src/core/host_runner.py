@@ -133,13 +133,58 @@ def xbm_port() -> str:
     return p if p.isdigit() else "4100"
 
 
-def http_get(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 10) -> tuple[int, dict[str, str], bytes]:
+def http_get(
+    url: str,
+    headers: Optional[dict[str, str]] = None,
+    timeout: float = 10,
+    *,
+    insecure: bool = False,
+) -> tuple[int, dict[str, str], bytes]:
     req = urllib.request.Request(url, headers=headers or {})
+    ctx = None
+    if insecure and url.lower().startswith("https:"):
+        import ssl
+        ctx = ssl._create_unverified_context()  # проверка x-xbm, не публичного сертификата
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:  # noqa: S310
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read(4 * 1024 * 1024)
     except urllib.error.HTTPError as e:
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, b""
+
+
+def _probe_sub_headers(job: Job, ng: str, dom: str, tok: str) -> tuple[int, dict[str, str]]:
+    """убедиться что подписка идёт через xbm (заголовок x-xbm). сертификат не важен."""
+    try:
+        code, hdr, _ = http_get(f"https://{dom}/{tok}", {"User-Agent": "Happ/1.0"}, timeout=20, insecure=True)
+        if code:
+            return code, hdr
+    except Exception as exc:  # noqa: BLE001
+        job.log(f"публичный https: {type(exc).__name__}: {exc}")
+    # запасной путь: спросить nginx изнутри контейнера
+    for args in (
+        ["curl", "-skI", "--max-time", "15", "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
+        ["curl", "-sI", "--max-time", "15", "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"http://127.0.0.1/{tok}"],
+    ):
+        try:
+            p = subprocess.run(["docker", "exec", ng, *args], capture_output=True, text=True, timeout=25)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            job.log(f"probe nginx: {type(exc).__name__}: {exc}")
+            continue
+        if p.returncode != 0 and not p.stdout:
+            continue
+        code, hdr = 0, {}
+        for line in (p.stdout or "").splitlines():
+            if not code:
+                m = re.match(r"HTTP/\S+\s+(\d+)", line.strip())
+                if m:
+                    code = int(m.group(1))
+                continue
+            if ":" in line:
+                k, _, v = line.partition(":")
+                hdr[k.strip().lower()] = v.strip()
+        if code:
+            return code, hdr
+    return 0, {}
 
 
 def xbm_healthy() -> bool:
@@ -342,11 +387,7 @@ def act_xbm_connect(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     if tok:
         time.sleep(2)
         job.log("Проверяю подписку через nginx…")
-        try:
-            code, hdr, _ = http_get(f"https://{dom}/{tok}", {"User-Agent": "Happ/1.0"}, timeout=20)
-        except Exception as exc:  # noqa: BLE001
-            code, hdr = 0, {}
-            job.log(f"{type(exc).__name__}: {exc}")
+        code, hdr = _probe_sub_headers(job, ng, dom, tok)
         if code == 429:
             job.log("XBM ограничил частоту запросов — значит, nginx до него достучался")
         elif code != 200 or "x-xbm" not in hdr:
