@@ -71,14 +71,14 @@ const PAGE_PATHS: Record<string, string> = {
   'Рассылка': '/mailing', 'Промокоды': '/promocodes', 'Акции': '/promotions', 'Ссылки': '/links',
   'Мониторинг': '/monitoring', 'Балансировщик': '/balancer', 'Настройки': '/settings', 'Сотрудники': '/staff', 'Зарплата': '/salary',
 };
-export const SETTINGS_TABS = ['prices', 'antiabuse', 'offer', 'privacy', 'squads', 'mail', 'forum', 'backups', 'storage'] as const;
+export const SETTINGS_TABS = ['price', 'antiabuse', 'offer', 'privacy', 'squads', 'mail', 'forum', 'backups', 'storage'] as const;
 export type SettingsTab = typeof SETTINGS_TABS[number];
 
 type Route = { page: string; userId: number | null; nodeId: number | null; tab: SettingsTab; chatId?: number | null };
 
 export function parseRoute(pathname: string, search: string): Route {
   const path = pathname.replace(/\/+$/, '') || '/';
-  const base: Route = { page: 'Главная', userId: null, nodeId: null, tab: 'prices' };
+  const base: Route = { page: 'Главная', userId: null, nodeId: null, tab: 'price' };
   const u = path.match(/^\/users\/(\d+)$/);
   if (u) return { ...base, page: 'Пользователи', userId: Number(u[1]) };
   const sc = path.match(/^\/support(?:\/(\d+|team))?$/);
@@ -92,7 +92,9 @@ export function parseRoute(pathname: string, search: string): Route {
   if (path === '/settings/xbm') return { ...base, page: 'Балансировщик' };
   const st = path.match(/^\/settings(?:\/([a-z]+))?$/);
   if (st) {
-    const tab = (SETTINGS_TABS as readonly string[]).includes(st[1] || '') ? (st[1] as SettingsTab) : 'prices';
+    // /settings и старый /settings/prices → цены
+    const raw = st[1] === 'prices' ? 'price' : (st[1] || 'price');
+    const tab = (SETTINGS_TABS as readonly string[]).includes(raw) ? (raw as SettingsTab) : 'price';
     return { ...base, page: 'Настройки', tab };
   }
   const page = Object.keys(PAGE_PATHS).find((k) => PAGE_PATHS[k] === path);
@@ -103,7 +105,7 @@ export function buildPath(r: Route): string {
   if (r.userId != null) return `/users/${r.userId}`;
   if (r.page === 'Мониторинг' && r.nodeId != null) return `/monitoring?node=${r.nodeId}`;
   if (r.page === 'Поддержка' && r.chatId != null) return r.chatId === 0 ? '/support/team' : `/support/${r.chatId}`;
-  if (r.page === 'Настройки') return r.tab === 'prices' ? '/settings' : `/settings/${r.tab}`;
+  if (r.page === 'Настройки') return `/settings/${r.tab}`;
   return PAGE_PATHS[r.page] || '/';
 }
 

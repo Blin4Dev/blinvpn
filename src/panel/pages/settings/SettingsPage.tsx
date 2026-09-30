@@ -12,11 +12,11 @@ import { PricesSettingsTab } from './PricesTab';
 import { SquadsPage } from './SquadsTab';
 import { StorageSettingsTab } from './StorageTab';
 
-export type Tab = 'prices' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'backups' | 'forum' | 'storage';
+export type Tab = 'price' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'backups' | 'forum' | 'storage';
 
 // разделы настроек (подменю в сайдбаре)
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
-  { id: 'prices', icon: DollarSign, label: 'Цены' },
+  { id: 'price', icon: DollarSign, label: 'Цены' },
   { id: 'antiabuse', icon: ShieldAlert, label: 'Анти-абуз' },
   { id: 'offer', icon: FileText, label: 'Оферта' },
   { id: 'privacy', icon: Shield, label: 'Конфиденциальность' },
@@ -29,7 +29,7 @@ export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: strin
 
 export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void; tab: Tab; onTab?: (t: Tab) => void }> = ({ onToast, tab }) => (
   <div style={{ maxWidth: 980 }}>
-    {tab === 'prices' && <PricesSettingsTab onToast={onToast} />}
+    {tab === 'price' && <PricesSettingsTab onToast={onToast} />}
     {tab === 'antiabuse' && <AntiAbuseSettingsTab onToast={onToast} />}
     {tab === 'offer' && <LegalSettingsTab kind="offer" title="Договор оферты" onToast={onToast} />}
     {tab === 'privacy' && <LegalSettingsTab kind="privacy" title="Политика конфиденциальности" onToast={onToast} />}
