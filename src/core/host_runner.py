@@ -164,6 +164,23 @@ def _nginx_reaches_xbm(ng: str, xbm_target: str) -> bool:
     return False
 
 
+def _nginx_https_port(ng: str) -> int:
+    """порт 443 на хосте у контейнера nginx (или 443 при network_mode=host)."""
+    netmode = subprocess.run(
+        ["docker", "inspect", "-f", "{{.HostConfig.NetworkMode}}", ng],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if netmode == "host":
+        return 443
+    p = subprocess.run(
+        ["docker", "inspect", "-f",
+         '{{with (index .NetworkSettings.Ports "443/tcp")}}{{(index . 0).HostPort}}{{end}}', ng],
+        capture_output=True, text=True,
+    )
+    port = (p.stdout or "").strip()
+    return int(port) if port.isdigit() else 443
+
+
 def _parse_curl_headers(stdout: str) -> tuple[int, dict[str, str]]:
     code, hdr = 0, {}
     for line in (stdout or "").splitlines():
@@ -172,34 +189,79 @@ def _parse_curl_headers(stdout: str) -> tuple[int, dict[str, str]]:
             if m:
                 code = int(m.group(1))
             continue
+        # конец заголовков
+        if not line.strip():
+            break
         if ":" in line:
             k, _, v = line.partition(":")
             hdr[k.strip().lower()] = v.strip()
     return code, hdr
 
 
+def _probe_via_python(dom: str, tok: str, port: int) -> tuple[int, dict[str, str]]:
+    """get на 127.0.0.1 с sni=host домена (без зависимости от curl в контейнере)."""
+    import socket
+    import ssl
+
+    req = (
+        f"GET /{tok} HTTP/1.1\r\n"
+        f"Host: {dom}\r\n"
+        f"User-Agent: Happ/1.0\r\n"
+        f"Connection: close\r\n\r\n"
+    ).encode()
+    ctx = ssl._create_unverified_context()
+    with socket.create_connection(("127.0.0.1", port), timeout=15) as sock:
+        with ctx.wrap_socket(sock, server_hostname=dom) as ssock:
+            ssock.sendall(req)
+            chunks: list[bytes] = []
+            while True:
+                buf = ssock.recv(65536)
+                if not buf:
+                    break
+                chunks.append(buf)
+                if len(b"".join(chunks)) > 256 * 1024:
+                    break
+    raw = b"".join(chunks).decode("latin-1", "replace")
+    head = raw.split("\r\n\r\n", 1)[0]
+    return _parse_curl_headers(head)
+
+
 def _probe_sub_headers(job: Job, ng: str, dom: str, tok: str, xbm_target: str) -> tuple[int, dict[str, str]]:
-    """проверка через сам remnawave-nginx (не публичный dns/ssl — там часто чужой vhost)."""
-    job.log(f"проверка через {ng}, Host={dom}, xbm={xbm_target}")
-    probes = (
+    """проверка: sni/host = домен подписки, коннект на 127.0.0.1 (не публичный dns)."""
+    port = _nginx_https_port(ng)
+    job.log(f"проверка через {ng}, Host={dom}, xbm={xbm_target}, порт={port}")
+    hostport = f"{dom}:{port}" if port != 443 else dom
+    url = f"https://{hostport}/{tok}"
+    probes: list[list[str]] = [
+        # с хоста: --resolve подставляет ip, sni остаётся доменом
         ["curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-         "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
-        ["curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-         "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"http://127.0.0.1/{tok}"],
-        ["wget", "-qSO-", "--timeout=15", "--no-check-certificate",
-         f"--header=Host: {dom}", "--header=User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
-    )
+         "--resolve", f"{dom}:{port}:127.0.0.1",
+         "-H", "User-Agent: Happ/1.0", url],
+        # из контейнера nginx слушает :443 внутри
+        ["docker", "exec", ng, "curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
+         "--resolve", f"{dom}:443:127.0.0.1",
+         "-H", "User-Agent: Happ/1.0", f"https://{dom}/{tok}"],
+    ]
     for args in probes:
         try:
-            p = subprocess.run(["docker", "exec", ng, *args], capture_output=True, text=True, timeout=25)
+            p = subprocess.run(args, capture_output=True, text=True, timeout=25)
         except (OSError, subprocess.TimeoutExpired) as exc:
             job.log(f"probe: {type(exc).__name__}: {exc}")
             continue
         code, hdr = _parse_curl_headers((p.stdout or "") + "\n" + (p.stderr or ""))
-        if not code:
-            continue
-        job.log(f"ответ nginx: {code}, x-xbm={'да' if 'x-xbm' in hdr else 'нет'}")
-        return code, hdr
+        if code:
+            job.log(f"ответ nginx: {code}, x-xbm={'да' if 'x-xbm' in hdr else 'нет'}")
+            return code, hdr
+        err = ((p.stderr or "") + (p.stdout or "")).strip()
+        if err:
+            job.log(f"probe curl: {(err[:200])}")
+    try:
+        code, hdr = _probe_via_python(dom, tok, port)
+        if code:
+            job.log(f"ответ nginx: {code}, x-xbm={'да' if 'x-xbm' in hdr else 'нет'}")
+            return code, hdr
+    except Exception as exc:  # noqa: BLE001
+        job.log(f"probe python: {type(exc).__name__}: {exc}")
     return 0, {}
 
 
