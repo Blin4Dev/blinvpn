@@ -17,11 +17,8 @@ export const PricesSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
   const [f, setF] = useState({
     base: '99', extra: '40', paidGb: '100', trafficReset: '0',
     trialDays: '3', trialGb: '5', trialDevices: '1',
-    aaMult: '2', aaIp: '2', aaGrace: '24', aaDays: '7', trialHwidMax: '2',
   });
-  const [trialHwid, setTrialHwid] = useState(true);
   const [trialEnabled, setTrialEnabled] = useState(true);
-  const [antiabuse, setAntiabuse] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -35,12 +32,8 @@ export const PricesSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
           base: String(m.base_price ?? 99), extra: String(m.extra_device_price ?? 40),
           paidGb: String(m.paid_traffic_gb ?? 100), trafficReset: String(m.traffic_reset_price ?? 0),
           trialDays: String(m.trial_days ?? 3), trialGb: String(m.trial_traffic_gb ?? 5), trialDevices: String(m.trial_devices ?? 1),
-          aaMult: String(m.antiabuse?.hwid_multiplier ?? 2), aaIp: String(m.antiabuse?.ip_extra ?? 2),
-          aaGrace: String(m.antiabuse?.grace_hours ?? 24), aaDays: String(m.antiabuse?.warn_days ?? 7), trialHwidMax: String(m.trial_hwid_max ?? 2),
         });
-        setTrialHwid(m.trial_hwid_enabled !== false);
         setTrialEnabled(m.trial_enabled !== false);
-        setAntiabuse(m.antiabuse_enabled !== false);
       }
     } catch { onToast('Ошибка', 'Не удалось загрузить настройки', 'error'); }
     finally { setLoading(false); }
@@ -57,9 +50,6 @@ export const PricesSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
           paid_traffic_gb: Number(f.paidGb), traffic_reset_price: Number(f.trafficReset),
           trial_enabled: trialEnabled, trial_days: Number(f.trialDays),
           trial_traffic_gb: Number(f.trialGb), trial_devices: Number(f.trialDevices),
-          antiabuse_enabled: antiabuse,
-          aa_hwid_multiplier: Number(f.aaMult), aa_ip_extra: Number(f.aaIp), aa_grace_hours: Number(f.aaGrace), aa_warn_days: Number(f.aaDays),
-          trial_hwid_enabled: trialHwid, trial_hwid_max: Number(f.trialHwidMax),
         }),
       });
       onToast('Готово', 'Сохранено — мини-приложение подхватит сразу', 'success');
@@ -93,28 +83,6 @@ export const PricesSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
               <div><label className="field-label">Трафик, ГБ (0 = без лимита)</label><input className="input" type="number" min={0} value={f.trialGb} onChange={set('trialGb')} /></div>
               <div><label className="field-label">Устройств</label><input className="input" type="number" min={1} max={20} value={f.trialDevices} onChange={set('trialDevices')} /></div>
             </div>
-          </Section>
-
-          <Section title="Защита">
-            <div className="inset flex items-center justify-between gap-3" style={{ padding: 14 }}>
-              <div><div style={{ fontWeight: 500 }}>Анти-абуз (HWID/IP)</div><div className="sub mt-0.5">Автобан подписки при нарушениях</div></div>
-              <Toggle on={antiabuse} onChange={() => setAntiabuse(!antiabuse)} />
-            </div>
-            {antiabuse && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div><label className="field-label">Устройств больше лимита, раз</label><input className="input" type="number" min={2} max={10} value={f.aaMult} onChange={set('aaMult')} /></div>
-                <div><label className="field-label">Одновременных IP сверх лимита</label><input className="input" type="number" min={1} max={20} value={f.aaIp} onChange={set('aaIp')} /></div>
-                <div><label className="field-label">Время на исправление, часов</label><input className="input" type="number" min={1} max={168} value={f.aaGrace} onChange={set('aaGrace')} /></div>
-                <div><label className="field-label">Предупреждение действует, дней</label><input className="input" type="number" min={1} max={60} value={f.aaDays} onChange={set('aaDays')} /></div>
-              </div>
-            )}
-            <div className="inset flex items-center justify-between gap-3" style={{ padding: 14 }}>
-              <div style={{ fontWeight: 500 }}>Защита пробного периода</div>
-              <Toggle on={trialHwid} onChange={() => setTrialHwid(!trialHwid)} />
-            </div>
-            {trialHwid && (
-              <div style={{ maxWidth: 320 }}><label className="field-label">Пробных аккаунтов на одно устройство</label><input className="input" type="number" min={1} max={10} value={f.trialHwidMax} onChange={set('trialHwidMax')} /></div>
-            )}
           </Section>
 
           <div><button className="btn solid" onClick={save} disabled={saving}>{saving ? <Spinner size={16} /> : <Save size={16} />} Сохранить</button></div>

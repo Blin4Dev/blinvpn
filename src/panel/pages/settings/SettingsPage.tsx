@@ -1,8 +1,9 @@
 import React from 'react';
 import {
-  DollarSign, Zap, Send, Cloud, FileText, Shield, Database, Shuffle, Mail,
+  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Shuffle, Mail,
 } from 'lucide-react';
 import type { ToastType } from '../../lib/types';
+import { AntiAbuseSettingsTab } from './AntiAbuseTab';
 import { BackupSettingsTab } from './BackupsTab';
 import { ForumSettingsTab } from './ForumTab';
 import { LegalSettingsTab } from './LegalTab';
@@ -12,17 +13,18 @@ import { SquadsPage } from './SquadsTab';
 import { StorageSettingsTab } from './StorageTab';
 import { XbmSettingsTab } from './XbmTab';
 
-export type Tab = 'prices' | 'offer' | 'privacy' | 'squads' | 'xbm' | 'mail' | 'backups' | 'forum' | 'storage';
+export type Tab = 'prices' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'xbm' | 'mail' | 'backups' | 'forum' | 'storage';
 
 /** Разделы настроек — показываются подменю «Настройки» в боковом меню. */
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
   { id: 'prices', icon: DollarSign, label: 'Цены' },
+  { id: 'antiabuse', icon: ShieldAlert, label: 'Анти-абуз' },
   { id: 'offer', icon: FileText, label: 'Оферта' },
   { id: 'privacy', icon: Shield, label: 'Конфиденциальность' },
   { id: 'squads', icon: Zap, label: 'Сквады' },
   { id: 'xbm', icon: Shuffle, label: 'XBM' },
   { id: 'mail', icon: Mail, label: 'Почта' },
-  { id: 'forum', icon: Send, label: 'Форум' },
+  { id: 'forum', icon: Send, label: 'Уведомления' },
   { id: 'backups', icon: Cloud, label: 'Резервные копии' },
   { id: 'storage', icon: Database, label: 'Хранилище S3' },
 ];
@@ -30,6 +32,7 @@ export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: strin
 export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void; tab: Tab; onTab?: (t: Tab) => void }> = ({ onToast, tab }) => (
   <div style={{ maxWidth: 980 }}>
     {tab === 'prices' && <PricesSettingsTab onToast={onToast} />}
+    {tab === 'antiabuse' && <AntiAbuseSettingsTab onToast={onToast} />}
     {tab === 'offer' && <LegalSettingsTab kind="offer" title="Договор оферты" onToast={onToast} />}
     {tab === 'privacy' && <LegalSettingsTab kind="privacy" title="Политика конфиденциальности" onToast={onToast} />}
     {tab === 'squads' && <SquadsPage onToast={onToast} />}
