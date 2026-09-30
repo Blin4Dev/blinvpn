@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, ChevronRight, Eye, Plus, RefreshCw, Search, ShieldCheck, Trash2, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, ChevronRight, Eye, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, Zap } from 'lucide-react';
 import { Modal, PageHead, Spinner, Toggle } from '../components/ui';
 import { apiFetch, parseApiErr } from '../lib/api';
 import type { ToastType } from '../lib/types';
+import { XbmSettingsTab, xbmIsReady } from './settings/XbmTab';
 
 type RwHost = { uuid: string; remark: string; address: string; port: number | null; disabled: boolean; hidden: boolean; description: string; group: string | null };
 type Group = { id: string; name: string; hosts: string[]; whitelist: boolean; description: string; template_uuid: string | null };
@@ -16,6 +17,7 @@ type State = {
 };
 type Loc = { name: string; description: string; servers: string[]; reserve: string[] };
 type Toast = (t: string, m: string, ty: ToastType) => void;
+type Gate = 'loading' | 'setup' | 'settings';
 
 const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, '0')).join('');
 const plural = (n: number, a: string, b: string, c: string) => {
@@ -24,16 +26,39 @@ const plural = (n: number, a: string, b: string, c: string) => {
 };
 const hostsWord = (n: number) => `${n} ${plural(n, 'сервер', 'сервера', 'серверов')}`;
 
-// строки подписки: клик → настройка
+// строки подписки: клик → настройка; если xbm не подключён — мастер установки
 export const BalancerPage: React.FC<{ onToast: Toast }> = ({ onToast }) => {
+  const [gate, setGate] = useState<Gate>('loading');
+  const [forceSetup, setForceSetup] = useState(false);
   const [st, setSt] = useState<State | null>(null);
   const [edit, setEdit] = useState<Group | 'auto' | null>(null);
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const probe = useCallback(async () => {
+    try {
+      const { ready } = await xbmIsReady();
+      setGate(ready && !forceSetup ? 'settings' : 'setup');
+    } catch {
+      setGate('setup');
+    }
+  }, [forceSetup]);
+  useEffect(() => { void probe(); }, [probe]);
+
   const load = useCallback(() => apiFetch('/panel/xbm').then(setSt).catch((e) => onToast('Ошибка', parseApiErr(e, 'Не удалось загрузить'), 'error')), [onToast]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (gate === 'settings') load(); }, [gate, load]);
   const byUuid = useMemo(() => Object.fromEntries((st?.hosts || []).map((h) => [h.uuid, h])), [st]);
+
+  if (gate === 'loading') return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner /></div>;
+  if (gate === 'setup') {
+    return (
+      <XbmSettingsTab
+        title="Балансировщик"
+        onToast={onToast}
+        onReady={() => { setForceSetup(false); setGate('settings'); }}
+      />
+    );
+  }
 
   if (!st) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner /></div>;
   const s = st.settings;
@@ -57,13 +82,14 @@ export const BalancerPage: React.FC<{ onToast: Toast }> = ({ onToast }) => {
 
   const active = st.hosts.filter((h) => !h.disabled);
   const inGroups = new Set(s.groups.flatMap((g) => g.hosts));
-  const problem = !st.xbm.running ? 'XBM не запущен — установите его в Настройки → XBM'
+  const problem = !st.xbm.running ? 'XBM не запущен — откройте установку (шестерёнка) и запустите его'
     : st.error || (st.last_sync.ok === false ? `Не удалось связаться с Remnawave: ${st.last_sync.error}` : null);
 
   return (
     <div className="flex flex-col gap-4" style={{ maxWidth: 760 }}>
       <PageHead title="Балансировщик" sub="Строки подписки в приложениях пользователей">
         <div className="flex items-center gap-2">
+          <button className="icon-btn" onClick={() => { setForceSetup(true); setGate('setup'); }} title="Установка и подключение XBM" aria-label="Установка XBM"><Settings2 size={16} /></button>
           <button className="icon-btn" onClick={() => void load()} title="Обновить из Remnawave" aria-label="Обновить"><RefreshCw size={16} /></button>
           <button className="btn" onClick={() => setPreview(true)}><Eye size={15} /> Проверить</button>
           <button className="btn solid" disabled={busy || s.groups.length >= st.limits.groups || active.length === 0}

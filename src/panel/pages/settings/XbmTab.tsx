@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, Play, Plug, PlugZap, Power, RefreshCw } from 'lucide-react';
+import { Check, Play, Plug, PlugZap, Power, RefreshCw } from 'lucide-react';
 import { PageHead, Spinner } from '../../components/ui';
 import { CopyBtn, Err, HowTo, JobLog, Ok, Steps } from '../../components/Steps';
 import { apiFetch, parseApiErr } from '../../lib/api';
@@ -7,7 +7,8 @@ import type { ToastType } from '../../lib/types';
 
 type Status = {
   xbm_container: string; xbm_healthy: boolean; nginx_conf: boolean; nginx_container: string; connected: boolean | null;
-  networks: string[]; network: string; remnawave_url: string; sub_domain: string;
+  networks: string[]; containers: string[]; network: string; remnawave_url: string; sub_domain: string;
+  conf?: string; container?: string;
 };
 type Info = { runner: boolean; xbm: { running: boolean }; defaults: Record<string, string> };
 type JobRes = { status: 'queued' | 'running' | 'ok' | 'error'; log: string[]; result?: any; error?: string | null };
@@ -26,7 +27,22 @@ async function runJob(action: string, params: Record<string, string>, onLog: (l:
   return { status: 'error', log: [], error: 'Нет ответа от помощника на сервере' };
 }
 
-export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void }> = ({ onToast }) => {
+/** true, если xbm подключён к подписке (можно открывать настройку строк). */
+export async function xbmIsReady(): Promise<{ ready: boolean; runner: boolean }> {
+  const i: Info = await apiFetch('/panel/xbm/setup');
+  if (!i.runner) return { ready: false, runner: false };
+  const r = await runJob('status', {}, () => {});
+  if (r.status !== 'ok') return { ready: false, runner: true };
+  return { ready: !!r.result?.connected, runner: true };
+}
+
+export const XbmSettingsTab: React.FC<{
+  onToast: (t: string, m: string, ty: ToastType) => void;
+  /** после успешного подключения — перейти к настройке строк */
+  onReady?: () => void;
+  /** заголовок страницы (в балансировщике — «Балансировщик») */
+  title?: string;
+}> = ({ onToast, onReady, title = 'XBM' }) => {
   const [info, setInfo] = useState<Info | null>(null);
   const [st, setSt] = useState<Status | null>(null);
   const [step, setStep] = useState(0);
@@ -51,7 +67,8 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
         remnawave_url: cur.remnawave_url || s.remnawave_url || i.defaults.remnawave_url,
         sub_domain: cur.sub_domain || s.sub_domain || i.defaults.sub_domain,
         network: cur.network || s.network || i.defaults.network,
-        conf: cur.conf || i.defaults.conf, container: cur.container || i.defaults.container,
+        conf: cur.conf || s.conf || i.defaults.conf,
+        container: cur.container || s.container || i.defaults.container,
       }));
       setStep(s.connected ? 3 : s.xbm_healthy ? 1 : 0);
     } catch (e) { setErr(parseApiErr(e, 'Ошибка')); }
@@ -67,6 +84,7 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
         if (next != null) setStep(next);
         const s = await runJob('status', {}, () => {});
         if (s.status === 'ok') setSt(s.result);
+        if (action === 'xbm_connect' && onReady) onReady();
       } else setErr(r.error || 'Не получилось');
     } catch (e) { setErr(parseApiErr(e, 'Ошибка')); } finally { setBusy(''); }
   };
@@ -82,7 +100,7 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
   if (!info.runner) {
     return (
       <div className="flex flex-col gap-4">
-        <PageHead title="XBM" />
+        <PageHead title={title} sub="Установка XBM" />
         <div className="card flex flex-col gap-3" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600 }}>Нужен помощник на сервере</div>
           <HowTo items={[
@@ -100,10 +118,11 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
     <div><label className="field-label">{label}</label><input className="input" value={f[k]} placeholder={ph} onChange={(e) => setF({ ...f, [k]: e.target.value.trim() })} /></div>
   );
   const running = (a: string) => busy === a ? <Spinner size={15} /> : null;
+  const containers = [...new Set([f.container, ...(st?.containers || [])])].filter(Boolean);
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHead title="XBM">
+      <PageHead title={title} sub="Установка XBM">
         <div className="flex items-center gap-2">
           <span className={`badge ${st?.xbm_healthy ? 'solid' : 'line'}`}>{st?.xbm_healthy ? (st.connected ? 'Работает' : 'Установлен') : 'Не установлен'}</span>
           <button className="icon-btn" disabled={!!busy} onClick={() => void refresh()} title="Обновить" aria-label="Обновить"><RefreshCw size={16} /></button>
@@ -157,15 +176,25 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
           done: !!st?.connected,
           body: <>
             <HowTo items={[
-              <>Проверьте путь к nginx.conf страницы подписки и имя контейнера nginx (по умолчанию — как в установке Remnawave).</>,
+              <>Выберите контейнер nginx страницы подписки (не бота и не панели BlinVPN).</>,
+              <>Проверьте путь к nginx.conf — по умолчанию как в установке Remnawave.</>,
               <>Нажмите «Подключить». Перед правкой делается резервная копия; если что-то пойдёт не так — всё вернётся само.</>,
             ]} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="field-label">Контейнер nginx</label>
+                {containers.length > 0 ? (
+                  <select className="input" value={f.container} onChange={(e) => setF({ ...f, container: e.target.value })}>
+                    {containers.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                ) : (
+                  <input className="input" value={f.container} placeholder="remnawave-nginx" onChange={(e) => setF({ ...f, container: e.target.value.trim() })} />
+                )}
+              </div>
               {field('conf', 'Файл nginx', '/opt/remnawave/nginx/nginx.conf')}
-              {field('container', 'Контейнер nginx', 'remnawave-nginx')}
             </div>
             <div className="flex gap-2">
-              <button className="btn solid" disabled={!!busy} onClick={() => void act('xbm_connect', { sub_domain: f.sub_domain, conf: f.conf, container: f.container }, 3, 'XBM подключён')}>
+              <button className="btn solid" disabled={!!busy || !f.container} onClick={() => void act('xbm_connect', { sub_domain: f.sub_domain, conf: f.conf, container: f.container }, 3, 'XBM подключён')}>
                 {running('xbm_connect') || <PlugZap size={15} />} Подключить
               </button>
               <button className="btn ghost" disabled={!!busy} onClick={() => setStep(1)}>Назад</button>
@@ -173,12 +202,13 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
           </>,
         },
         {
-          title: 'Настроить строки подписки',
+          title: 'Готово',
           body: <>
-            <Ok>XBM работает. У пользователей сейчас только «Авто-выбор».</Ok>
-            <HowTo items={[<>Откройте раздел «Балансировщик» и добавьте хосты, которые увидят пользователи.</>]} />
+            <Ok>XBM работает. Можно настроить строки подписки для пользователей.</Ok>
             <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-              <a className="btn solid" href="/balancer"><ExternalLink size={15} /> Балансировщик</a>
+              {onReady && (
+                <button className="btn solid" onClick={onReady}><Check size={15} /> К настройке строк</button>
+              )}
               <button className="btn" disabled={!!busy} onClick={() => { if (window.confirm('Отключить XBM от подписки? Пользователи снова получат обычную подписку.')) void act('xbm_disconnect', { conf: f.conf, container: f.container }, 2, 'Отключено'); }}>
                 {running('xbm_disconnect') || <Plug size={15} />} Отключить от подписки
               </button>

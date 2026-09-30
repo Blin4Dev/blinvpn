@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Shuffle, Mail,
+  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Mail,
 } from 'lucide-react';
 import type { ToastType } from '../../lib/types';
 import { AntiAbuseSettingsTab } from './AntiAbuseTab';
@@ -11,9 +11,8 @@ import { MailSettingsTab } from './MailTab';
 import { PricesSettingsTab } from './PricesTab';
 import { SquadsPage } from './SquadsTab';
 import { StorageSettingsTab } from './StorageTab';
-import { XbmSettingsTab } from './XbmTab';
 
-export type Tab = 'prices' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'xbm' | 'mail' | 'backups' | 'forum' | 'storage';
+export type Tab = 'prices' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'backups' | 'forum' | 'storage';
 
 // разделы настроек (подменю в сайдбаре)
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
@@ -22,7 +21,6 @@ export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: strin
   { id: 'offer', icon: FileText, label: 'Оферта' },
   { id: 'privacy', icon: Shield, label: 'Конфиденциальность' },
   { id: 'squads', icon: Zap, label: 'Сквады' },
-  { id: 'xbm', icon: Shuffle, label: 'XBM' },
   { id: 'mail', icon: Mail, label: 'Почта' },
   { id: 'forum', icon: Send, label: 'Уведомления' },
   { id: 'backups', icon: Cloud, label: 'Резервные копии' },
@@ -36,7 +34,6 @@ export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastT
     {tab === 'offer' && <LegalSettingsTab kind="offer" title="Договор оферты" onToast={onToast} />}
     {tab === 'privacy' && <LegalSettingsTab kind="privacy" title="Политика конфиденциальности" onToast={onToast} />}
     {tab === 'squads' && <SquadsPage onToast={onToast} />}
-    {tab === 'xbm' && <XbmSettingsTab onToast={onToast} />}
     {tab === 'mail' && <MailSettingsTab onToast={onToast} />}
     {tab === 'forum' && <ForumSettingsTab onToast={onToast} />}
     {tab === 'backups' && <BackupSettingsTab onToast={onToast} />}

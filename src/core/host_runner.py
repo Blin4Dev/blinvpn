@@ -303,26 +303,40 @@ def _retarget_nginx_xbm(job: Job, conf: str, ng: str) -> None:
         job.log(f"Не удалось обновить имя в nginx: {e}")
 
 
+def _docker_names(kind: str) -> list[str]:
+    """имена сетей или контейнеров docker."""
+    fmt = "{{.Name}}" if kind == "network" else "{{.Names}}"
+    cmd = ["docker", "network", "ls", "--format", fmt] if kind == "network" else ["docker", "ps", "-a", "--format", fmt]
+    raw = subprocess.run(cmd, capture_output=True, text=True).stdout.split()
+    return [n for n in raw if NAME_RE.fullmatch(n)][:80]
+
+
 def act_status(job: Job, p: dict[str, Any]) -> dict[str, Any]:
-    ng = p.get("container") or "remnawave-nginx"
+    saved_ng = env_get("XBM_NGINX_CONTAINER") or "remnawave-nginx"
+    saved_conf = env_get("XBM_NGINX_CONF") or "/opt/remnawave/nginx/nginx.conf"
+    ng = p.get("container") or saved_ng
     connected = None
     try:
-        conf = safe_conf(p.get("conf") or "/opt/remnawave/nginx/nginx.conf")
+        conf = safe_conf(p.get("conf") or saved_conf)
         with open(conf, encoding="utf-8", newline="") as f:
             connected = nginx_tool().is_enabled(f.read())
     except (Fail, OSError):
         conf = ""
-    nets = subprocess.run(["docker", "network", "ls", "--format", "{{.Name}}"], capture_output=True, text=True).stdout.split()
+    nets = _docker_names("network")
+    containers = [n for n in _docker_names("container") if n not in (XBM_CONTAINER, OLD_XBM_CONTAINER)]
     return {
         "xbm_container": container_state(XBM_CONTAINER),
         "xbm_healthy": xbm_healthy(),
         "nginx_conf": bool(conf),
         "nginx_container": container_state(ng),
         "connected": connected,
-        "networks": [n for n in nets if NAME_RE.fullmatch(n) and n not in ("host", "none", "bridge")][:50],
+        "networks": [n for n in nets if n not in ("host", "none", "bridge")],
+        "containers": containers,
         "network": env_get("XBM_DOCKER_NETWORK") or "remnawave-network",
         "remnawave_url": env_get("XBM_REMNAWAVE_URL"),
         "sub_domain": env_get("XBM_SUB_DOMAIN"),
+        "conf": conf or saved_conf,
+        "container": ng,
     }
 
 
@@ -372,14 +386,14 @@ def act_xbm_install(job: Job, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _nginx_common(p: dict[str, Any]) -> tuple[str, str]:
-    conf = safe_conf(p.get("conf") or "/opt/remnawave/nginx/nginx.conf")
-    ng = p.get("container") or "remnawave-nginx"
-    if "nginx" not in ng.lower():
+    conf = safe_conf(p.get("conf") or env_get("XBM_NGINX_CONF") or "/opt/remnawave/nginx/nginx.conf")
+    ng = p.get("container") or env_get("XBM_NGINX_CONTAINER") or "remnawave-nginx"
+    if not NAME_RE.fullmatch(ng or ""):
         raise Fail("Укажите контейнер nginx")
     if container_state(ng) != "running":
         raise Fail(f"Контейнер {ng} не запущен")
     if run(["docker", "exec", ng, "nginx", "-t"], check=False).returncode != 0:
-        raise Fail("nginx -t уже сейчас с ошибкой — сначала почините конфиг")
+        raise Fail(f"В «{ng}» nginx -t с ошибкой — выберите контейнер с nginx страницы подписки")
     return conf, ng
 
 
@@ -392,6 +406,8 @@ def _reload_or_restore(job: Job, conf: str, ng: str, backup: str) -> None:
 
 def act_xbm_connect(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     conf, ng = _nginx_common(p)
+    env_set("XBM_NGINX_CONF", conf)
+    env_set("XBM_NGINX_CONTAINER", ng)
     if not xbm_healthy():
         raise Fail("XBM не запущен — сначала первый шаг")
     dom = p.get("sub_domain") or env_get("XBM_SUB_DOMAIN")

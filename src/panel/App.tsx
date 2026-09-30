@@ -71,7 +71,7 @@ const PAGE_PATHS: Record<string, string> = {
   'Рассылка': '/mailing', 'Промокоды': '/promocodes', 'Акции': '/promotions', 'Ссылки': '/links',
   'Мониторинг': '/monitoring', 'Балансировщик': '/balancer', 'Настройки': '/settings', 'Сотрудники': '/staff', 'Зарплата': '/salary',
 };
-export const SETTINGS_TABS = ['prices', 'antiabuse', 'offer', 'privacy', 'squads', 'xbm', 'mail', 'forum', 'backups', 'storage'] as const;
+export const SETTINGS_TABS = ['prices', 'antiabuse', 'offer', 'privacy', 'squads', 'mail', 'forum', 'backups', 'storage'] as const;
 export type SettingsTab = typeof SETTINGS_TABS[number];
 
 type Route = { page: string; userId: number | null; nodeId: number | null; tab: SettingsTab; chatId?: number | null };
@@ -88,6 +88,8 @@ export function parseRoute(pathname: string, search: string): Route {
     const n = new URLSearchParams(search).get('node');
     return { ...base, page: 'Мониторинг', nodeId: n && /^\d+$/.test(n) ? Number(n) : null };
   }
+  // старый /settings/xbm → балансировщик
+  if (path === '/settings/xbm') return { ...base, page: 'Балансировщик' };
   const st = path.match(/^\/settings(?:\/([a-z]+))?$/);
   if (st) {
     const tab = (SETTINGS_TABS as readonly string[]).includes(st[1] || '') ? (st[1] as SettingsTab) : 'prices';
