@@ -1,0 +1,22 @@
+{
+    "port": 4100,
+    "log_level": "info",
+    "strategy": "leastLoad",
+    "probe_interval": "3m",
+    "probe_sampling": 1,
+    "probe_timeout": "1s",
+    "node_stats": false,
+    "rate_limit": {
+        "max": 5,
+        "window_sec": 60
+    },
+    "upstream_cache_ttl_sec": 300,
+    "fastest_group": true,
+    "auto_group_name": "🇪🇺 Автоматический выбор",
+    "auto_host_groups": true,
+    "lte_patterns": [
+        "Белые списки",
+        "LTE"
+    ],
+    "groups": {}
+}

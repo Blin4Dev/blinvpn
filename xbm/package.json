@@ -1,0 +1,16 @@
+{
+    "name": "xray-balancer-mw",
+    "version": "3.1.0",
+    "description": "Middleware для Remnawave — группировка серверов и интеллектуальная балансировка XRAY-JSON подписок",
+    "main": "src/server.js",
+    "scripts": {
+        "start": "node src/server.js",
+        "test": "node --test test/*.test.js",
+        "check": "node -c src/server.js && for f in src/*.js src/**/*.js; do node -c $f; done"
+    },
+    "author": "Haxonate",
+    "license": "SEE LICENSE IN LICENSE",
+    "engines": {
+        "node": ">=18"
+    }
+}

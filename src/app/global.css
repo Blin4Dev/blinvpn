@@ -1,0 +1,205 @@
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('/fonts/material-symbols-outlined.woff2') format('woff2');
+}
+
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+:root {
+  --blin-scale: 1;
+  /* Только Telegram fullscreen; в браузере всегда 0 */
+  --blin-tg-pad-top: 0px;
+  --blin-tg-pad-bottom: 0px;
+  --bg: #14110E;
+  --bg-outer: #14110E;
+  --surface: #1E1A16;
+  --surface-raised: #2A241E;
+  --surface-hover: #352E26;
+  --border: rgba(255, 248, 240, 0.08);
+  --border-strong: rgba(255, 248, 240, 0.14);
+  --orange: #FF6B1A;
+  --orange-bright: #FF8A3D;
+  --orange-deep: #C44E0A;
+  --orange-soft: rgba(255, 107, 26, 0.16);
+  --text: #FFF8F0;
+  --text-muted: #A89B8C;
+  --text-dim: #6F6458;
+  --danger: #FF5C5C;
+  --success: #6BCB8A;
+  --font: 'Outfit', system-ui, sans-serif;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  background: var(--bg-outer);
+  overflow: hidden;
+  overscroll-behavior: none;
+  font-family: var(--font);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea, select {
+  font-family: var(--font);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
+#root {
+  margin: 0;
+  background: var(--bg);
+  transform: scale(var(--blin-scale));
+  transform-origin: top left;
+  width: calc(100% / var(--blin-scale));
+  height: calc(100% / var(--blin-scale));
+  /* Отступ TG кладём на контент, не на #root — иначе сверху «чёрная полоса» */
+  padding-top: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+#root > * {
+  height: 100%;
+}
+
+/* Контентные оболочки учитывают TG fullscreen inset */
+.blin-tg-safe {
+  padding-top: calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Ambient background wash — один слой, без тяжёлых filter */
+.blin-ambient {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 90% 55% at 50% -8%, rgba(255, 107, 26, 0.22) 0%, transparent 58%),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(196, 78, 10, 0.08) 0%, transparent 50%),
+    var(--bg);
+  z-index: 0;
+}
+
+.blin-scroll {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.blin-scroll::-webkit-scrollbar { display: none; }
+
+/* Press feedback without layout thrash */
+.blin-press {
+  transition: transform 0.18s var(--ease-out), opacity 0.18s ease, background 0.18s ease;
+}
+.blin-press:active:not(:disabled) {
+  transform: scale(0.975);
+}
+
+@keyframes blinvpnPageInForward {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes blinvpnPageInBackward {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes blinvpnFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes blinvpnSheetUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes blinvpnSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blinvpnPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.92); }
+}
+
+@keyframes blinvpnBreathe {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+
+@keyframes blinvpnRise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

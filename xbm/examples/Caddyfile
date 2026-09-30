@@ -1,0 +1,65 @@
+# ─── Caddyfile для Remnawave + Xray Balancer Middleware ───
+#
+# Переменные окружения (задаются в docker-compose или .env):
+#   SUB_DOMAIN              — домен подписки (например sub.example.com)
+#   SUB_PAGE_CONTAINER      — имя контейнера subscription page (например remnawave-subscription-page)
+#   SUB_PORT                — порт subscription page (например 3010)
+#
+# Xray-клиенты (Happ, Streisand, V2RayTUN и т.д.) → middleware (:4100)
+# Браузеры и остальные клиенты → subscription page
+
+{
+    servers {
+        protocols h1 h2 h3
+    }
+}
+
+https://{$SUB_DOMAIN} {
+    encode zstd gzip
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+    }
+
+    handle /health {
+        reverse_proxy {$SUB_PAGE_CONTAINER}:{$SUB_PORT}
+    }
+
+    handle /mw-health {
+        reverse_proxy xray-balancer-mw:4100
+    }
+
+    @xray_client {
+        header_regexp User-Agent (?i)(happ|streisand|v2ray|v2raytun|neko|foxray|v2box|xray|invisibleman|flclash|clash-?verge|clash-?meta|mihomo|koala-?clash|murge|clash-nyanpasu|flowvy|rabbithole|prizrak-box|^sfa|^sfi|^sfm|^sft|karing|singbox|hiddify|^stash|^clash)
+        not path /health
+        not path /mw-health
+    }
+    handle @xray_client {
+        reverse_proxy xray-balancer-mw:4100 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Port {server_port}
+        }
+    }
+
+    handle /* {
+        reverse_proxy {$SUB_PAGE_CONTAINER}:{$SUB_PORT} {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Port {server_port}
+        }
+    }
+}
+
+http://{$SUB_DOMAIN} {
+    redir https://{$SUB_DOMAIN}{uri} permanent
+}
