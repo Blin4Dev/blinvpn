@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Btn, MSIcon, T } from "./ui";
 
-/** Копирование с запасным путём для WebView, где navigator.clipboard недоступен. */
+// буфер обмена с fallback через textarea для webview без navigator.clipboard
 export async function copyText(text: string): Promise<boolean> {
   if (!text) return false;
   try {
@@ -9,7 +9,7 @@ export async function copyText(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text);
       return true;
     }
-  } catch { /* fallback ниже */ }
+  } catch { /* fallback */ }
   try {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -26,7 +26,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** Ссылка на подписку + кнопка «Скопировать». Без установки приложений и deep-link. */
+// url подписки + кнопка копирования (без установки / deep-link)
 export default function SubLinkBox({
   link,
   loading,

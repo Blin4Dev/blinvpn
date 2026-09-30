@@ -1,13 +1,8 @@
-# BlinVPN 2.0 — оркестрация сервисов
-#
-# Сервисы api / webhook / bot работают в network_mode: host — так они видят
-# Remnawave по http://localhost:3000 из .env и совпадают с проксированием
-# nginx на 127.0.0.1:{8000,5000} из install.sh. Порты берутся из .env.
-#
-# miniapp (9741) и panel (9742) — статические SPA за nginx, публикуются на
-# 127.0.0.1, куда их и проксирует внешний nginx.
+# blinvpn 2.0: оркестрация сервисов
+# api/webhook/bot в network_mode host (remnawave :3000, nginx на 127.0.0.1)
+# miniapp/panel: spa на 127.0.0.1:{9741,9742}
 
-# Ротация логов: не даём docker-логам расти бесконечно (50 МБ × 3 файла на сервис).
+# ротация docker-логов: 50мб × 3 файла
 x-logging: &default-logging
   driver: json-file
   options:
@@ -59,7 +54,7 @@ services:
     depends_on:
       - api
 
-  # Мониторинг серверов (опрос агентов blinmon, пинг, VLESS, инциденты)
+  # мониторинг серверов (blinmon, ping, vless, инциденты)
   monitor:
     build:
       context: .
@@ -89,7 +84,7 @@ services:
     logging: *default-logging
     ports:
       - "127.0.0.1:${MINIAPP_PORT:-9741}:80"
-    # Картинки из assets/ отдаются «вживую»: положили файл — он сразу доступен.
+    # живой mount assets/ (ro)
     volumes:
       - ./assets:/usr/share/nginx/live/assets:ro
 
@@ -104,18 +99,16 @@ services:
     logging: *default-logging
     ports:
       - "127.0.0.1:${PANEL_PORT:-9742}:80"
-    # Картинки из assets/ отдаются «вживую»: положили файл — он сразу доступен.
+    # живой mount assets/ (ro)
     volumes:
       - ./assets:/usr/share/nginx/live/assets:ro
 
-  # Балансировщик подписки XBM (Xray Balancer Middleware, автор — Haxonate; см. xbm/NOTICE.md).
-  # Ставится из панели: Настройки → XBM (помощник src/core/host_runner.py, COMPOSE_PROFILES=xbm в .env).
-  # Стоит в сети Remnawave, чтобы remnawave-nginx отправлял к нему VPN-клиентов;
-  # настройки из панели — ./data/xbm/panel.json (перечитываются на лету).
+  # xbm: балансировщик подписки (см. xbm/NOTICE.md); ставится из панели
+  # сеть remnawave; конфиг ./data/xbm/panel.json (на лету)
   xbm:
     build:
       context: ./xbm
-    container_name: xray-balancer-mw
+    container_name: blinvpn-xbm
     profiles: ["xbm"]
     restart: unless-stopped
     logging: *default-logging

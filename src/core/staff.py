@@ -1,22 +1,3 @@
-"""
-Сотрудники поддержки (панель → Поддержка → Сотрудники).
-
-Владелец панели (таблица admin, создаётся install.sh) стоит выше всех и может всё.
-Сотрудники бывают двух видов:
-
-  • Куратор  — «админ поддержки»: все обращения (в том числе чужие и закрытые),
-               забрать / писать в чужом / вернуть в пул / закрыть сразу;
-               все пользователи — просмотр и управление; штрафы операторам.
-  • Оператор — очередь обращений («Открыто») и свои («Мои»); закрыть — только
-               через вопрос пользователю; «В пул», «Передать админу»; все
-               пользователи — просмотр, управление — только теми, чьё обращение
-               сейчас у него в работе (и без денег, объединения и удаления).
-
-Права проверяются на сервере для КАЖДОГО запроса к /api/panel/* по таблице
-ROUTES (метод + путь → правило). Запрос, которого нет в таблице, сотруднику
-запрещён (запрет по умолчанию): новый раздел не станет случайно доступен.
-"""
-
 from __future__ import annotations
 
 import re
@@ -34,8 +15,7 @@ USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
 PASSWORD_MIN = 10
 PASSWORD_MAX = 128
 
-# Действия с пользователем, которые оператору запрещены даже для «своего»:
-# деньги (в т.ч. выводимый реф. баланс), объединение аккаунтов, удаление.
+# оператору нельзя даже на «своём»: деньги, merge, удаление
 OPERATOR_FORBIDDEN_ACTIONS = {
     "ADD_BALANCE", "SUB_BALANCE", "SET_PARTNER_RATE", "SET_PARTNER_BALANCE", "ADD_PARTNER_BALANCE",
     "SUB_PARTNER_BALANCE", "SET_TELEGRAM_ID", "SET_EMAIL", "DELETE_USER",
@@ -49,14 +29,7 @@ class StaffError(Exception):
         self.status = status
 
 
-# ─────────────────────────────────────────────────────────────
-# Таблица доступа сотрудников. Правила:
-#   "any"      — любой сотрудник
-#   "curator"  — только куратор
-#   "manage"   — куратор; оператор — если у него в работе обращение этого
-#                пользователя (uid из пути)
-# Нет совпадения → только владелец.
-# ─────────────────────────────────────────────────────────────
+# доступ: any / curator / manage (оператор с тикетом этого uid); иначе владелец
 
 R = "GET"
 _USER_VIEW = r"/users/\d+(?:/detail|/payments|/subscriptions|/referrals|/remnawave|/survey)?"
@@ -72,27 +45,27 @@ ROUTES: list[tuple[set[str], re.Pattern, str]] = [
         (R, r"/users/\d+/transfer", "curator"),
         ("POST", r"/users/\d+/transfer", "curator"),
         (R, r"/users/(?P<uid>\d+)/can-manage", "any"),
-        (R, r"/keys", "curator"),                 # общий список ключей (с UUID) — не операторам
+        (R, r"/keys", "curator"),                 # ключи с uuid: не операторам
         ("POST", r"/keys(?:/\d+/block)?", "curator"),
 
         (R, r"/support/chats", "any"),
         (R, r"/support/unread", "any"),
         (R, r"/support/chats/\d+", "any"),
         ("POST", r"/support/chats/\d+/(?:read|start|close|upload|messages|pool|escalate)", "any"),
-        # своё сообщение: изменить / удалить (проверка «своё» и 48 часов — внутри)
+        # своё сообщение (своё+48ч внутри)
         ("POST", r"/support/chats/\d+/messages/\d+/edit", "any"),
         ("DELETE", r"/support/chats/\d+/messages/\d+", "any"),
 
-        (R, r"/team-chat", "any"),                 # общий чат сотрудников
+        (R, r"/team-chat", "any"),                 # team chat
         (R, r"/team-chat/unread", "any"),
         ("POST", r"/team-chat/(?:messages|read|messages/\d+/edit)", "any"),
-        ("DELETE", r"/team-chat/messages/\d+", "any"),  # своё; чужое — только владелец (проверка внутри)
+        ("DELETE", r"/team-chat/messages/\d+", "any"),  # своё; чужое - владелец
 
-        (R, r"/staff", "curator"),                 # кураторам — краткий список (без денег и контактов)
+        (R, r"/staff", "curator"),                 # кураторам краткий список
         (R, r"/staff/\d+/schedule", "curator"),
         (R, r"/staff/\d+/fines", "curator"),
         ("POST", r"/staff/\d+/fines", "curator"),
-        ("DELETE", r"/staff/fines/\d+", "curator"),  # отменить можно только свой штраф
+        ("DELETE", r"/staff/fines/\d+", "curator"),  # только свой штраф
 
         (R, r"/me/salary", "any"),
         (R, r"/push/key", "any"),
@@ -111,10 +84,6 @@ def match_route(method: str, sub: str) -> Optional[tuple[str, dict[str, str]]]:
                 return rule, {k: v for k, v in m.groupdict().items() if v is not None}
     return None
 
-
-# ─────────────────────────────────────────────────────────────
-# Хранилище сотрудников
-# ─────────────────────────────────────────────────────────────
 
 def get(staff_id: int) -> Optional[dict[str, Any]]:
     return db.fetchone("SELECT * FROM panel_staff WHERE id = ?", (int(staff_id),))

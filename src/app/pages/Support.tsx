@@ -49,7 +49,7 @@ function dayLabel(iso: string): string {
   return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
 }
 
-/** Файл открываем в браузере Telegram (скачивание внутри мини-приложения работает не везде). */
+// открыть файл в браузере tg (скачивание внутри приложения нестабильно)
 function openExternal(url: string) {
   const abs = new URL(url, window.location.origin).toString();
   const tg = (window as unknown as { Telegram?: { WebApp?: { initData?: string; openLink?: (u: string) => void } } }).Telegram?.WebApp;
@@ -107,7 +107,7 @@ function Bubble({ m, onImage, onMedia, onReply, onQuote, flash, onNoThanks, clos
   onNoThanks: (m: SupportMessage) => void; closing: boolean;
 }) {
   if (m.sender === "system") {
-    // Все служебные события — одной серой строкой-разделителем
+    // служебные события одной серой строкой-разделителем
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0", fontSize: 12, color: T.textMuted }}>
         <span style={{ flex: 1, height: 1, background: T.border }} />
@@ -147,7 +147,7 @@ function Bubble({ m, onImage, onMedia, onReply, onQuote, flash, onNoThanks, clos
               {m.text}
             </div>
           )}
-          {/* время — внутри сообщения */}
+          {/* time inside bubble */}
           <span style={{ alignSelf: "flex-end", fontSize: 11, lineHeight: "13px", marginTop: -2, padding: m.files.length && !m.text ? "0 8px 4px" : 0,
             color: mine ? "rgba(255,255,255,0.75)" : T.textDim }}>{m.edited ? "изменено · " : ""}{fmtTime(m.created_at)}</span>
         </div>
@@ -156,7 +156,7 @@ function Bubble({ m, onImage, onMedia, onReply, onQuote, flash, onNoThanks, clos
           <MSIcon name="reply" style={{ fontSize: 18 }} />
         </button>
       </div>
-      {/* кнопка под сообщением поддержки — как инлайн-кнопка Telegram: отдельная плашка шириной с сообщение */}
+      {/* close_prompt action under support msg */}
       {m.kind === "close_prompt" && m.action_active && (
         <button type="button" onClick={() => onNoThanks(m)} disabled={closing} className="blin-press"
           style={{ ...btnReset, alignSelf: "stretch", marginTop: 6, marginRight: 34, minWidth: 200, padding: "11px 16px",
@@ -201,8 +201,7 @@ export default function Support() {
       const have = new Set(s.messages.map((m) => m.id));
       const add = incoming.filter((m) => !have.has(m.id));
       if (!add.length) return s;
-      // lastId двигает только опрос: иначе ответ поддержки, пришедший прямо перед
-      // нашим сообщением, не подтянулся бы
+      // lastId двигает только опрос (иначе ответ поддержки прямо перед нашим пропадёт)
       return { ...s, messages: [...s.messages, ...add].sort((a, b) => a.id - b.id) };
     });
   }, []);
@@ -213,7 +212,7 @@ export default function Support() {
     fetchSupport(0).then((s) => { lastId.current = s.messages.length ? s.messages[s.messages.length - 1].id : 0; setState(s); }).catch(() => {});
   }, []);
 
-  // Первая загрузка
+  // первичная загрузка
   useEffect(() => {
     let alive = true;
     fetchSupport(0)
@@ -227,7 +226,7 @@ export default function Support() {
     return () => { alive = false; };
   }, []);
 
-  // Новые сообщения — раз в несколько секунд
+  // опрос новых сообщений
   useEffect(() => {
     if (!state) return;
     const t = window.setInterval(() => {
@@ -235,7 +234,7 @@ export default function Support() {
         .then((s) => {
           const cur = stateRef.current;
           if (cur && (cur.ticket?.status !== s.ticket?.status)) {
-            // обращение открылось/закрылось — перечитываем всё (вопрос о закрытии мог исчезнуть)
+            // тикет открыт/закрыт: полная перезагрузка (вопрос о закрытии мог исчезнуть)
             reload();
             if (s.messages.some((m) => m.sender !== "user")) void markSupportRead();
             return;
@@ -257,12 +256,12 @@ export default function Support() {
             if (s.messages.some((m) => m.sender !== "user")) void markSupportRead();
           }
         })
-        .catch(() => { /* сеть мигнула — попробуем в следующий раз */ });
+        .catch(() => { /* ignore */ });
     }, POLL_MS);
     return () => window.clearInterval(t);
   }, [state !== null, merge, reload]);
 
-  // Прокрутка вниз при новых сообщениях (если пользователь и так был внизу)
+  // прокрутить вниз при новых, если уже внизу
   const keepBottom = useCallback(() => {
     const el = listRef.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
@@ -318,12 +317,12 @@ export default function Support() {
       const m = await sendSupportMessage(text.trim(), ready.map((p) => p.id as string), reply?.id);
       stick.current = true;
       if (!state?.chat) setState((s) => (s ? { ...s, chat: { id: 0, unread: 0 } } : s));
-      // любой ответ снимает вопрос «Могу ли я ещё помочь?»
+      // any reply clears «ещё помочь?» prompt
       setState((s) => (s ? { ...s, messages: s.messages.map((x) => (x.action_active ? { ...x, action_active: false } : x)) } : s));
       merge([m]);
       setText("");
       setReply(null);
-      // первое сообщение после закрытия открывает новое обращение, а «нет, спасибо» — закрывает
+      // first msg after close opens ticket; «нет, спасибо» closes
       if (state?.ticket?.status !== "open" || m.ticket_closed) reload();
       pending.forEach((p) => p.preview && URL.revokeObjectURL(p.preview));
       setPending((p) => p.filter((x) => x.error));

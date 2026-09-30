@@ -36,7 +36,7 @@ const METHODS: { id: PaymentMethod; label: string; icon: React.ReactNode }[] = [
     icon: (
       <img
         src="/assets/sbp.png"
-        // пока файла нет в assets/ — та же картинка, что была раньше
+        // fallback, пока файла нет в assets/
         onError={(e) => { const i = e.currentTarget; if (!i.dataset.fb) { i.dataset.fb = "1"; i.src = "https://i.imgur.com/pu9w7tE.png"; } }}
         alt=""
         style={{ width: 28, height: 28, objectFit: "contain" }}
@@ -54,7 +54,7 @@ const METHODS: { id: PaymentMethod; label: string; icon: React.ReactNode }[] = [
     icon: (
       <img
         src="/assets/stars.png"
-        // пока файла нет в assets/ — та же картинка, что была раньше
+        // fallback, пока файла нет в assets/
         onError={(e) => { const i = e.currentTarget; if (!i.dataset.fb) { i.dataset.fb = "1"; i.src = "https://i.imgur.com/Yu8PZ7N.png"; } }}
         alt=""
         style={{ width: 28, height: 28, objectFit: "contain" }}
@@ -69,13 +69,13 @@ export default function Payment() {
   const [searchParams] = useSearchParams();
 
   const returnTo = searchParams.get("return") || "";
-  // Если количество устройств уже выбрали на предыдущем экране — второй раз не спрашиваем.
+  // устройства уже выбраны на прошлом экране
   const devicesPreselected = searchParams.has("devices");
   const initialDevices = Math.min(
     MAX_DEVICES,
     Math.max(1, parseInt(searchParams.get("devices") || "1", 10)),
   );
-  // Оплата — только на 1 месяц за раз (сервер другое не примет).
+  // только 1 месяц (сервер иное не примет)
   const months = 1;
   const flowType = searchParams.get("type");
   const subParam = searchParams.get("sub");
@@ -93,7 +93,7 @@ export default function Payment() {
     : 0;
 
   const [devices, setDevices] = useState(initialDevices);
-  // Продление: по умолчанию — столько устройств, сколько уже в подписке (меньше — нельзя)
+  // продление: по умолчанию текущее число устройств (меньше нельзя)
   const isExtend = searchParams.get("extend") === "1";
   const [minDevices, setMinDevices] = useState(1);
   useEffect(() => {
@@ -108,7 +108,7 @@ export default function Payment() {
           setDevices(p);
           if (k?.type !== "trial") setMinDevices(p);
         }
-      } catch { /* по умолчанию 1 */ }
+      } catch { /* ignore */ }
     })();
   }, [isExtend]);
   const [rubMap, setRubMap] = useState<Record<number, number>>({
@@ -225,8 +225,7 @@ export default function Payment() {
       : paidFromBalance
         ? "0 ₽"
         : `${charge} ₽`;
-  // Списали с баланса (частично или полностью) — зачёркнута цена без баланса;
-  // иначе при скидке — цена без скидки.
+  // зачеркнуть цену до баланса, если баланс списан; иначе до скидки
   const byBalance = quoteReady && !isStars && refApplied > 0;
   const strikePrice = byBalance
     ? `${fullRub} ₽`
@@ -261,7 +260,7 @@ export default function Payment() {
         return_to: returnTo || "/subscription",
       });
 
-      // Вместо отдельной страницы — нижнее окно ожидания поверх оплаты
+      // лист ожидания поверх оплаты вместо отдельной страницы
       const goWaiting = (extra: Partial<PendingPayment> = {}) =>
         setPending({
           paymentId: String(result.payment_id),

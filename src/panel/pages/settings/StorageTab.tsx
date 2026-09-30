@@ -16,7 +16,7 @@ const F: React.FC<{ label: string; hint?: string; children: React.ReactNode }> =
   <div><label className="field-label">{label}</label>{children}{hint && <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>{hint}</div>}</div>
 );
 
-/** Настройки → Хранилище: S3 (Timeweb Cloud) для вложений поддержки. */
+// s3 для вложений поддержки
 export const StorageSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void }> = ({ onToast }) => {
   const [cfg, setCfg] = useState<S3Cfg | null>(null);
   const [secret, setSecret] = useState('');

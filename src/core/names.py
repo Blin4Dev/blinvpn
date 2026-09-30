@@ -1,17 +1,12 @@
-"""
-Защита имён и ников от мусора: управляющие символы, невидимые символы,
-«залго» (горы диакритики), переворот текста (bidi), километровые строки.
-"""
-
 from __future__ import annotations
 
 import re
 import unicodedata
 from typing import Any, Optional
 
-# Ник Telegram: латиница, цифры, подчёркивание, 4–32 символа (4 — у коллекционных)
+# ник telegram: a-z0-9_, 4-32
 _TG_USERNAME = re.compile(r"^[A-Za-z0-9_]{4,32}$")
-# Управляющие, невидимые, разделители строк/абзацев, bidi-переворот, BOM
+# управляющие/невидимые/bidi/bom
 _INVISIBLE = re.compile(
     "[\u0000-\u001f\u007f-\u009f­͏؜ᅟᅠ឴឵᠎"
     "​-‏ -‮⁠-⁯ㅤ︀-️﻿ﾠ￰-￿]"
@@ -34,7 +29,7 @@ def display_name(value: Any, max_len: int = 40) -> str:
     marks = 0
     for ch in s:
         if unicodedata.combining(ch):
-            marks += 1
+            marks += 1# не больше 2 combining подряд
             if marks > 2:  # не больше двух надстрочных знаков подряд
                 continue
         else:

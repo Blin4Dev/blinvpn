@@ -2,19 +2,7 @@ import React from "react";
 import { T } from "./ui";
 import { openPayUrl } from "../utils/api";
 
-/**
- * Безопасный показ оформленного текста (оферта, политика конфиденциальности).
- *
- * Понимает Markdown и HTML, но НИЧЕГО не вставляет как сырой HTML: текст
- * разбирается и собирается из React-элементов, неизвестные теги показываются
- * как обычный текст. Поэтому скрипт, iframe, onclick и т.п. выполниться не могут.
- *
- * Markdown: # / ## / ### заголовки, **жирный** и *жирный*, _курсив_, __подчёркнутый__,
- *   ~~зачёркнутый~~, `код`, [ссылка](https://…), списки «- » / «* » / «1. », цитата «> », линия «---».
- * HTML: <b> <strong> <i> <em> <u> <s> <del> <code> <a href="https://…"> <br> <p>
- *   <h1>–<h3> <ul> <ol> <li> <hr> <blockquote>.
- */
-
+// безопасный рендер оферты/политики: markdown+html → react (без сырого html)
 const SAFE_URL = /^(https?:\/\/|mailto:|tg:\/\/)[^\s"'<>]+$/i;
 
 function decodeEntities(s: string): string {
@@ -31,17 +19,17 @@ function decodeEntities(s: string): string {
     .replace(/&amp;/gi, "&");
 }
 
-/** Блочные HTML-теги → строки в Markdown-виде (дальше разбираются общим кодом). */
+// блочные html-теги → строки в духе markdown для общего парсера
 function htmlBlocksToLines(src: string): string {
   let s = src.replace(/\r\n?/g, "\n");
   s = s.replace(/<br\s*\/?>/gi, "\n");
   s = s.replace(/<hr\s*\/?>/gi, "\n---\n");
-  // атрибуты у тегов (class, style…) не нужны — отбрасываем, кроме href у ссылок
+  // отбросить атрибуты, кроме href у ссылок
   s = s.replace(/<(p|h[1-3]|ul|ol|li|blockquote|b|strong|i|em|u|s|del|strike|code|br|hr)\s+[^<>]*?(\/?)>/gi, "<$1$2>");
   s = s.replace(/<h([1-3])\s*>([\s\S]*?)<\/h\1\s*>/gi, (_m, n: string, t: string) => `\n${"#".repeat(Number(n))} ${t.replace(/\n+/g, " ").trim()}\n`);
   s = s.replace(/<blockquote\s*>([\s\S]*?)<\/blockquote\s*>/gi, (_m, t: string) =>
     "\n" + t.trim().split("\n").map((l) => "> " + l).join("\n") + "\n");
-  // Нумерованные списки: <ol><li>…</li></ol> → «1. …»
+  // нумерованный список html → «1. …»
   s = s.replace(/<ol\s*>([\s\S]*?)<\/ol\s*>/gi, (_m, inner: string) => {
     let i = 0;
     return "\n" + inner.replace(/<li\s*>([\s\S]*?)<\/li\s*>/gi, (_x, t: string) => `\n${++i}. ${t.replace(/\n+/g, " ").trim()}`) + "\n";
@@ -52,7 +40,7 @@ function htmlBlocksToLines(src: string): string {
   return s;
 }
 
-/** lead: группа 1 — символ перед маркером (вместо просмотра назад, которого нет в старых iOS). */
+// lead: группа 1 = символ перед маркером (без lookbehind на старых ios)
 type Rule = { re: RegExp; make: (m: RegExpExecArray, key: string) => React.ReactNode; lead?: boolean };
 
 const linkStyle: React.CSSProperties = { color: T.orangeBright, textDecoration: "underline", cursor: "pointer" };
@@ -73,14 +61,14 @@ function Link({ href, children }: { href: string; children: React.ReactNode }) {
 }
 
 const RULES: Rule[] = [
-  // HTML
+  // разметка html
   { re: /<(b|strong)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <strong key={k} style={{ color: T.text, fontWeight: 600 }}>{inline(m[2], k)}</strong> },
   { re: /<(i|em)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <em key={k}>{inline(m[2], k)}</em> },
   { re: /<u\s*>([\s\S]+?)<\/u\s*>/i, make: (m, k) => <u key={k}>{inline(m[1], k)}</u> },
   { re: /<(s|del|strike)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <s key={k}>{inline(m[2], k)}</s> },
   { re: /<code\s*>([\s\S]+?)<\/code\s*>/i, make: (m, k) => <code key={k} style={codeStyle}>{decodeEntities(m[1])}</code> },
   { re: /<a\s+href\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]+?)<\/a\s*>/i, make: (m, k) => <Link key={k} href={m[1] ?? m[2] ?? ""}>{inline(m[3], k)}</Link> },
-  // Markdown
+  // разметка markdown
   { re: /`([^`\n]+)`/, make: (m, k) => <code key={k} style={codeStyle}>{m[1]}</code> },
   { re: /\[([^\]\n]+)\]\(([^)\s]+)\)/, make: (m, k) => <Link key={k} href={m[2]}>{inline(m[1], k)}</Link> },
   { re: /\*\*([^*\n]+?)\*\*/, make: (m, k) => <strong key={k} style={{ color: T.text, fontWeight: 600 }}>{inline(m[1], k)}</strong> },
@@ -90,15 +78,11 @@ const RULES: Rule[] = [
   { re: /(^|[^\p{L}\p{N}_])_([^_\s](?:[^_\n]*[^_\s])?)_(?![\p{L}\p{N}_])/u, lead: true, make: (m, k) => <em key={k}>{inline(m[2], k)}</em> },
 ];
 
-/**
- * Строчная разметка. Каждое правило ищется глобальным регэкспом от текущей позиции,
- * а найденное совпадение запоминается: пока его не «перешагнули», правило заново
- * не запускается. Так длинная строка разбирается за линейное число проходов.
- */
+// инлайн-разметка: кэш ближайшего совпадения по правилу для линейных проходов
 function inline(text: string, keyBase = "i"): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const res = RULES.map((r) => new RegExp(r.re.source, r.re.flags.includes("g") ? r.re.flags : r.re.flags + "g"));
-  // для каждого правила — ближайшее найденное совпадение и где начинается сама разметка
+  // ближайшее совпадение по правилу + где начинается сама разметка
   const cache: ({ m: RegExpExecArray; at: number } | null | undefined)[] = RULES.map(() => undefined);
   let pos = 0;
   let n = 0;
@@ -108,11 +92,11 @@ function inline(text: string, keyBase = "i"): React.ReactNode[] {
     for (let i = 0; i < RULES.length; i++) {
       let c = cache[i];
       if (c === undefined || (c !== null && c.at < pos)) {
-        // правилам с «символом перед маркером» даём заглянуть на один символ назад
+        // правила lead смотрят на один символ назад
         res[i].lastIndex = RULES[i].lead ? Math.max(0, pos - 1) : pos;
         const m = res[i].exec(text);
         c = m ? { m, at: m.index + (RULES[i].lead ? m[1].length : 0) } : null;
-        if (c && c.at < pos) c = null;  // не может случиться, но на всякий случай — без зацикливания
+        if (c && c.at < pos) c = null;  // guard against loops
         cache[i] = c;
       }
       if (c && c.at < bestAt) { bestAt = c.at; best = i; }

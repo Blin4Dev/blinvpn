@@ -34,15 +34,15 @@ export default function ManageSubscription() {
   const goBack = useSmartBack("/");
 
   const [untilIso, setUntilIso] = useState<string | null>(null);
-  // Закончившаяся (ещё не удалённая) подписка: дата окончания и автоудаления
+  // истекла, но ещё не удалена: даты окончания и авто-удаления
   const [expiredAt, setExpiredAt] = useState<string | null>(null);
   const [deleteAt, setDeleteAt] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [trafficResetPrice, setTrafficResetPrice] = useState(0);
-  // Продление запрещено администратором: кнопки «Продлить» нет
+  // admin blocked renew: no «продлить» button
   const [noRenew, setNoRenew] = useState(false);
   const [appSheet, setAppSheet] = useState(false);
-  // В пробной подписке докупать устройства нельзя
+  // пробная: доп. устройства не купить
   const [isTrial, setIsTrial] = useState(false);
   const [traffic, setTraffic] = useState<TrafficInfo | null>(null);
 
@@ -50,7 +50,7 @@ export default function ManageSubscription() {
 
   const closeSheet = () => {
     setAppSheet(false);
-    // Убираем ?setup=1, чтобы окно не открылось снова при возврате на страницу
+    // убрать ?setup=1, чтобы лист не открылся снова при «назад»
     if (new URLSearchParams(location.search).has("setup")) navigate("/subscription", { replace: true });
   };
 
@@ -76,13 +76,13 @@ export default function ManageSubscription() {
           delete_at?: string | null;
         }>("/subscription");
         if (data.status === "expired") {
-          // Экран «Истекла» показываем даже если сервер не прислал дату
+          // показать экран «истекла» даже без даты с сервера
           setExpiredAt(data.expired_key?.expiry_date || new Date().toISOString());
           setDeleteAt(data.delete_at || null);
           return;
         }
         if (!data.until) {
-          // Подписки нет (или уже удалена) — на главную, там кнопка оформления
+          // нет подписки (или уже удалена) → на главную к оформлению
           setLoaded(true);
           navigate("/", { replace: true });
           return;
@@ -102,7 +102,7 @@ export default function ManageSubscription() {
   );
   const { days, h, m, s, ms } = useCountdown(validUntil);
 
-  // Подписка закончилась, пока страница открыта — переключаемся на экран «Истекла»
+  // подписка истекла, пока страница открыта → экран «истекла»
   useEffect(() => {
     if (untilIso && ms <= 0 && !expiredAt) {
       setExpiredAt(untilIso);
@@ -116,7 +116,7 @@ export default function ManageSubscription() {
       ? "нет активной подписки"
       : "загрузка…";
 
-  // Пока данные не пришли — экран загрузки, а не заглушка «1 день»
+  // загрузка, пока нет данных (не заглушка «1 день»)
   if (!loaded && !expiredAt) return <LoadingScreen />;
 
   if (expiredAt) {

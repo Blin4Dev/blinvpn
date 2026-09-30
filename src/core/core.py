@@ -1,13 +1,3 @@
-"""
-BlinVPN Core REST API
-
-Мост между админ-панелью (/api/panel/*) и Telegram mini-app (/api/app/*).
-Данные хранятся в SQLite через database.py.
-
-Запуск:
-  uvicorn core:app --host 0.0.0.0 --port 8000
-  (из каталога src/core)
-"""
 
 from __future__ import annotations
 
@@ -31,7 +21,7 @@ try:
 except ImportError:
     import database as db  # type: ignore
 
-# src/api (platega, telegram_stars, remnawave) в путь импорта
+# src/api (platega, telegram_stars, remnawave) в sys.path
 import sys as _sys
 _API_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "api"))
 if os.path.isdir(_API_DIR) and _API_DIR not in _sys.path:
@@ -151,9 +141,6 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-# ─────────────────────────────────────────────────────────────
-# Settings
-# ─────────────────────────────────────────────────────────────
 
 def _env(key: str, default: str = "") -> str:
     return (os.getenv(key) or default).strip()
@@ -168,7 +155,7 @@ def _env_int(key: str, default: int) -> int:
 
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
 TELEGRAM_WEBHOOK_SECRET = _env("TELEGRAM_WEBHOOK_SECRET")
-# Обязательная подписка на канал (только при входе через Telegram).
+# обязательная подписка на канал (только telegram-вход)
 REQUIRED_CHANNEL_ID = _env("REQUIRED_CHANNEL_ID", "-1003036752851")
 REQUIRED_CHANNEL_URL = _env("REQUIRED_CHANNEL_URL", "https://t.me/blinvpn")
 CHANNEL_CHECK_TTL = _env_int("CHANNEL_CHECK_TTL", 600)  # кэш проверки подписки, сек
@@ -179,22 +166,16 @@ INTERNAL_API_SECRET = _env("INTERNAL_API_SECRET")
 TELEGRAM_INITDATA_MAX_AGE = _env_int("TELEGRAM_INITDATA_MAX_AGE", 3600)
 MINIAPP_ALLOW_UNAUTH = _env("MINIAPP_ALLOW_UNAUTH", "0") in ("1", "true", "True", "yes")
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "*").split(",") if o.strip()]
-# Fail-closed по умолчанию: если ENV не задан явно — считаем это продакшеном,
-# чтобы забытая переменная не открыла dev-обходы авторизации.
+# fail-closed: без ENV считаем production
 ENV = _env("ENV", "production")
 IS_PROD = ENV == "production"
 
-# Платежи
 MINIAPP_URL = _env("MINIAPP_URL").rstrip("/")
 PLATEGA_RETURN_URL = _env("PLATEGA_RETURN_URL") or (f"{MINIAPP_URL}/payment/success" if MINIAPP_URL else "")
 PLATEGA_FAILED_URL = _env("PLATEGA_FAILED_URL") or (f"{MINIAPP_URL}/payment/failed" if MINIAPP_URL else "")
 
-# ─────────────────────────────────────────────────────────────
-# App
-# ─────────────────────────────────────────────────────────────
 
-# В проде не публикуем Swagger/OpenAPI — не отдаём карту всех ручек (в т.ч.
-# админских) неаутентифицированному посетителю.
+# в проде без swagger/openapi
 app = FastAPI(
     title="BlinVPN API",
     version="1.0.0",
@@ -203,10 +184,8 @@ app = FastAPI(
     openapi_url=None if IS_PROD else "/api/openapi.json",
 )
 
-# Безопасность CORS: нельзя одновременно разрешать любой origin ("*") и
-# credentials — иначе любой сайт сможет слать запросы с куками/учётными данными.
-# Авторизация у нас через заголовки (Bearer / initData), поэтому при wildcard
-# просто отключаем credentials. В проде install.sh задаёт явные домены.
+# при origin=* credentials нельзя: куки утекли бы на любой сайт
+# у нас auth в заголовках, при wildcard credentials выключаем
 _cors_wildcard = CORS_ORIGINS == ["*"]
 app.add_middleware(
     CORSMiddleware,
@@ -218,16 +197,12 @@ app.add_middleware(
 )
 
 
-# Просмотры, которые тоже пишем в журнал: карточка пользователя и его подписка
+# get карточки юзера/подписки тоже пишем в журнал
 _AUDIT_GET_RX = re.compile(r"^/api/panel/users/\d+(?:/detail|/remnawave)?$")
 
 
 class PanelAuditMiddleware:
-    """
-    Журнал действий панели: каждый изменяющий запрос (не GET) к /api/panel/*
-    от вошедшего владельца или сотрудника — кто, что, с каким результатом.
-    Чистый ASGI (без BaseHTTPMiddleware), чтобы не мешать потоковой загрузке файлов.
-    """
+    """журнал изменяющих запросов панели (asgi, без basehttpmiddleware)."""
 
     def __init__(self, app_):
         self.app = app_
@@ -261,7 +236,7 @@ app.add_middleware(PanelAuditMiddleware)
 
 
 def _backup_scheduler_loop() -> None:
-    """Периодический автобэкап БД по настройке (enabled + interval_hours)."""
+    """автобэкап бд по enabled + interval_hours."""
     import threading
 
     while True:
@@ -279,23 +254,23 @@ def _backup_scheduler_loop() -> None:
                     create_backup()
         except Exception:  # noqa: BLE001
             pass
-        # Сверка платежей (потерянные callback, зависшие, брошенные).
+        # сверка платежей (потерянные callback и т.п.)
         try:
             fulfillment.reconcile_payments(lambda m: print(m, flush=True))
         except Exception as exc:  # noqa: BLE001
             print(f"[payments] сверка упала: {exc}", flush=True)
-        # Старые записи ограничителя частоты.
+        # чистка старых записей rate limit
         try:
             ratelimit.cleanup()
         except Exception:  # noqa: BLE001
             pass
-        # Проверяем раз в 5 минут; сам бэкап — не чаще, чем interval_hours.
+        # цикл раз в 5 мин; бэкап сам смотрит interval_hours
         threading.Event().wait(300)
 
 
 @app.exception_handler(Exception)
 async def _unhandled_exc(request: Request, exc: Exception):
-    # Непойманное исключение = серверная ошибка → топик «Ошибки».
+    # необработанное исключение -> топик «ошибки»
     try:
         forum.report_error(
             f"500 {request.method} {request.url.path}",
@@ -307,17 +282,13 @@ async def _unhandled_exc(request: Request, exc: Exception):
 
 
 def _bootstrap_admin() -> None:
-    """
-    При первом запуске создаёт админа со СЛУЧАЙНЫМ логином и паролем,
-    печатает их в консоль (логи контейнера) и кладёт в data/first_run_credentials.txt,
-    откуда install.sh покажет их один раз. Повторно данные не раскрываются.
-    """
+    """первый запуск: случайный админ, креды в first_run_credentials.txt."""
     if get_admin() is not None:
         return
-    admin, password = create_admin()  # логин случайный; пароль в БД не хранится
+    admin, password = create_admin()  # логин случайный; пароль в бд не хранится
 
-    # Пароль отдаём один раз через файл, который install.sh покажет и удалит.
-    # В логи контейнера пароль НЕ печатаем (логи хранятся) — только в файл.
+    # пароль один раз в файл для install.sh
+    # в логи контейнера пароль не пишем
     wrote_file = False
     path = os.path.join(os.path.dirname(os.path.abspath(db.get_db_path())), "first_run_credentials.txt")
     try:
@@ -334,7 +305,7 @@ def _bootstrap_admin() -> None:
     if wrote_file:
         print(f"[BlinVPN] Учётные данные панели записаны в {path} — показ при установке, затем файл удаляется.", flush=True)
     else:
-        # Файл записать не удалось — как запасной вариант печатаем в консоль.
+        # файл не записался, печатаем в консоль
         print(
             "\n============================================================\n"
             "  BlinVPN — доступ в панель (сохраните, больше не покажем)\n"
@@ -355,20 +326,20 @@ def _startup() -> None:
             print(f"[BlinVPN] заморозка удалена — возвращено в работу подписок: {n}", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[BlinVPN] unfreeze legacy failed: {exc}", flush=True)
-    # Рассылки, прерванные перезапуском сервера, не должны вечно «отправляться».
+    # рассылки, прерванные рестартом, не должны висеть «отправляется»
     try:
         db.execute("UPDATE mailings SET status = 'Interrupted' WHERE status = 'Sending'")
     except Exception:  # noqa: BLE001
         pass
-    # Удаление рассылки, прерванное перезапуском, — доводим до конца.
+    # недоделанное удаление рассылки после рестарта
     try:
         import threading as _th
         for m in db.fetchall("SELECT id FROM mailings WHERE status = 'Deleting'"):
             _th.Thread(target=_purge_mailing, args=(int(m["id"]),), daemon=True).start()
     except Exception:  # noqa: BLE001
         pass
-    # Пересчитываем статус пользователей по фактическим подпискам
-    # (раньше всем новым ставился 'Trial', даже без подписки).
+    # статус юзеров по фактическим подпискам
+    # (раньше новым ставили Trial даже без подписки)
     try:
         for uid, st in user_states_map().items():
             if st != "Banned":
@@ -382,7 +353,7 @@ def _startup() -> None:
 
 
 def _rw_description_backfill() -> None:
-    """Однократно: внутренний ID в «Описание» уже существующих пользователей Remnawave."""
+    """разово: внутренний id в описание существующих юзеров remnawave."""
     try:
         rows = db.fetchall("SELECT id, telegram_id FROM users WHERE telegram_id IS NOT NULL")
         mapping = {int(r["telegram_id"]): int(r["id"]) for r in rows if r.get("telegram_id")}
@@ -395,10 +366,6 @@ def _rw_description_backfill() -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"[BlinVPN] Remnawave description backfill failed: {exc}", flush=True)
 
-
-# ─────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -470,16 +437,12 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return default
 
 
-# ─────────────────────────────────────────────────────────────
-# Telegram crypto
-# ─────────────────────────────────────────────────────────────
-
 def _telegram_data_check_string(fields: dict[str, str]) -> str:
     return "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
 
 
 class InitDataExpired(HTTPException):
-    """Подпись initData верная, но устарела (мини-приложение открыто слишком долго)."""
+    """подпись initdata верна, но протухла."""
 
     def __init__(self, telegram_id: int):
         super().__init__(401, detail={"message": "initData устарел"})
@@ -542,26 +505,18 @@ def validate_oauth_login(payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-# ─────────────────────────────────────────────────────────────
-# Domain helpers (SQLite)
-# ─────────────────────────────────────────────────────────────
-
 def get_admin() -> Optional[dict[str, Any]]:
     return db.fetchone("SELECT * FROM admin WHERE id = 1")
 
 
 def gen_admin_username() -> str:
-    """Случайный логин админа (не 'admin')."""
+    """случайный логин админа (не admin)."""
     alphabet = string.ascii_lowercase + string.digits
     return "adm-" + "".join(secrets.choice(alphabet) for _ in range(7))
 
 
 def create_admin(username: Optional[str] = None, password: Optional[str] = None) -> tuple[dict[str, Any], str]:
-    """
-    Создаёт/сбрасывает админа. В БД пишется ТОЛЬКО соль и PBKDF2-хэш — сам пароль
-    нигде не сохраняется (plaintext_once всегда NULL). Открытый пароль существует
-    лишь как возвращаемое значение (показать один раз) и в памяти вызывающего.
-    """
+    """создать/сбросить админа: в бд только соль и pbkdf2-хэш."""
     username = username or gen_admin_username()
     password = password or gen_password()
     digest, salt = hash_password(password)
@@ -572,8 +527,7 @@ def create_admin(username: Optional[str] = None, password: Optional[str] = None)
             "UPDATE admin SET username = ?, password_hash = ?, password_salt = ?, plaintext_once = NULL WHERE id = 1",
             (username, digest, salt),
         )
-        # Смена/сброс пароля обязана обнулять все активные сессии панели —
-        # иначе украденный ранее токен продолжит работать до конца TTL.
+        # смена пароля сбрасывает все сессии панели
         try:
             db.execute("DELETE FROM panel_sessions")
         except Exception:  # noqa: BLE001
@@ -597,15 +551,12 @@ PANEL_SESSION_TTL = 60 * 60  # 60 минут
 
 
 def _token_hash(token: str) -> str:
-    """
-    В БД храним только SHA-256 от токена сессии: утечка базы или бэкапа
-    не даёт готовых токенов для входа.
-    """
+    """в бд храним sha-256 токена сессии, не сам токен."""
     return hashlib.sha256(str(token or "").encode()).hexdigest()
 
 
 def create_panel_session(username: str, staff_id: Optional[int] = None) -> str:
-    """staff_id=None — сессия владельца панели, иначе — сотрудника."""
+    """staff_id=None: сессия владельца, иначе сотрудника."""
     token = gen_token()
     now = time.time()
     db.execute(
@@ -635,8 +586,6 @@ def get_panel_session(token: str) -> Optional[dict[str, Any]]:
     return row
 
 
-# ── App-сессии (мини-приложение / веб-вход по email) ─────────
-
 APP_SESSION_TTL = 30 * 86400  # 30 дней
 EMAIL_CODE_TTL = 600          # 10 минут
 EMAIL_CODE_RESEND = 60        # анти-спам на повторную отправку
@@ -649,7 +598,7 @@ def create_app_session(user_id: int) -> str:
         "INSERT INTO app_sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
         (_token_hash(token), int(user_id), now, now + APP_SESSION_TTL),
     )
-    # Не копим сессии: у пользователя остаются 10 самых свежих, истёкшие — удаляются.
+    # оставляем 10 свежих сессий, истёкшие удаляем
     db.execute(
         "DELETE FROM app_sessions WHERE user_id = ? AND token NOT IN "
         "(SELECT token FROM app_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 10)",
@@ -682,7 +631,7 @@ def _valid_email(email: str) -> bool:
 
 
 def create_email_code(email: str) -> tuple[str, bool]:
-    """Создаёт код входа. Возвращает (code, throttled)."""
+    """создаёт код входа. возвращает (code, throttled)."""
     email = email.strip().lower()
     now = time.time()
     existing = db.fetchone("SELECT last_sent_at FROM email_codes WHERE email = ?", (email,))
@@ -690,9 +639,7 @@ def create_email_code(email: str) -> tuple[str, bool]:
         row = db.fetchone("SELECT code FROM email_codes WHERE email = ?", (email,))
         return (str(row["code"]) if row else ""), True
     code = f"{secrets.randbelow(1_000_000):06d}"
-    # У каждого нового кода — свои 5 попыток: чужие неверные попытки не
-    # «сжигают» код владельцу почты. Перебор ограничен частотой выдачи кодов
-    # (раз в минуту, ≤ 30 в час на адрес) — это ~150 попыток в час из миллиона.
+    # у каждого кода свои 5 попыток
     attempts = 0
     db.execute(
         "INSERT OR REPLACE INTO email_codes (email, code, expires_at, attempts, last_sent_at) "
@@ -705,8 +652,7 @@ def create_email_code(email: str) -> tuple[str, bool]:
 def verify_email_code(email: str, code: str) -> bool:
     email = email.strip().lower()
     code = str(code or "").strip()
-    # Каждая проверка атомарно тратит попытку (не больше 5 на код) — параллельные
-    # запросы не дают лишних попыток; верный код удаляется в той же транзакции.
+    # атомарно тратим попытку; верный код удаляется тут же
     with db.transaction() as tx:
         row = tx.execute("SELECT * FROM email_codes WHERE email = ?", (email,)).fetchone()
         if not row:
@@ -724,7 +670,7 @@ def verify_email_code(email: str, code: str) -> bool:
 
 
 def send_login_code(email: str, code: str) -> None:
-    """Доставка кода входа на почту (no-reply@домен). Логируем результат."""
+    """доставка кода на почту; логируем результат."""
     if mailer.is_configured():
         ok, err = mailer.send_login_code(email, code)
         if ok:
@@ -734,7 +680,7 @@ def send_login_code(email: str, code: str) -> None:
             forum.report_error("Не удалось отправить код входа на почту", err)
         except Exception:  # noqa: BLE001
             pass
-    # Код входа — это учётные данные. В проде его НЕЛЬЗЯ писать в логи контейнера.
+    # код входа в проде в логи не пишем
     if not IS_PROD:
         print(f"[email] код входа для {email}: {code}", flush=True)
 
@@ -750,8 +696,7 @@ def set_temp_2fa(username: str, staff_id: Optional[int] = None) -> tuple[str, st
 
 
 def pop_temp_2fa(token: str) -> Optional[dict[str, Any]]:
-    """Забрать код входа ОДИН раз: чтение и удаление — одной транзакцией
-    (параллельные запросы с тем же токеном не получат вторую попытку)."""
+    """забрать код один раз: read+delete в одной транзакции."""
     th = _token_hash(token)
     with db.transaction() as tx:
         row = tx.execute("SELECT * FROM temp_2fa WHERE token = ?", (th,)).fetchone()
@@ -778,7 +723,7 @@ def upsert_telegram_user(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
 ) -> dict[str, Any]:
-    # Имя и фамилию из Telegram не храним (параметры оставлены для совместимости вызовов).
+    # имя/фамилию из telegram не храним (параметры для совместимости)
     first_name = last_name = None
     existing = find_user_by_tg(telegram_id)
     if existing:
@@ -814,7 +759,7 @@ def upsert_telegram_user(
 
 
 def _enforce_blacklist(user: dict[str, Any]) -> None:
-    """Пользователь из общего чёрного списка блокируется сразу при входе."""
+    """юзер из общего чёрного списка блокируется при входе."""
     try:
         blacklist.enforce(user)
     except Exception as exc:  # noqa: BLE001
@@ -836,14 +781,7 @@ def paid_until_for_user(user_id: int) -> Optional[str]:
 
 
 def subscription_status_for_user(u: dict[str, Any]) -> str:
-    """
-    banned  — аккаунт заблокирован;
-    blocked — ключ (подписка) заблокирован;
-    active / trial — есть действующая платная / пробная подписка;
-    expired — подписка закончилась, но ещё не удалена (7 дней на продление);
-    lapsed  — подписки были, но все уже удалены;
-    never   — подписок не было никогда.
-    """
+    """статус юзера: banned/blocked/active/trial/expired/none."""
     if u.get("is_banned"):
         return "banned"
     blocked = db.fetchone(
@@ -873,7 +811,7 @@ def subscription_status_for_user(u: dict[str, Any]) -> str:
 
 
 def last_expired_subscription(user_id: int) -> Optional[dict[str, Any]]:
-    """Последняя закончившаяся, но ещё не удалённая подписка (для продления)."""
+    """последняя истёкшая, ещё не удалённая подписка (для продления)."""
     return db.fetchone(
         "SELECT * FROM subscriptions WHERE user_id = ? AND status IN ('Active', 'Expired') "
         "AND COALESCE(no_renew, 0) = 0 "
@@ -900,7 +838,7 @@ def serialize_user(u: dict[str, Any], *, revenue: Optional[float] = None) -> dic
         "last_name": u.get("last_name"),
         "email": u.get("email"),
         "balance": u.get("balance", 0),
-        # Всегда фактическое состояние по подпискам (Active/Trial/Expired/None/Banned).
+        # всегда фактическое состояние по подпискам
         "status": u.get("_state") or fulfillment.compute_user_state(uid),
         "in_blacklist": banned,
         "is_banned": banned,
@@ -917,7 +855,7 @@ def serialize_user(u: dict[str, Any], *, revenue: Optional[float] = None) -> dic
 
 
 def no_renew_for_user(user_id: int) -> bool:
-    """Есть ли у пользователя живая подписка с запретом продления."""
+    """есть ли живая подписка с запретом продления."""
     return bool(db.fetchone(
         "SELECT 1 FROM subscriptions WHERE user_id = ? AND COALESCE(no_renew, 0) = 1 "
         "AND status IN ('Active', 'Expired', 'Banned') LIMIT 1",
@@ -935,14 +873,14 @@ def serialize_app_user(u: dict[str, Any]) -> dict[str, Any]:
         "email": u.get("email"),
         "subscription_status": status,
         "subscription_until": until,
-        # Заблокирован по общему чёрному списку — в приложении недоступна даже поддержка
+        # чёрный список: в приложении даже поддержка недоступна
         "blacklisted": bool(u.get("is_banned")) and str(u.get("ban_reason") or "").startswith(blacklist.BAN_REASON_PREFIX),
         "is_banned": bool(u.get("is_banned")),
         "referral_code": u.get("referral_code"),
         "is_partner": bool(u.get("is_partner")),
         "partner_balance": float(u.get("partner_balance") or 0),
         "discount": active_discount_for_user(int(u["id"])),
-        # Принял ли оферту и политику конфиденциальности (без этого приложение не пускает дальше)
+        # принял ли оферту и политику
         "terms_accepted": bool(u.get("terms_accepted_at")),
     }
 
@@ -957,7 +895,7 @@ def days_left_for_expiry(expires_at: Optional[str]) -> Optional[int]:
 
 
 def refresh_subscription_row(sub: dict[str, Any]) -> dict[str, Any]:
-    """Обновляет статус Expired при необходимости и добавляет days_left."""
+    """обновляет expired при необходимости и добавляет days_left."""
     status = sub.get("status") or "Active"
     exp = parse_iso(sub.get("expires_at"))
     if exp and exp < utcnow() and status == "Active":
@@ -1000,7 +938,7 @@ def serialize_key(sub: dict[str, Any], user: Optional[dict[str, Any]] = None) ->
 
 
 def _aa_warning(user_id: int) -> Optional[dict[str, Any]]:
-    """Действующее предупреждение анти-абуза (повторное нарушение после него — бан)."""
+    """действующее предупреждение анти-абуза."""
     row = db.fetchone("SELECT id, aa_warned_at FROM subscriptions WHERE user_id = ? AND status = 'Active' "
                       "AND aa_warned_at IS NOT NULL ORDER BY aa_warned_at DESC LIMIT 1", (int(user_id),))
     if not row:
@@ -1021,7 +959,7 @@ def sync_user_status_from_subs(user_id: int) -> None:
 
 
 def user_states_map() -> dict[int, str]:
-    """Состояние всех пользователей одним запросом (см. fulfillment.compute_user_state)."""
+    """состояние всех юзеров одним запросом."""
     now_iso = iso()
     rows = db.fetchall(
         """
@@ -1077,7 +1015,7 @@ def create_key(
             rw_id,
             key_uuid,
             short,
-            "",  # конфиг берётся из Remnawave (реальная подписка), не из vless-плейсхолдера
+            "",  # конфиг из remnawave, не из vless-плейсхолдера
             expiry,
             int(devices or 1),
             int(traffic or 0),
@@ -1134,7 +1072,7 @@ def serialize_transaction(tx: Optional[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _grant_fresh_subscription(user_id: int, days: int) -> None:
-    """Новая подписка из панели: в Remnawave (если есть Telegram) и в БД."""
+    """новая подписка из панели: remnawave (если есть tg) и бд."""
     user = get_user(user_id)
     if user and (user.get("telegram_id") or user.get("email")):
         new_exp = utcnow() + timedelta(days=days)
@@ -1161,7 +1099,7 @@ def extend_user_sub(user_id: int, days: int, subscription_id: Optional[int] = No
         )
     else:
         subs = db.fetchall("SELECT * FROM subscriptions WHERE user_id = ? AND status != 'Deleted'", (user_id,))
-    # Удалённая подписка (7 дней без оплаты) не «оживает» — выдаём новую.
+    # удалённая подписка не оживает, выдаём новую
     subs = [x for x in subs if x.get("status") != "Deleted"]
 
     if not subs:
@@ -1182,13 +1120,11 @@ def extend_user_sub(user_id: int, days: int, subscription_id: Optional[int] = No
     sync_user_status_from_subs(user_id)
 
 
-# ── Remnawave sync helpers (panel) ───────────────────────────
-
-GB = 1024 ** 3  # трафик в БД храним в ГБ, в Remnawave — в байтах
+GB = 1024 ** 3  # трафик в бд в гб, в remnawave в байтах
 
 
 def _rw_client():
-    """Клиент Remnawave или None, если панель не настроена/недоступна."""
+    """клиент remnawave или none."""
     try:
         import remnawave  # type: ignore
         if not provisioning.is_configured():
@@ -1199,7 +1135,7 @@ def _rw_client():
 
 
 def _rw_find_user(user: dict[str, Any]):
-    """(client, rw_user|None). Ищем по telegram_id, затем по email."""
+    """(client, rw_user|none): сначала telegram_id, потом email."""
     client = _rw_client()
     if not client:
         return None, None
@@ -1236,11 +1172,7 @@ def _rw_uid(rw: dict[str, Any]) -> Optional[str]:
 
 
 def _rw_num_id(rw: dict[str, Any]) -> Optional[int]:
-    """
-    ЧИСЛОВОЙ id пользователя Remnawave. В 3.x пользовательские ручки
-    (disable/enable/delete/extend/reset-traffic, update body, все HWID-эндпоинты)
-    идентифицируют пользователя именно числовым id, а НЕ uuid.
-    """
+    """числовой id юзера remnawave (ручки 3.x не принимают uuid)."""
     if not isinstance(rw, dict):
         return None
     val = rw.get("id")
@@ -1253,7 +1185,7 @@ def _rw_num_id(rw: dict[str, Any]) -> Optional[int]:
 
 
 def _rw_sync_expiry(user: dict[str, Any]) -> None:
-    """Пушим актуальную дату окончания основной подписки в Remnawave."""
+    """пушим дату окончания основной подписки в remnawave."""
     client, rw = _rw_find_user(user)
     if not client or not rw:
         return
@@ -1274,7 +1206,7 @@ def _rw_sync_expiry(user: dict[str, Any]) -> None:
         client.update_user(id=_rw_num_id(rw), expire_at=exp, status="ACTIVE")
     except Exception:  # noqa: BLE001
         pass
-    # Продлили вручную во время grace-доступа — вернуть обычные сквады и трафик
+    # ручное продление во время grace: вернуть сквады и трафик
     try:
         grace.end_for_user(int(user["id"]))
     except Exception:  # noqa: BLE001
@@ -1282,9 +1214,8 @@ def _rw_sync_expiry(user: dict[str, Any]) -> None:
 
 
 def _rw_sync_traffic(user: dict[str, Any], gb: int) -> None:
-    """Устанавливаем лимит трафика в Remnawave (ГБ → байты, 0 = безлимит)."""
-    # Grace «по трафику» снимаем (новый лимит — с нуля); на grace по сроку лимит
-    # в Remnawave не трогаем — он применится, когда подписку продлят
+    """лимит трафика в remnawave (гб->байты, 0=безлимит)."""
+    # grace по трафику снимаем; grace по сроку лимит не трогаем
     grace.end_for_user(int(user["id"]), traffic=True)
     if grace.active_for_user(int(user["id"])):
         return
@@ -1298,7 +1229,7 @@ def _rw_sync_traffic(user: dict[str, Any], gb: int) -> None:
 
 
 def _rw_sync_devices(user: dict[str, Any], devices: int) -> None:
-    """Лимит устройств (HWID) в Remnawave."""
+    """лимит устройств (hwid) в remnawave."""
     client, rw = _rw_find_user(user)
     if not client or not rw:
         return
@@ -1309,7 +1240,7 @@ def _rw_sync_devices(user: dict[str, Any], devices: int) -> None:
 
 
 def _rw_set_enabled(user: dict[str, Any], enabled: bool) -> None:
-    """Включить/выключить пользователя в Remnawave (блокировка ключа)."""
+    """включить/выключить юзера в remnawave."""
     client, rw = _rw_find_user(user)
     if not client or not rw:
         return
@@ -1323,18 +1254,13 @@ def _rw_set_enabled(user: dict[str, Any], enabled: bool) -> None:
 
 
 def _notify_user(user: dict[str, Any], text: str, *, email: bool = False) -> dict[str, Any]:
-    """
-    Уведомление пользователю в бота. На почту — только если email=True
-    (личное сообщение от админа). Обычные уведомления на почту не шлём:
-    туда уходят лишь коды, рассылки, привязка почты и входы в аккаунт.
-    """
+    """уведомление в бота; на почту только если email=true."""
     result = {"telegram": False, "email": False}
     if not text:
         return result
     if telegram_stars is not None and user.get("telegram_id"):
         try:
-            # Текст из панели — обычный текст: экранируем, иначе «<3» или «a < b»
-            # ломают HTML-разметку и сообщение не доставляется.
+            # текст из панели экранируем под html
             telegram_stars.TelegramStars().send_message(int(user["telegram_id"]), _esc_html(text))
             result["telegram"] = True
         except Exception:  # noqa: BLE001
@@ -1346,7 +1272,7 @@ def _notify_user(user: dict[str, Any], text: str, *, email: bool = False) -> dic
 
 
 def _mail_async(fn, *args, **kwargs) -> None:
-    """Служебное письмо в фоне: вход/привязка не ждут SMTP."""
+    """служебное письмо в фоне, не блокируя ответ."""
     if not mailer.is_configured():
         return
 
@@ -1362,7 +1288,7 @@ def _mail_async(fn, *args, **kwargs) -> None:
 
 
 def _email_changed(old: Optional[str], new: Optional[str]) -> None:
-    """Письма о привязке/смене/отвязке почты."""
+    """письма о привязке/смене/отвязке почты."""
     old = (old or "").strip().lower() or None
     new = (new or "").strip().lower() or None
     if old == new:
@@ -1374,7 +1300,7 @@ def _email_changed(old: Optional[str], new: Optional[str]) -> None:
 
 
 def _device_from_ua(ua: str) -> str:
-    """Короткое имя устройства по User-Agent: «Chrome, Windows»."""
+    """короткое имя устройства по user-agent."""
     ua = ua or ""
     os_name = next((n for k, n in (
         ("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Windows", "Windows"),
@@ -1388,7 +1314,7 @@ def _device_from_ua(ua: str) -> str:
 
 
 def _notify_login(user: dict[str, Any], method: str, request: Optional[Request]) -> None:
-    """Письмо о входе в аккаунт (на сайт). Мини-приложение в Telegram не считается."""
+    """письмо о входе на сайт (мини-приложение не считается)."""
     email = (user.get("email") or "").strip()
     if not email:
         return
@@ -1425,7 +1351,7 @@ def _float_setting(key: str, default: float) -> float:
 
 def get_plans_meta() -> dict[str, Any]:
     return {
-        # Цена подписки = base_price (1 устройство) + extra_device_price × (устройств − 1)
+        # цена = base + extra * (devices - 1)
         "base_price": _float_setting("base_price", 99),
         "extra_device_price": _float_setting("extra_device_price", 40),
         "trial_enabled": trial_enabled(),
@@ -1448,11 +1374,7 @@ def price_for_devices(devices: int) -> float:
 
 
 def get_active_plans() -> list[dict[str, Any]]:
-    """
-    «Тарифы» строятся из двух настроек: базовая цена + цена доп. устройства.
-    Отдаём цены для 1…20 устройств — мини-приложение и расчёт платежа
-    работают с этим списком как раньше.
-    """
+    """цены для 1..20 устройств из base + extra."""
     out = []
     for n in range(1, MAX_PLAN_DEVICES + 1):
         price = price_for_devices(n)
@@ -1478,11 +1400,11 @@ def _backup_dir() -> str:
     return d
 
 
-BACKUPS_KEEP = 10  # и на диске, и в S3
+BACKUPS_KEEP = 10  # и на диске, и в s3
 
 
 def _s3_backups() -> list[dict[str, Any]]:
-    """Бэкапы в S3 (список ведём сами — новые первыми)."""
+    """бэкапы в s3, новые первыми."""
     items = db.loads(db.get_setting("s3_backups", "[]"), []) or []
     return [x for x in items if isinstance(x, dict) and x.get("key") and x.get("name")]
 
@@ -1516,15 +1438,14 @@ def list_backups() -> list[dict[str, Any]]:
     return out
 
 
-# Таблицы, которые НЕ попадают в бэкап (доступ без пароля / временные данные).
+# таблицы вне бэкапа (сессии/коды/временное)
 _BACKUP_SCRUB_TABLES = ("app_sessions", "panel_sessions", "temp_2fa", "email_codes", "rate_limits",
-                        # История мониторинга (графики за 7 дней) — самая объёмная часть базы;
-                        # сами ноды и инциденты в бэкапе остаются.
+                        # history мониторинга объёмная, ноды/инциденты оставляем
                         "mon_metrics", "mon_pings", "mon_speed", "mon_vless")
 
 
 def create_backup() -> dict[str, Any]:
-    """Онлайн-копия SQLite (безопасно при WAL). Возвращает сведения о файле."""
+    """онлайн-копия sqlite (wal). возвращает сведения о файле."""
     import sqlite3
 
     ts = utcnow().strftime("%Y%m%d-%H%M%S")
@@ -1535,8 +1456,7 @@ def create_backup() -> dict[str, Any]:
         dst = sqlite3.connect(path)
         try:
             src.backup(dst)
-            # Из копии убираем то, что даёт доступ без пароля: сессии, коды
-            # входа/2FA и служебные счётчики. Для восстановления они не нужны.
+            # из копии убираем сессии, коды входа/2fa, счётчики
             for table in _BACKUP_SCRUB_TABLES:
                 try:
                     dst.execute(f"DELETE FROM {table}")
@@ -1554,7 +1474,7 @@ def create_backup() -> dict[str, Any]:
         pass
     last = db.utcnow_iso()
     db.set_setting("backup_last", last)
-    # Ротация: на диске — последние BACKUPS_KEEP копий
+    # на диске последние BACKUPS_KEEP копий
     local = sorted((n for n in os.listdir(_backup_dir()) if n.endswith(".db")), reverse=True)
     for old in local[BACKUPS_KEEP:]:
         try:
@@ -1563,7 +1483,7 @@ def create_backup() -> dict[str, Any]:
             pass
     st = os.stat(path)
     _backup_to_s3(path, name)
-    # В Telegram отправляем сжатую копию (лимит ботов на файл — 50 МБ).
+    # в telegram сжатую копию (лимит бота 50 мб)
     try:
         import gzip
         import shutil
@@ -1587,7 +1507,7 @@ def create_backup() -> dict[str, Any]:
 
 
 def _backup_to_s3(path: str, name: str) -> None:
-    """Если настроено хранилище S3 — кладём туда сжатую копию; держим последние BACKUPS_KEEP."""
+    """если есть s3: кладём сжатую копию, держим BACKUPS_KEEP."""
     try:
         if not s3store.enabled():
             return
@@ -1651,7 +1571,7 @@ def serialize_promocode(p: dict[str, Any]) -> dict[str, Any]:
         "id": p["id"],
         "code": p["code"],
         "name": p.get("name"),
-        "type": "discount",  # единственный тип — скидка
+        "type": "discount",  # единственный тип: скидка
         "value": p["value"],  # процент скидки
         "uses_limit": p.get("uses_limit"),
         "uses_count": p.get("uses_count", 0),
@@ -1661,15 +1581,11 @@ def serialize_promocode(p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# Promo discounts (активированный промокод действует 90 дней, один раз)
-# ─────────────────────────────────────────────────────────────
-
 PROMO_DISCOUNT_DAYS = 90
 
 
 def active_global_discount() -> Optional[dict[str, Any]]:
-    """Активная глобальная скидка (акция type=global_discount), либо None."""
+    """активная глобальная скидка или none."""
     now_iso = db.utcnow_iso()
     row = db.fetchone(
         "SELECT name, value, expires_at FROM promotions "
@@ -1691,10 +1607,7 @@ def active_global_discount() -> Optional[dict[str, Any]]:
 
 
 def active_discount_for_user(user_id: int) -> Optional[dict[str, Any]]:
-    """
-    Самая выгодная НЕистёкшая скидка пользователя, либо None.
-    Учитывает и персональные промокоды, и глобальную акцию (берётся больший %).
-    """
+    """лучшая неистёкшая скидка юзера (промо или акция)."""
     now_iso = db.utcnow_iso()
     row = db.fetchone(
         "SELECT a.discount_percent AS percent, a.expires_at AS expires_at, p.code AS code, "
@@ -1723,19 +1636,19 @@ def active_discount_for_user(user_id: int) -> Optional[dict[str, Any]]:
 
 
 def discounted(amount: float, percent: float) -> float:
-    """Цена со скидкой (округление до целого рубля/звезды вниз, но не ниже 1)."""
+    """цена со скидкой, вниз до целого, не ниже 1."""
     if percent <= 0:
         return float(amount)
     result = float(amount) * (1.0 - percent / 100.0)
     return float(max(1, round(result)))
 
 
-# Максимальная суммарная скидка (чтобы стек не увёл цену в ноль).
+# потолок суммарной скидки
 MAX_TOTAL_DISCOUNT = 90.0
 
 
 def survey_bonus_percent(user_id: int) -> float:
-    """Скидка за пройденный опрос (0, если опрос не пройден). Стекается с остальными."""
+    """скидка за опрос (0 если не пройден)."""
     try:
         return float(survey.reward_percent(int(user_id)))
     except Exception:  # noqa: BLE001
@@ -1743,11 +1656,7 @@ def survey_bonus_percent(user_id: int) -> float:
 
 
 def effective_discount(user_id: int) -> dict[str, Any]:
-    """
-    Итоговая скидка пользователя: лучшая из промо/акций ПЛЮС бонус за опрос (5%),
-    суммарно не выше MAX_TOTAL_DISCOUNT. Возвращает dict с полями percent, base,
-    survey, code/name (если есть промо), active.
-    """
+    """итоговая скидка: лучший промо/акция + бонус опроса."""
     base_disc = active_discount_for_user(user_id)
     base = float((base_disc or {}).get("percent") or 0)
     bonus = survey_bonus_percent(user_id)
@@ -1766,10 +1675,7 @@ def effective_discount(user_id: int) -> dict[str, Any]:
 
 
 def apply_promo_to_user(user_id: int, code: str, *, by_admin: bool = False) -> dict[str, Any]:
-    """
-    Активирует промокод-скидку пользователю на 90 дней (одноразово на пользователя).
-    Единый источник логики — services.activate_promocode.
-    """
+    """активирует промокод-скидку на 90 дней (один раз на юзера)."""
     try:
         return services.activate_promocode(user_id, code)
     except services.ServiceError as exc:
@@ -1777,10 +1683,7 @@ def apply_promo_to_user(user_id: int, code: str, *, by_admin: bool = False) -> d
 
 
 def remove_user_promo(user_id: int, code: Optional[str] = None) -> int:
-    """
-    Снимает скидку у пользователя (админ). Если code задан — только этот промокод,
-    иначе все активные скидки. Возвращает число снятых активаций.
-    """
+    """снимает скидку у юзера (админ); code=только этот промо."""
     if code:
         promo = db.fetchone("SELECT id FROM promocodes WHERE code = ?", (code.upper().strip(),))
         if not promo:
@@ -1869,10 +1772,6 @@ def serialize_squad(s: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# Panel auth dependency
-# ─────────────────────────────────────────────────────────────
-
 OWNER_NAME = "Администратор"
 
 
@@ -1886,12 +1785,12 @@ def _staff_principal(st: dict[str, Any]) -> dict[str, Any]:
 
 
 def is_full(p: dict[str, Any]) -> bool:
-    """Полный доступ к поддержке и пользователям: владелец и кураторы."""
+    """полный доступ к поддержке: владелец и кураторы."""
     return p.get("role") in ("owner", "curator")
 
 
 def _staff_has_ticket_with(actor: str, user_id: int) -> bool:
-    """У сотрудника сейчас в работе обращение этого пользователя (он нажал «Начать»)."""
+    """сотрудник сейчас ведёт обращение этого юзера."""
     return bool(db.fetchone(
         "SELECT 1 FROM support_chats c JOIN support_tickets t ON t.id = c.open_ticket_id "
         "WHERE c.user_id = ? AND t.status = 'open' AND t.assigned_admin = ? LIMIT 1", (int(user_id), actor)))
@@ -1904,10 +1803,7 @@ def can_manage_user(p: dict[str, Any], user_id: int) -> bool:
 
 
 def _authorize_staff(p: dict[str, Any], method: str, path: str) -> None:
-    """
-    Запрет по умолчанию: путь открыт сотруднику, только если он есть в
-    staff.ROUTES и роль сотрудника проходит правило.
-    """
+    """путь открыт сотруднику только через staff.ROUTES + роль."""
     deny = HTTPException(403, detail={"message": "Недостаточно прав"})
     if not path.startswith("/api/panel/"):
         raise deny
@@ -1927,11 +1823,7 @@ def _authorize_staff(p: dict[str, Any], method: str, path: str) -> None:
 
 
 def require_panel(request: Request, authorization: Optional[str] = Header(None)) -> dict[str, Any]:
-    """
-    Сессия панели → «кто это» (владелец или сотрудник) + проверка прав на этот
-    запрос. Права сотрудника читаются из базы на КАЖДЫЙ запрос: изменение или
-    отключение действует сразу, без перевхода.
-    """
+    """сессия панели -> кто это + права на запрос."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, detail="Unauthorized")
     token = authorization.split(" ", 1)[1].strip()
@@ -1962,7 +1854,7 @@ def require_panel(request: Request, authorization: Optional[str] = Header(None))
 
 
 def require_owner(p: dict[str, Any] = Depends(require_panel)) -> dict[str, Any]:
-    """Только владелец панели (роли, настройки, бэкапы)."""
+    """только владелец панели."""
     if p.get("kind") != "owner":
         raise HTTPException(403, detail={"message": "Недостаточно прав"})
     return p
@@ -1983,10 +1875,6 @@ def _setup_token_ok(setup_token: Optional[str], header_token: Optional[str]) -> 
     return bool(candidate) and hmac.compare_digest(candidate, PANEL_SETUP_TOKEN)
 
 
-# ─────────────────────────────────────────────────────────────
-# Pydantic models
-# ─────────────────────────────────────────────────────────────
-
 class LoginBody(BaseModel):
     username: str
     password: str
@@ -2002,7 +1890,7 @@ class UserActionBody(BaseModel):
     value: Any = None
     notify: bool = False
     subscription_id: Optional[int] = None
-    confirm: bool = False  # подтверждено объединение аккаунтов (SET_EMAIL / SET_TELEGRAM_ID)
+    confirm: bool = False  # подтверждено объединение аккаунтов
 
 
 class MassActionBody(BaseModel):
@@ -2034,7 +1922,7 @@ class MailingBody(BaseModel):
     button_value: Optional[str] = None
     image_url: Optional[str] = None
     channels: list[str] = Field(default_factory=lambda: ["telegram"])  # telegram | email
-    subject: Optional[str] = None  # тема письма (для email-канала)
+    subject: Optional[str] = None  # тема письма (email-канал)
 
 
 class PromocodeBody(BaseModel):
@@ -2133,11 +2021,10 @@ class CreatePaymentBody(BaseModel):
     purpose: str = "subscription"  # subscription | extend | devices
     subscription_id: Optional[int] = None
     use_referral_balance: bool = False  # частично оплатить реф. балансом
-    return_to: Optional[str] = None  # экран мини-приложения, куда вернуть после оплаты
+    return_to: Optional[str] = None  # экран мини-приложения после оплаты
 
 
-# Минимальная сумма транзакции у провайдера (рубли). Оплата картой/СБП ниже
-# этих порогов провайдером не принимается.
+# минимум суммы у провайдера (руб)
 PROVIDER_MIN_RUB: dict[str, float] = {
     "card": 50.0,
     "sberpay": 50.0,
@@ -2163,8 +2050,8 @@ class EmailRequestBody(BaseModel):
 class EmailVerifyBody(BaseModel):
     email: str
     code: str
-    ref: Optional[str] = None  # реферальный код с сайта (?ref=…) — только при регистрации
-    merge: bool = False       # подтверждено объединение с аккаунтом, где этот email уже есть
+    ref: Optional[str] = None  # ref с сайта только при регистрации
+    merge: bool = False       # подтверждено объединение с аккаунтом этого email
 
 
 class OauthLoginBody(OauthBody):
@@ -2193,20 +2080,12 @@ class PlansUpdateBody(BaseModel):
     trial_hwid_max: Optional[int] = Field(None, ge=1, le=10)
 
 
-# ─────────────────────────────────────────────────────────────
-# Health
-# ─────────────────────────────────────────────────────────────
-
 @app.get("/api/health")
 @app.get("/health")
 def health() -> dict[str, Any]:
-    # Не раскрываем внутренние пути/окружение наружу.
+    # не светим внутренние пути наружу
     return {"ok": True, "service": "blinvpn-api"}
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL AUTH
-# ═════════════════════════════════════════════════════════════
 
 @app.get("/api/panel/auth/init")
 def panel_auth_init(
@@ -2214,7 +2093,7 @@ def panel_auth_init(
     reset: Optional[int] = Query(0),
     x_panel_setup_token: Optional[str] = Header(None, alias="X-Panel-Setup-Token"),
 ) -> dict[str, Any]:
-    # Требуется PANEL_SETUP_TOKEN (лежит только в .env на сервере).
+    # нужен PANEL_SETUP_TOKEN из .env
     if not _setup_token_ok(setup_token, x_panel_setup_token):
         return {"show_credentials": False}
 
@@ -2230,8 +2109,8 @@ def panel_auth_init(
             "message": "Сохраните логин и пароль — повторно они не показываются.",
         }
 
-    # Пароль в БД не хранится (только хэш), поэтому «показать старый» нельзя.
-    # По &reset=1 генерируем НОВЫЙ пароль (сброс) — показывается один раз.
+    # пароль в бд только хэш, старый не показать
+    # &reset=1: новый пароль, один раз
     if reset:
         admin, password = create_admin(username=admin["username"])
         return {
@@ -2252,10 +2131,8 @@ def panel_auth_init(
 def _client_ip(request: Optional[Request]) -> str:
     if not request:
         return ""
-    # Наш nginx добавляет реальный IP клиента В КОНЕЦ X-Forwarded-For
-    # ($proxy_add_x_forwarded_for). Берём ПОСЛЕДНИЙ элемент — клиент не может
-    # его подделать (любой присланный им XFF окажется левее). Это важно для
-    # честного rate-limiting входа в панель.
+    # nginx кладёт реальный ip в конец x-forwarded-for
+    # берём последний элемент (клиентский xff левее)
     fwd = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
     if fwd:
         parts = [p.strip() for p in fwd.split(",") if p.strip()]
@@ -2264,17 +2141,16 @@ def _client_ip(request: Optional[Request]) -> str:
     return request.client.host if request.client else ""
 
 
-LOGIN_FAIL_LIMIT = 10          # неудачных входов в один логин с одного IP…
-LOGIN_FAIL_WINDOW = 15 * 60    # …за 15 минут → с этого IP вход в логин закрыт
-LOGIN_FAIL_GLOBAL = 100        # со всех IP вместе за час — защита от подбора с многих адресов
+LOGIN_FAIL_LIMIT = 10          # неудач в логин с одного ip…
+LOGIN_FAIL_WINDOW = 15 * 60    # …за 15 мин -> вход с этого ip закрыт
+LOGIN_FAIL_GLOBAL = 100        # со всех ip за час: защита от разнесённого брутфорса
 LOGIN_FAIL_GLOBAL_WINDOW = 3600
 _DUMMY_SALT = secrets.token_hex(16)
 _DUMMY_HASH = hash_password(secrets.token_hex(16), _DUMMY_SALT)[0]
 
 
 def _trusted_ip(login: str, ip: str) -> bool:
-    """С этого IP в этот логин уже успешно входили (90 дней) — массовый подбор с
-    других адресов не должен запирать настоящего владельца логина."""
+    """с этого ip в этот логин уже входили (90 дней)."""
     admin = get_admin() or {}
     if admin and hmac.compare_digest(login.encode(), str(admin.get("username") or "").encode()):
         actor = "owner"
@@ -2289,7 +2165,7 @@ def _trusted_ip(login: str, ip: str) -> bool:
 
 
 def _send_staff_code(st: dict[str, Any], code: str, ip: str, ua: str) -> bool:
-    """Код 2FA сотруднику — в личные сообщения от бота (на его Telegram ID)."""
+    """код 2fa сотруднику в лс от бота."""
     if not TELEGRAM_BOT_TOKEN:
         return False
     text = (f"🔒 <b>Код входа в панель</b>: <code>{code}</code>\n"
@@ -2300,12 +2176,12 @@ def _send_staff_code(st: dict[str, Any], code: str, ip: str, ua: str) -> bool:
         r = notifier.call("sendMessage", {"chat_id": int(st["telegram_id"]), "text": text, "parse_mode": "HTML"}, timeout=10.0)
     except Exception:  # noqa: BLE001
         return False
-    return bool(r)  # None — Telegram не принял (бот не запущен у сотрудника, неверный ID)
+    return bool(r)  # none: telegram не принял
 
 
 @app.post("/api/panel/auth/login")
 def panel_login(body: LoginBody, request: Request = None) -> Any:  # type: ignore[assignment]
-    # Ограничение: 5 попыток с одного IP за 60 секунд.
+    # 5 попыток с одного ip за 60 сек
     ip = _client_ip(request) or "unknown"
     ua = ((request.headers.get("user-agent") if request else "") or "")[:300]
     allowed, retry = ratelimit.rate_limit(f"login:{ip}", 5, 60)
@@ -2320,9 +2196,8 @@ def panel_login(body: LoginBody, request: Request = None) -> Any:  # type: ignor
     password = str(body.password or "")[:256]
     fail_key = f"loginfail:{login.lower()}:{ip}"
     fail_all = f"loginfail:{login.lower()}"
-    # Подбор пароля: 10 ошибок в один логин с одного IP за 15 минут — с этого IP
-    # логин закрыт. Чужой IP так заблокировать сотрудника не может. Со всех IP
-    # вместе — не больше 100 ошибок в час (подбор с множества адресов).
+    # 10 ошибок логин+ip / 15 мин -> блок с этого ip
+    # со всех ip: не больше 100 ошибок в час
     if (ratelimit.peek(fail_key, LOGIN_FAIL_WINDOW) >= LOGIN_FAIL_LIMIT
             or (ratelimit.peek(fail_all, LOGIN_FAIL_GLOBAL_WINDOW) >= LOGIN_FAIL_GLOBAL and not _trusted_ip(login, ip))):
         return JSONResponse({"error": "Слишком много неудачных попыток. Повторите через 15 минут."},
@@ -2341,11 +2216,10 @@ def panel_login(body: LoginBody, request: Request = None) -> Any:  # type: ignor
         else:
             return JSONResponse({"error": "Админ не инициализирован. Вызовите /api/panel/auth/init"}, status_code=401)
 
-    # ── Владелец панели
     if hmac.compare_digest(login.encode(), str(admin["username"]).encode()):
         if not verify_password(password, admin["password_hash"], admin["password_salt"]):
             return fail("owner", OWNER_NAME)
-        # 2FA обязателен, если есть куда доставить код (форум «Коды» или админ в ЛС).
+        # 2fa если есть куда слать код (форум или лс)
         can_deliver = bool(TELEGRAM_BOT_TOKEN and (forum.chat_id() or forum.admin_chat_id()))
         if can_deliver:
             temp, code = set_temp_2fa(admin["username"])
@@ -2363,10 +2237,9 @@ def panel_login(body: LoginBody, request: Request = None) -> Any:  # type: ignor
                        "Настройте форум (Настройки → Форум) или TELEGRAM_ADMIN_ID в .env.",
         }
 
-    # ── Сотрудник: пароль + ВСЕГДА код в Telegram
     st = staffmod.by_username(login)
     if not st:
-        verify_password(password, _DUMMY_HASH, _DUMMY_SALT)  # одинаковое время ответа — логины не перебрать
+        verify_password(password, _DUMMY_HASH, _DUMMY_SALT)  # одинаковое время ответа, чтобы не перебирать логины
         return fail()
     if not verify_password(password, st["password_hash"], st["password_salt"]):
         return fail(f"staff:{st['id']}", staffmod.display_name(st))
@@ -2385,7 +2258,7 @@ def panel_login(body: LoginBody, request: Request = None) -> Any:  # type: ignor
 
 @app.post("/api/panel/auth/logout")
 def panel_logout(authorization: Optional[str] = Header(None)) -> dict[str, Any]:
-    """Завершает сессию панели на сервере (токен перестаёт работать сразу)."""
+    """завершает сессию панели на сервере."""
     if authorization and authorization.lower().startswith("bearer "):
         delete_panel_session(authorization.split(" ", 1)[1].strip())
     return {"ok": True}
@@ -2394,7 +2267,7 @@ def panel_logout(authorization: Optional[str] = Header(None)) -> dict[str, Any]:
 @app.post("/api/panel/auth/verify-code")
 def panel_verify_code(body: VerifyCodeBody, request: Request = None) -> Any:  # type: ignore[assignment]
     ip = _client_ip(request) or "unknown"
-    entry = pop_temp_2fa(body.temp_token)  # одна попытка на код: ошибка — вход заново
+    entry = pop_temp_2fa(body.temp_token)  # одна попытка на код: ошибка -> вход заново
     if not entry:
         return JSONResponse({"error": "Код истёк"}, status_code=401)
     sid = entry.get("staff_id")
@@ -2425,18 +2298,13 @@ def panel_verify_code(body: VerifyCodeBody, request: Request = None) -> Any:  # 
 
 @app.get("/api/panel/auth/me")
 def panel_me(p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Кто вошёл: владелец / куратор / оператор — панель по этому показывает разделы."""
+    """кто вошёл: owner/curator/operator."""
     out = {"kind": p["kind"], "role": p["role"], "username": p["username"], "name": p["name"]}
     if p["kind"] == "staff":
         out["staff_id"] = int(p["staff_id"])
         out["shift"] = staffpay.shift_now(int(p["staff_id"]))
     return out
 
-
-# ═════════════════════════════════════════════════════════════
-# СОТРУДНИКИ ПОДДЕРЖКИ (Поддержка → Сотрудники)
-#   владелец — всё; куратор — список, график (просмотр) и штрафы операторам
-# ═════════════════════════════════════════════════════════════
 
 class StaffCreateBody(BaseModel):
     username: str
@@ -2455,7 +2323,7 @@ class StaffUpdateBody(BaseModel):
 
 
 class StaffDayBody(BaseModel):
-    intervals: Optional[list[Any]] = None   # None — выходной
+    intervals: Optional[list[Any]] = None   # none: выходной
     pay: Any = 0
 
 
@@ -2497,7 +2365,7 @@ def _staff_or_404(staff_id: int) -> dict[str, Any]:
 
 
 def _curator_target(p: dict[str, Any], staff_id: int) -> dict[str, Any]:
-    """Куратор работает только с операторами (не с кураторами и не с собой)."""
+    """куратор работает только с операторами."""
     st = _staff_or_404(staff_id)
     if p["kind"] != "owner" and (staffmod.role_of(st) != "operator" or int(st["id"]) == int(p.get("staff_id") or 0)):
         raise HTTPException(403, detail={"message": "Куратор работает только с операторами"})
@@ -2505,7 +2373,7 @@ def _curator_target(p: dict[str, Any], staff_id: int) -> dict[str, Any]:
 
 
 def _release_staff_tickets(staff_id: int) -> None:
-    """Обращения, которые вёл сотрудник, снова в пуле — их может взять другой."""
+    """обращения сотрудника снова в пуле."""
     actor = f"staff:{int(staff_id)}"
     db.execute("UPDATE support_tickets SET assigned_admin = NULL, assigned_name = NULL WHERE status = 'open' AND assigned_admin = ?", (actor,))
     db.execute("UPDATE support_chats SET assigned_admin = NULL, assigned_name = NULL WHERE assigned_admin = ?", (actor,))
@@ -2527,7 +2395,7 @@ def panel_staff_list(p: dict = Depends(require_panel)) -> dict[str, Any]:
     owner = p["kind"] == "owner"
     rows = db.fetchall("SELECT * FROM panel_staff ORDER BY role, id")
     if not owner:
-        # куратору — только активные операторы (график и штрафы)
+        # куратору только активные операторы
         rows = [r for r in rows if r.get("is_active") and staffmod.role_of(r) == "operator"]
     return {"staff": [_staff_card(r, owner) for r in rows], "roles": staffmod.ROLES, "bot_ready": bool(TELEGRAM_BOT_TOKEN),
             "today": staffpay.today_msk().isoformat()}
@@ -2575,14 +2443,14 @@ def panel_staff_update(staff_id: int, body: StaffUpdateBody, _: dict = Depends(r
             kill = True
     if sets:
         sets["updated_at"] = iso()
-        cols = ", ".join(f"{k} = ?" for k in sets)  # ключи — только из кода выше
+        cols = ", ".join(f"{k} = ?" for k in sets)  # ключи только из кода выше
         db.execute(f"UPDATE panel_staff SET {cols} WHERE id = ?", (*sets.values(), int(staff_id)))
     if kill:
-        delete_staff_sessions(staff_id)       # новый пароль/Telegram или отключение — выход со всех устройств
+        delete_staff_sessions(staff_id)       # смена пароля/tg или отключение -> выход везде
     if body.is_active is False:
         _release_staff_tickets(staff_id)
         webpush.drop_actor(f"staff:{int(staff_id)}")
-        # будущие смены отключённого не начисляются (сегодняшняя — тоже)
+        # будущие смены отключённого не начисляются
         db.execute("DELETE FROM staff_days WHERE staff_id = ? AND day >= ?", (int(staff_id), staffpay.today_msk().isoformat()))
     return staffmod.public(staffmod.get(staff_id))
 
@@ -2604,8 +2472,6 @@ def panel_staff_delete(staff_id: int, _: dict = Depends(require_owner)) -> dict[
     db.execute("DELETE FROM panel_staff WHERE id = ?", (int(staff_id),))
     return {"ok": True}
 
-
-# ── График ───────────────────────────────────────────────────
 
 def _range(date_from: str, date_to: str) -> tuple[Any, Any]:
     a = _staff_call(staffpay.parse_day, date_from)
@@ -2646,8 +2512,6 @@ def panel_staff_bulk(staff_id: int, body: StaffBulkBody, _: dict = Depends(requi
     return {"days": n}
 
 
-# ── Деньги ───────────────────────────────────────────────────
-
 @app.get("/api/panel/staff/{staff_id}/ledger")
 def panel_staff_ledger(staff_id: int, _: dict = Depends(require_owner)) -> dict[str, Any]:
     _staff_or_404(staff_id)
@@ -2673,7 +2537,7 @@ class BonusBody(BaseModel):
 
 @app.post("/api/panel/staff/{staff_id}/bonuses")
 def panel_staff_bonus(staff_id: int, body: BonusBody, p: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Премия сотруднику — только владелец."""
+    """премия сотруднику, только владелец."""
     st = _staff_or_404(staff_id)
     r = _staff_call(staffpay.add_bonus, staff_id, body.amount, body.reason, p["actor"], p["name"] or "Администратор")
     if st.get("telegram_id"):
@@ -2720,7 +2584,7 @@ def panel_staff_fine_cancel(fine_id: int, p: dict = Depends(require_panel)) -> d
 @app.get("/api/panel/me/salary")
 def panel_my_salary(date_from: Optional[str] = Query(None, alias="from", max_length=10),
                     date_to: Optional[str] = Query(None, alias="to", max_length=10), p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Сотрудник: свой график, начисления, штрафы, выплаты и баланс."""
+    """сотрудник: график, начисления, штрафы, выплаты, баланс."""
     if p["kind"] != "staff":
         raise HTTPException(404, detail={"message": "Только для сотрудников"})
     sid = int(p["staff_id"])
@@ -2741,8 +2605,6 @@ def panel_staff_audit(actor: str = Query("", max_length=32), limit: int = Query(
         rows = db.fetchall("SELECT * FROM panel_audit ORDER BY id DESC LIMIT ?", (limit,))
     return {"items": rows}
 
-
-# ── Push-уведомления ─────────────────────────────────────────
 
 class PushSubBody(BaseModel):
     endpoint: str = Field(..., max_length=1000)
@@ -2783,13 +2645,9 @@ def panel_push_test(p: dict = Depends(require_panel)) -> dict[str, Any]:
     return {"sent": ok, "subscriptions": len(subs)}
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL STATS / FINANCE
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/dashboard")
 def panel_dashboard(_: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Главная: деньги сегодня/неделя, новые пользователи и список дел."""
+    """главная: деньги, новые юзеры, список дел."""
     return stats_mod.dashboard()
 
 
@@ -2798,7 +2656,7 @@ def panel_statistics(period: str = Query("30d", max_length=10),
                      date_from: Optional[str] = Query(None, alias="from", max_length=10),
                      date_to: Optional[str] = Query(None, alias="to", max_length=10),
                      _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Раздел «Статистика»: пресет (7d/30d/90d/365d/all) или свой период from–to (ГГГГ-ММ-ДД)."""
+    """статистика: пресет или from/to (гггг-мм-дд)."""
     d1 = d2 = None
     if date_from and date_to:
         try:
@@ -2849,7 +2707,7 @@ _METHOD_LABELS = {
 
 
 def _payment_methods_chart() -> list[dict[str, Any]]:
-    """Сколько оплат прошло каждым способом (только успешные платежи)."""
+    """сколько оплат каждым способом (только успешные)."""
     rows = db.fetchall(
         "SELECT CASE WHEN provider = 'balance' THEN 'balance' ELSE COALESCE(method, provider, 'other') END AS m, "
         "COUNT(*) AS c FROM payments WHERE status = 'paid' GROUP BY m ORDER BY c DESC"
@@ -2858,7 +2716,7 @@ def _payment_methods_chart() -> list[dict[str, Any]]:
 
 
 def _user_distribution() -> list[dict[str, Any]]:
-    """Активные / Пробные / Истекла / Нет подписки / Забанен — по фактическим подпискам."""
+    """разбивка статусов по фактическим подпискам."""
     counts = {"Active": 0, "Trial": 0, "Expired": 0, "None": 0, "Banned": 0}
     for st in user_states_map().values():
         counts[st] = counts.get(st, 0) + 1
@@ -2879,7 +2737,7 @@ def panel_statistics_full(
     days = {"week": 7, "month": 30, "year": 365}.get(period, 7)
     now = utcnow()
     txs = db.fetchall("SELECT * FROM transactions WHERE status = 'completed'")
-    # Раскладываем транзакции по дням один раз (а не перебираем все на каждый день).
+    # транзакции по дням один раз, не на каждый день
     by_day: dict[Any, float] = {}
     for tx in txs:
         amt = float(tx.get("amount") or 0)
@@ -2906,10 +2764,10 @@ def panel_statistics_full(
         "SELECT COUNT(*) AS c FROM subscriptions WHERE status = 'Active' AND type = 'vpn'"
     )
     total_subs = db.fetchone("SELECT COUNT(*) AS c FROM subscriptions")
-    # «Приглашающих» — сколько пользователей привели хотя бы одного человека.
+    # приглашающие: кто привёл хотя бы одного
     partners = int((db.fetchone(
         "SELECT COUNT(DISTINCT referred_by) AS c FROM users WHERE referred_by IS NOT NULL") or {}).get("c") or 0)
-    # Число приглашённых по каждому — одним запросом (а не 2 запроса на пользователя).
+    # число приглашённых одним запросом
     ref_counts = {
         int(r["rid"]): int(r["c"])
         for r in db.fetchall(
@@ -2969,8 +2827,7 @@ def panel_statistics_full(
 
 @app.get("/api/panel/finance/stats")
 def panel_finance_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
-    # Считаем по payments — той же таблице, что в списке «Финансы»,
-    # чтобы цифры не расходились с транзакциями/реф. балансом.
+    # считаем по payments, как в «финансах»
     deposits = db.fetchone(
         "SELECT COALESCE(SUM(amount), 0) AS s FROM payments "
         "WHERE status IN ('paid', 'completed') AND COALESCE(amount, 0) > 0"
@@ -3021,7 +2878,7 @@ def panel_payments(
     q: str = Query("", max_length=120),
     _: dict = Depends(require_panel),
 ) -> list[dict[str, Any]]:
-    """Оплаченные, возвращённые и чарджбеки. Поиск: ID платежа, ID транзакции Platega, пользователь."""
+    """оплаченные/возвраты/чарджбеки; поиск по id и юзеру."""
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
     where = "p.status IN ('paid', 'completed', 'refunding', 'refunded', 'chargeback')"
@@ -3064,10 +2921,6 @@ def panel_payments(
     ]
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL USERS
-# ═════════════════════════════════════════════════════════════
-
 def _filter_users(search: Optional[str], status: Optional[str]) -> list[dict[str, Any]]:
     items = db.fetchall("SELECT * FROM users ORDER BY id DESC")
     states = user_states_map()
@@ -3102,7 +2955,7 @@ def panel_users(
     items = _filter_users(search or q, status)
     page_data = paginate(items, limit, offset if offset else (page - 1) * limit)
     page_items = page_data["items"]
-    # Сумма успешных платежей пачкой, чтобы не N+1
+    # сумма успешных платежей пачкой (не n+1)
     revenue_map: dict[int, float] = {}
     if page_items:
         ids = [int(u["id"]) for u in page_items]
@@ -3207,7 +3060,7 @@ def panel_user_payments(user_id: int, _: dict = Depends(require_panel)) -> list[
         }
         for p in rows
     ]
-    # транзакции без связанного платежа (ручные начисления, рефералка)
+    # транзакции без платежа (ручные, рефералка)
     for t in txs:
         if t.get("payment_id") and t.get("payment_id") in paid_ids:
             continue
@@ -3231,7 +3084,7 @@ def panel_user_payments(user_id: int, _: dict = Depends(require_panel)) -> list[
 
 
 def _panel_tx_label(t: dict[str, Any]) -> str:
-    """Понятная подпись операции без платежа (рефералка, ручные начисления) для панели."""
+    """подпись операции без платежа для панели."""
     m = str(t.get("payment_method") or "")
     desc = str(t.get("description") or "")
     ref = re.search(r"user (\d+)", desc)
@@ -3245,8 +3098,6 @@ def _panel_tx_label(t: dict[str, Any]) -> str:
     return desc or "Операция"
 
 
-# ── Возвраты (Platega cancel) ────────────────────────────────
-
 def _payment_refundable(p: dict[str, Any]) -> bool:
     return bool(
         p.get("provider") in ("platega", "tg_stars")
@@ -3256,7 +3107,7 @@ def _payment_refundable(p: dict[str, Any]) -> bool:
 
 
 def _payment_description(purpose: Optional[str], user_id: Any) -> str:
-    """Человекочитаемое описание платежа для панели. В скобках — внутренний id юзера."""
+    """описание платежа для панели (в скобках внутренний id)."""
     uid = user_id if user_id is not None else "—"
     label = {
         "subscription": "Покупка подписки",
@@ -3268,22 +3119,20 @@ def _payment_description(purpose: Optional[str], user_id: Any) -> str:
 
 
 def _reverse_referral_bonus(payment: dict[str, Any]) -> None:
-    """Снимает реферальный бонус, начисленный пригласившему за этот платёж (возврат/чарджбек)."""
+    """снять реф. бонус пригласившему за этот платёж."""
     try:
         pid = payment.get("payment_id")
         if db.fetchone("SELECT 1 FROM transactions WHERE payment_id = ? AND payment_method = 'referral_reversal' LIMIT 1",
                        (pid,)):
             return  # уже снят
-        # Снимаем ровно тот бонус, что был начислен за этот платёж, и тому, кому он был
-        # начислен (ставка и пригласивший могли с тех пор измениться или быть отвязаны).
+        # снимаем ровно тот бонус и тому, кому начислили
         credited = db.fetchone("SELECT user_id, amount FROM transactions WHERE hash = ? AND payment_method = 'referral' "
                                "AND amount > 0 ORDER BY id LIMIT 1", (f"pay:{pid}",))
         if credited:
             referrer = get_user(int(credited["user_id"]))
             bonus = round(float(credited["amount"]), 2)
         else:
-            # Бонуса за этот платёж не было — если платёж проведён уже после того, как
-            # бонусы стали помечаться платежом. Иначе (старый платёж) — по ставке.
+            # нет бонуса с пометкой платежа: либо новый учёт, либо старый по ставке
             since = (db.fetchone("SELECT value FROM settings WHERE key = 'ref_hash_since'") or {}).get("value")
             paid = payment.get("paid_at") or payment.get("created_at") or ""
             if not since or paid >= since:
@@ -3313,7 +3162,7 @@ def _reverse_referral_bonus(payment: dict[str, Any]) -> None:
 
 
 def _refund_undo_plan(payment: dict[str, Any]) -> dict[str, Any]:
-    """Что отменить при возврате: из grant_info, а для старых платежей — по полям платежа."""
+    """что откатить: из grant_info или полей старого платежа."""
     info = db.loads(payment.get("grant_info"), None) if payment.get("grant_info") else None
     if isinstance(info, dict) and info.get("kind"):
         return info
@@ -3329,7 +3178,7 @@ def _refund_undo_plan(payment: dict[str, Any]) -> dict[str, Any]:
 
 
 def _later_paid_extends(payment: dict[str, Any], sub_id: int) -> list[dict[str, Any]]:
-    """Оплаченные ПОСЛЕ этого платежа продления той же подписки (они перекупали все устройства)."""
+    """оплаченные после этого продления той же подписки."""
     rows = db.fetchall(
         "SELECT payment_id, grant_info, paid_at, id FROM payments WHERE user_id = ? AND status = 'paid' AND payment_id != ?",
         (int(payment["user_id"]), payment.get("payment_id")))
@@ -3345,14 +3194,10 @@ def _later_paid_extends(payment: dict[str, Any], sub_id: int) -> list[dict[str, 
 
 
 def _segment_left_seconds(payment: dict[str, Any], plan: dict[str, Any], sub_id: int, now: datetime) -> int:
-    """
-    Сколько из оплаченных этим платежом дней ещё НЕ прошло. Срок подписки — цепочка
-    отрезков (каждый платёж дописывает свой в конец), дни тратятся по порядку. Уже
-    прошедшие дни не вернуть, а оставшиеся — снимаем; дни более поздних платежей не трогаем.
-    """
+    """сколько оплаченных этим платежом дней ещё не прошло."""
     months = max(1, int(payment.get("months") or 1))
     added = int(plan.get("added_seconds") or fulfillment.DAYS_PER_MONTH * months * 86400)
-    # Было более позднее продление уже истёкшей подписки → дни этого платежа истрачены.
+    # позднее продление истёкшей: дни этого платежа уже истрачены
     for r in _later_paid_extends(payment, sub_id):
         info = db.loads(r.get("grant_info"), None) or {}
         prev = parse_iso(info.get("prev_expires_at"))
@@ -3360,7 +3205,7 @@ def _segment_left_seconds(payment: dict[str, Any], plan: dict[str, Any], sub_id:
         if prev and at and prev <= at:
             return 0
     if plan.get("legacy"):
-        return added  # старый платёж без данных об отрезке — как раньше
+        return added  # старый платёж без отрезка: как раньше
     end = parse_iso(plan.get("end_at"))
     if not end:
         paid = parse_iso(payment.get("paid_at")) or parse_iso(payment.get("created_at")) or now
@@ -3370,7 +3215,7 @@ def _segment_left_seconds(payment: dict[str, Any], plan: dict[str, Any], sub_id:
         else:
             base = paid
         end = base + timedelta(seconds=added)
-    # Отрезки, уже снятые более ранними откатами, сдвинули наш отрезок назад.
+    # ранние откаты сдвинули наш отрезок назад
     shift = 0
     for r in db.fetchall("SELECT grant_info FROM payments WHERE user_id = ? AND status IN ('refunded', 'chargeback') "
                          "AND payment_id != ?", (int(payment["user_id"]), payment.get("payment_id"))):
@@ -3386,16 +3231,7 @@ def _segment_left_seconds(payment: dict[str, Any], plan: dict[str, Any], sub_id:
 
 
 def _revoke_subscription_for_payment(payment: dict[str, Any]) -> None:
-    """
-    Отменяет ровно то, что дал возвращённый/оспоренный платёж, не трогая более поздние:
-    - покупка/продление → снимаются ещё не прошедшие дни этого платежа; его устройства
-      снимаются, только если после него не было продлений (продление перекупает все
-      устройства); апгрейд пробной откатывается в пробную, если после не было продлений;
-    - докупка устройств → лимит уменьшается на купленные устройства (если после не
-      было продлений);
-    - сброс трафика → подписку не трогаем.
-    Если после отмены срок уже закончился — подписка отзывается.
-    """
+    """откатить ровно то, что дал этот платёж, не трогая поздние."""
     try:
         plan = _refund_undo_plan(payment)
         kind = plan.get("kind")
@@ -3440,7 +3276,7 @@ def _revoke_subscription_for_payment(payment: dict[str, Any]) -> None:
             cur_exp = parse_iso(sub.get("expires_at")) or now
             new_exp = cur_exp - timedelta(seconds=left)
             if new_exp <= now + timedelta(minutes=1):
-                new_exp = now  # остались секунды — считаем, что оплаченного времени нет
+                new_exp = now  # остались секунды: считаем, что оплаченного времени нет
             if kind == "new":
                 given = int(plan.get("devices") or 0) or max(1, int(payment.get("plan_devices") or 1) + int(payment.get("extra_devices") or 0))
                 new_dev = cur_dev if later else max(1, cur_dev - (given - 1))
@@ -3486,7 +3322,7 @@ def _revoke_subscription_for_payment(payment: dict[str, Any]) -> None:
 
 def _finalize_refund(payment_id: str, p: dict[str, Any], admin: dict[str, Any],
                      message: str, manual: bool = False) -> dict[str, Any]:
-    """Общая финализация возврата: пометка refunded, откат бонуса, отзыв подписки, уведомление."""
+    """финализация возврата: refunded, бонус, подписка, уведомление."""
     info = db.dumps({"message": message, "manual": manual, "by": admin.get("username")})
     cur = db.execute(
         "UPDATE payments SET status = 'refunded', refunded_at = ?, refund_info = ? "
@@ -3502,7 +3338,7 @@ def _finalize_refund(payment_id: str, p: dict[str, Any], admin: dict[str, Any],
             pass
         return {"ok": False, "message": f"Платёж в статусе «{fresh.get('status')}» — проверьте вручную"}
     db.execute("UPDATE transactions SET status = 'refunded' WHERE payment_id = ?", (payment_id,))
-    _reverse_referral_bonus(p)  # для звёзд (XTR) это no-op — реф. бонус там не начислялся
+    _reverse_referral_bonus(p)  # для xtr no-op: реф. бонус там не начислялся
     _revoke_subscription_for_payment(p)
     try:
         services.reverse_tracking_payment(int(p["user_id"]), float(p.get("amount") or 0))
@@ -3530,12 +3366,7 @@ CHARGEBACK_REFUND_BLOCK = ("По этому платежу пришёл чард
 
 def _rollback_payment(payment_id: str, p: dict[str, Any], admin: dict[str, Any], note: str,
                       ban: bool = False) -> dict[str, Any]:
-    """
-    Чарджбек: банк уже вернул деньги по спору — мы только откатываем последствия
-    платежа (подписка/дни/устройства, реф. бонус пригласившему, трекинг). Деньги
-    через провайдера НЕ возвращаются. Откатывается именно этот платёж, даже если
-    после него были другие оплаты.
-    """
+    """чарджбек: банк уже вернул деньги, откатываем последствия у нас."""
     if p.get("provider") not in CHARGEBACK_PROVIDERS:
         raise HTTPException(400, detail={"message": "Чарджбек бывает только по оплате картой/СБП или звёздами"})
     info = db.dumps({"note": note, "by": admin.get("name") or admin.get("username")})
@@ -3570,7 +3401,7 @@ def _rollback_payment(payment_id: str, p: dict[str, Any], admin: dict[str, Any],
 
 
 def _chargeback_ban(p: dict[str, Any], payment_id: str, note: str, admin: dict[str, Any]) -> bool:
-    """Бан за чарджбек (если попросили). True — забанили сейчас; уже забаненного не трогаем."""
+    """бан за чарджбек. true если забанили сейчас."""
     user = get_user(int(p["user_id"]))
     if not user or user.get("is_banned"):
         return False
@@ -3599,7 +3430,7 @@ def panel_payment_chargeback(payment_id: str, body: Optional[ChargebackBody] = N
 
 @app.get("/api/panel/payments/{payment_id}/refund-check")
 def panel_payment_refund_check(payment_id: str, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Проверка возможности возврата (Platega — cancel-supported; Stars — всегда доступно)."""
+    """можно ли вернуть: platega cancel-supported; stars всегда."""
     p = fulfillment.get_payment(payment_id)
     if not p:
         raise HTTPException(404, detail={"message": "Платёж не найден"})
@@ -3623,12 +3454,7 @@ def panel_payment_refund_check(payment_id: str, _: dict = Depends(require_panel)
 
 @app.post("/api/panel/payments/{payment_id}/refund")
 def panel_payment_refund(payment_id: str, admin: dict = Depends(require_panel)) -> dict[str, Any]:
-    """
-    Возврат средств: Platega (POST /transaction/{id}/cancel) ИЛИ Telegram Stars
-    (refundStarPayment). Помечает платёж refunded, снимает реф. бонус аплайна,
-    отзывает подписку. Реферальная часть (если оплачивалась балансом) назад не
-    возвращается — возвращается только фактически оплаченная провайдеру сумма.
-    """
+    """возврат: platega cancel или stars refundstarpPayment."""
     p = fulfillment.get_payment(payment_id)
     if not p:
         raise HTTPException(404, detail={"message": "Платёж не найден"})
@@ -3636,9 +3462,7 @@ def panel_payment_refund(payment_id: str, admin: dict = Depends(require_panel)) 
         raise HTTPException(409, detail={"message": CHARGEBACK_REFUND_BLOCK})
     if not _payment_refundable(p):
         raise HTTPException(400, detail={"message": "Этот платёж нельзя вернуть"})
-    # Сначала атомарно забираем платёж (paid → refunding) и только потом идём к
-    # провайдеру: параллельный чарджбек / отметка о чарджбеке / второй возврат
-    # уже не пройдут, и деньги по оспоренному платежу не уйдут.
+    # сначала paid->refunding, потом к провайдеру
     claim = db.execute("UPDATE payments SET status = 'refunding' WHERE payment_id = ? AND status = 'paid' "
                        "AND chargeback_reported_at IS NULL", (payment_id,))
     if claim.rowcount == 0:
@@ -3650,7 +3474,6 @@ def panel_payment_refund(payment_id: str, admin: dict = Depends(require_panel)) 
     def _unclaim() -> None:
         db.execute("UPDATE payments SET status = 'paid' WHERE payment_id = ? AND status = 'refunding'", (payment_id,))
 
-    # ── Telegram Stars ───────────────────────────────────────
     if p.get("provider") == "tg_stars":
         if telegram_stars is None or not telegram_stars.TelegramStars().is_configured():
             _unclaim()
@@ -3667,7 +3490,6 @@ def panel_payment_refund(payment_id: str, admin: dict = Depends(require_panel)) 
             raise HTTPException(502, detail={"message": f"Telegram: {exc}"})
         return _finalize_refund(payment_id, p, admin, "Звёзды возвращены пользователю")
 
-    # ── Platega ──────────────────────────────────────────────
     if platega is None:
         _unclaim()
         raise HTTPException(503, detail={"message": "Платёжный модуль недоступен"})
@@ -3690,7 +3512,7 @@ def panel_payment_refund(payment_id: str, admin: dict = Depends(require_panel)) 
 
 @app.get("/api/panel/surveys/stats")
 def panel_survey_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Общая статистика опроса: сколько прошло + разбивка ответов по вопросам."""
+    """статистика опроса: сколько прошло + ответы."""
     total_started = int((db.fetchone("SELECT COUNT(*) c FROM survey_state") or {}).get("c") or 0)
     total_completed = int((db.fetchone(
         "SELECT COUNT(*) c FROM survey_state WHERE completed = 1") or {}).get("c") or 0)
@@ -3734,7 +3556,7 @@ def panel_survey_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
 
 @app.put("/api/panel/surveys/questions")
 def panel_survey_questions(body: dict[str, Any] = Body(...), _: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Вопросы опроса и скидка за прохождение (только владелец)."""
+    """вопросы опроса и скидка (только владелец)."""
     if len(json.dumps(body, ensure_ascii=False)) > 64_000:
         raise HTTPException(413, detail={"message": "Слишком много текста"})
     try:
@@ -3746,7 +3568,7 @@ def panel_survey_questions(body: dict[str, Any] = Body(...), _: dict = Depends(r
 
 @app.get("/api/panel/users/{user_id}/survey")
 def panel_user_survey(user_id: int, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Ответы конкретного пользователя на опрос (для карточки пользователя)."""
+    """ответы юзера на опрос."""
     st = db.fetchone(
         "SELECT completed, started_at, completed_at FROM survey_state WHERE user_id = ?", (user_id,))
     if not st:
@@ -3770,7 +3592,7 @@ def panel_user_survey(user_id: int, _: dict = Depends(require_panel)) -> dict[st
 
 @app.get("/api/panel/users/{user_id}/remnawave")
 def panel_user_remnawave(user_id: int, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Данные из Remnawave: онлайн, первое/последнее подключение, HWID-устройства."""
+    """данные remnawave: онлайн, подключения, hwid."""
     user = get_user(user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
@@ -3852,7 +3674,7 @@ def panel_user_hwid_unlink(user_id: int, body: HwidUnlinkBody, _: dict = Depends
 
 @app.get("/api/panel/users/{user_id}/detail")
 def panel_user_detail(user_id: int, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Полная карточка пользователя для страницы в панели."""
+    """полная карточка юзера для панели."""
     user = get_user(user_id)
     if not user:
         raise HTTPException(404, detail="User not found")
@@ -3898,7 +3720,7 @@ def panel_user_detail(user_id: int, _: dict = Depends(require_panel)) -> dict[st
             for u in refs
         ],
         "subscription": serialize_key(primary, user) if primary else None,
-        # Все подписки пользователя, включая удалённые (история).
+        # все подписки, включая удалённые
         "subscriptions_history": [
             {**serialize_key(x, user), "deleted_at": x.get("deleted_at"), "type": x.get("type")}
             for x in subs
@@ -3907,7 +3729,7 @@ def panel_user_detail(user_id: int, _: dict = Depends(require_panel)) -> dict[st
             "SELECT id FROM subscriptions WHERE user_id = ? AND status = 'Banned' LIMIT 1", (user_id,)
         )),
         "banned_at": user.get("banned_at") if user.get("is_banned") else None,
-        # Блокировки, баны и предупреждения анти-абуза — вся история
+        # блокировки, баны, предупреждения анти-абуза
         "moderation": moderation.for_user(user_id),
         "aa_warning": _aa_warning(user_id),
         "discount": active_discount_for_user(user_id),
@@ -3934,7 +3756,7 @@ def panel_user_detail(user_id: int, _: dict = Depends(require_panel)) -> dict[st
 
 
 def _ban_account(user: dict[str, Any], reason: Optional[str], p: dict[str, Any]) -> None:
-    """Блокировка аккаунта: причина, время, журнал, отказ по выводам, отключение в Remnawave."""
+    """блокировка аккаунта: причина, журнал, remnawave."""
     uid = int(user["id"])
     db.execute(
         "UPDATE users SET is_banned = 1, status = 'Banned', ban_reason = ?, banned_at = ? WHERE id = ?",
@@ -3961,7 +3783,7 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
     value = body.value
 
     if action in ("ADD_BALANCE", "SUB_BALANCE"):
-        # Внутреннего баланса у сервиса нет (есть только реферальный) — старые действия отключены
+        # внутреннего баланса нет, старые действия отключены
         raise HTTPException(400, detail={"message": "Внутреннего баланса нет — используйте реферальный баланс"})
     if action == "EXTEND_SUB":
         extend_user_sub(user_id, int(float(value or 0)), body.subscription_id)
@@ -4013,7 +3835,7 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
     elif action == "BAN":
         _ban_account(user, (str(value).strip()[:200] or None) if value else None, p)
     elif action == "UNBAN":
-        # Разбан вручную снимает и чёрный список: повторно он этого человека не заблокирует.
+        # разбан снимает и чёрный список
         db.execute("UPDATE users SET is_banned = 0, ban_reason = NULL, banned_at = NULL, blacklist_ignored = 1 WHERE id = ?", (user_id,))
         moderation.log(user_id, "unban", (str(value).strip()[:200] or None) if value else None,
                        actor=p.get("actor") or "owner", actor_name=p.get("name"))
@@ -4025,7 +3847,7 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
             except Exception:  # noqa: BLE001
                 pass
     elif action == "BLOCK_KEY":
-        # Блокируем ключ (подписку), а не аккаунт пользователя
+        # блокируем ключ, не аккаунт
         kreason = (str(value).strip()[:200] or None) if value else None
         for ks in db.fetchall("SELECT id FROM subscriptions WHERE user_id = ? AND status IN ('Active', 'Expired')", (user_id,)):
             moderation.log(user_id, "key_block", kreason, sub_id=int(ks["id"]), actor=p.get("actor") or "owner", actor_name=p.get("name"))
@@ -4039,9 +3861,8 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
             except Exception:  # noqa: BLE001
                 pass
     elif action == "UNBLOCK_KEY":
-        # Разблокируем: активные снова Active, но истёкшие вернутся в Expired при обращении
-        # Разблокировка снимает и предупреждение анти-абуза: при новом нарушении
-        # сначала снова придёт предупреждение, а не мгновенный бан.
+        # активные снова active; истёкшие станут expired при обращении
+        # сбрасываем предупреждение анти-абуза
         for ks in db.fetchall("SELECT id FROM subscriptions WHERE user_id = ? AND status = 'Banned'", (user_id,)):
             moderation.log(user_id, "key_unblock", None, sub_id=int(ks["id"]), actor=p.get("actor") or "owner", actor_name=p.get("name"))
         db.execute(
@@ -4057,7 +3878,7 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
             except Exception:  # noqa: BLE001
                 pass
     elif action == "SET_NO_RENEW":
-        # Запрет продления для текущих (не удалённых) подписок пользователя.
+        # запрет продления для текущих подписок
         try:
             flag = 1 if float(value or 0) > 0 else 0
         except (TypeError, ValueError):
@@ -4164,11 +3985,7 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
 
 
 def reset_user_subscription(user: dict[str, Any]) -> dict[str, Any]:
-    """
-    Сброс подписки в Remnawave (POST /api/users/{id}/actions/revoke): выдаётся
-    новый ключ — меняется shortUuid, ссылка на подписку и пароли/uuid протоколов.
-    Старая ссылка перестаёт работать. Новые данные сохраняем в наших подписках.
-    """
+    """revoke в remnawave: новый ключ/shortuuid/ссылка."""
     client, rw = _rw_find_user(user)
     if not client:
         raise HTTPException(400, detail={"message": "Remnawave не настроена"})
@@ -4183,7 +4000,7 @@ def reset_user_subscription(user: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, detail={"message": f"Remnawave: не удалось сбросить подписку ({exc})"})
     if not isinstance(fresh_rw, dict) or not (fresh_rw.get("shortUuid") or fresh_rw.get("short_uuid")):
-        # Некоторые версии возвращают неполный объект — перечитываем пользователя.
+        # некоторые версии отдают неполный объект, перечитываем
         _, fresh_rw = _rw_find_user(user)
     if not isinstance(fresh_rw, dict):
         raise HTTPException(502, detail={"message": "Remnawave не вернула нового пользователя"})
@@ -4201,11 +4018,7 @@ def reset_user_subscription(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _delete_user_keep_history(user_id: int) -> None:
-    """
-    Удаляет аккаунт, но СОХРАНЯЕТ финансовую историю (платежи, транзакции,
-    выводы) — она нужна для отчётности и возвратов. Внешние ключи на время
-    удаления отключаются, чтобы каскад не стёр платежи.
-    """
+    """удаляет аккаунт, финансовую историю сохраняет."""
     conn = db.connect()
     conn.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -4244,7 +4057,7 @@ MASS_ACTIONS = ("MASS_ADD_DAYS", "MASS_RESET_TRIAL", "MASS_RESET_TRAFFIC")
 
 
 def _mass_add_days_worker(sub_ids: list[int], days: int) -> None:
-    """Продление в фоне: сначала БД, затем Remnawave (по одному пользователю)."""
+    """продление в фоне: сначала бд, потом remnawave."""
     done_users: set[int] = set()
     for sid in sub_ids:
         sub = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (sid,))
@@ -4264,13 +4077,9 @@ def _mass_add_days_worker(sub_ids: list[int], days: int) -> None:
     print(f"[mass] +{days} дн.: продлено подписок {len(sub_ids)}, пользователей {len(done_users)}", flush=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PANEL: особые действия с подпиской — обмен устройств на дни и перенос
-# ─────────────────────────────────────────────────────────────────────────────
-
 class ExchangeBody(BaseModel):
     devices: int
-    days: Optional[float] = None      # итоговый остаток дней вручную (иначе — по расчёту)
+    days: Optional[float] = None      # итоговый остаток дней вручную, иначе по расчёту
     notify: bool = True
 
 
@@ -4288,7 +4097,7 @@ def _primary_sub(user_id: int) -> Optional[dict[str, Any]]:
 
 
 def _live_paid_sub(user_id: int) -> Optional[dict[str, Any]]:
-    """Платная подписка, у которой ещё осталось время."""
+    """платная подписка с оставшимся сроком."""
     sub = _primary_sub(user_id)
     if not sub or sub.get("status") != "Active":
         return None
@@ -4323,7 +4132,7 @@ def _exchange_calc(user_id: int, devices: int, days: Optional[float] = None) -> 
     old_dev = int(sub.get("devices_limit") or 1)
     left = (exp - now).total_seconds() / 86400
     p_old, p_new = price_for_devices(old_dev), price_for_devices(int(devices))
-    # Стоимость оставшегося срока сохраняется: меньше устройств → больше дней, и наоборот.
+    # стоимость срока сохраняется при смене числа устройств
     fair = left * p_old / p_new if p_new > 0 else left
     new_left = fair if days is None else max(0.0, float(days))
     new_exp = now + timedelta(days=new_left)
@@ -4443,7 +4252,7 @@ def panel_transfer(user_id: int, body: TransferBody, _: dict = Depends(require_p
         _, rw_src = _rw_find_user(src)
         _, rw_dst = _rw_find_user(dst)
         if client and rw_dst and rw_src and _rw_num_id(rw_dst) != _rw_num_id(rw_src):
-            # У получателя остался старый пользователь Remnawave (пробный/истёкший) — он мешает
+            # старый rw-юзер у получателя мешает, удаляем
             try:
                 client.delete_user(_rw_num_id(rw_dst))
             except Exception as exc:  # noqa: BLE001
@@ -4492,16 +4301,8 @@ def panel_transfer(user_id: int, body: TransferBody, _: dict = Depends(require_p
     return {"success": True, **plan}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ОБЪЕДИНЕНИЕ АККАУНТОВ
-# Когда к аккаунту привязывают email или Telegram, который уже есть у другого
-# аккаунта, аккаунты объединяются: дни подписок складываются, устройств берётся
-# больше из двух, балансы суммируются, история и рефералы переезжают.
-# Остаётся аккаунт, к которому привязывают (keep); второй (drop) удаляется.
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _live_any_sub(user_id: int) -> Optional[dict[str, Any]]:
-    """Действующая подписка (платная или пробная) с оставшимся сроком."""
+    """действующая подписка с оставшимся сроком."""
     now_iso = iso()
     return db.fetchone(
         "SELECT * FROM subscriptions WHERE user_id = ? AND status = 'Active' AND expires_at > ? "
@@ -4525,8 +4326,7 @@ def _days_str(td: timedelta) -> str:
 
 
 def _merged_left(ks: Optional[dict[str, Any]], ds: Optional[dict[str, Any]]) -> timedelta:
-    """Сколько останется после объединения: оплаченное время складывается,
-    пробное — нет (при оплаченной пропадает; если обе пробные — бо́льшая)."""
+    """что останется после объединения (оплата складывается, trial нет)."""
     subs = [x for x in (ks, ds) if x]
     if not subs:
         return timedelta(0)
@@ -4535,11 +4335,10 @@ def _merged_left(ks: Optional[dict[str, Any]], ds: Optional[dict[str, Any]]) -> 
 
 
 def merge_preview(keep: dict[str, Any], drop: dict[str, Any]) -> dict[str, Any]:
-    """Что произойдёт при объединении — для предупреждения в панели и мини-приложении."""
+    """превью объединения для панели и мини-приложения."""
     if int(keep["id"]) == int(drop["id"]):
         raise HTTPException(400, detail={"message": "Это тот же аккаунт"})
-    # Заблокированный аккаунт (или его ключ) нельзя объединять ни с какой стороны:
-    # иначе блокировку можно было бы «смыть», привязав вход к чистому аккаунту.
+    # заблокированный аккаунт/ключ объединять нельзя
     if subscription_status_for_user(drop) in ("banned", "blocked"):
         raise HTTPException(409, detail={"message": "Второй аккаунт заблокирован — объединить нельзя. Напишите в поддержку."})
     if subscription_status_for_user(keep) in ("banned", "blocked"):
@@ -4560,7 +4359,7 @@ def merge_preview(keep: dict[str, Any], drop: dict[str, Any]) -> dict[str, Any]:
     bal = float(drop.get("partner_balance") or 0)
     if bal > 0:
         lines.append(f"Реферальный баланс второго аккаунта ({bal:.2f} ₽) перейдёт сюда".replace(".00", ""))
-    # Ссылка на подписку второго аккаунта перестанет работать, если сохраняется ссылка этого
+    # ссылка подписки drop перестанет работать, если keep уже имеет свою
     link_changes = bool(ks and ds)
     if link_changes:
         lines.append("Подписку второго аккаунта нужно будет заново добавить в VPN-приложение")
@@ -4578,7 +4377,7 @@ def merge_preview(keep: dict[str, Any], drop: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
-    """Переносит всё с drop на keep и удаляет drop. Идентификаторы (tg/email) выставляет вызывающий."""
+    """переносит всё с drop на keep и удаляет drop."""
     keep, drop = get_user(keep_id), get_user(drop_id)
     if not keep or not drop:
         raise HTTPException(404, detail={"message": "Пользователь не найден"})
@@ -4591,13 +4390,11 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
     final_sub_id: Optional[int] = None
     with db.transaction():
         if ks and ds:
-            # Оплаченное время складывается, пробное — нет (иначе пробные можно копить
-            # объединением аккаунтов): при оплаченной — пробное пропадает, если обе
-            # пробные — остаётся бо́льшая.
+            # оплаченное время складывается, пробное нет
             new_exp = now + _merged_left(ks, ds)
             dev = max(int(ks.get("devices_limit") or 1), int(ds.get("devices_limit") or 1))
             to_paid = ks.get("type") == "trial" and ds.get("type") != "trial"
-            # Запрет продления сохраняется, если он был хотя бы на одной из подписок
+            # запрет продления, если был хотя бы на одной
             no_renew = 1 if (ks.get("no_renew") or ds.get("no_renew")) else 0
             db.execute("UPDATE subscriptions SET no_renew = ? WHERE id = ?", (no_renew, ks["id"]))
             db.execute(
@@ -4609,17 +4406,17 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
             db.execute("UPDATE subscriptions SET status = 'Deleted', deleted_at = ? WHERE id = ?", (iso(now), ds["id"]))
             final_sub_id = int(ks["id"])
         elif ds:
-            # Подписка есть только у второго аккаунта — переезжает целиком
+            # подписка только у drop: переезжает целиком
             db.execute("UPDATE subscriptions SET status = 'Deleted', deleted_at = ? "
                        "WHERE user_id = ? AND status != 'Deleted'", (iso(now), keep_id))
             final_sub_id = int(ds["id"])
         elif ks:
             final_sub_id = int(ks["id"])
-        # Переписка с поддержкой: у пользователя один чат — сообщения второго переносим в чат этого
+        # переписку поддержки сливаем в один чат
         kc = db.fetchone("SELECT id FROM support_chats WHERE user_id = ?", (keep_id,))
         dc = db.fetchone("SELECT id FROM support_chats WHERE user_id = ?", (drop_id,))
         if kc and dc:
-            # Обращения второго — после обращений этого (номера сдвигаем), открытым остаётся одно
+            # обращения drop после keep; открытым остаётся одно
             shift = int(db.fetchone("SELECT COALESCE(MAX(number), 0) AS n FROM support_tickets WHERE chat_id = ?", (kc["id"],))["n"])
             db.execute("UPDATE support_tickets SET chat_id = ?, number = number + ? WHERE chat_id = ?", (kc["id"], shift, dc["id"]))
             kopen = db.fetchone("SELECT open_ticket_id FROM support_chats WHERE id = ?", (kc["id"],))["open_ticket_id"]
@@ -4635,7 +4432,7 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
                        "WHERE id = ?), last_message_at = MAX(COALESCE(last_message_at, ''), COALESCE((SELECT last_message_at "
                        "FROM support_chats WHERE id = ?), '')) WHERE id = ?", (dc["id"], dc["id"], kc["id"]))
             db.execute("DELETE FROM support_chats WHERE id = ?", (dc["id"],))
-        # Все строки, привязанные к drop, — на keep (подписки, платежи, история, выводы, опрос…)
+        # строки drop -> keep
         tables = [r["name"] for r in db.fetchall("SELECT name FROM sqlite_master WHERE type = 'table'")]
         for t in tables:
             cols = {c["name"] for c in db.fetchall(f"PRAGMA table_info({t})")}
@@ -4655,14 +4452,14 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
         )
         drop_tg, drop_email = drop.get("telegram_id"), drop.get("email")
         db.execute("DELETE FROM users WHERE id = ?", (drop_id,))
-        # Аккаунт получает недостающие способы входа второго
+        # недостающие способы входа с drop
         if drop_tg and not keep.get("telegram_id"):
             db.execute("UPDATE users SET telegram_id = ?, username = COALESCE(username, ?) WHERE id = ?",
                        (drop_tg, drop.get("username"), keep_id))
         if drop_email and not keep.get("email"):
             db.execute("UPDATE users SET email = ? WHERE id = ?", (drop_email, keep_id))
 
-    # Remnawave: оставляем одного пользователя на итоговую подписку
+    # remnawave: один юзер на итоговую подписку
     fresh = get_user(keep_id) or keep
     if client:
         try:
@@ -4670,7 +4467,7 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
             keep_rw_id = _rw_num_id(rw_keep) if rw_keep else None
             drop_rw_id = _rw_num_id(rw_drop) if rw_drop else None
             if final and ds and not ks and drop_rw_id and not keep_rw_id:
-                # Подписка и её ссылка — у второго аккаунта: переводим его пользователя Remnawave на этот
+                # подписка у drop: переводим его rw-юзера на keep
                 patch: dict[str, Any] = {"id": drop_rw_id, "description": str(keep_id)}
                 if fresh.get("telegram_id"):
                     patch["telegram_id"] = int(fresh["telegram_id"])
@@ -4690,7 +4487,7 @@ def merge_accounts(keep_id: int, drop_id: int) -> dict[str, Any]:
             forum.report_error("Объединение аккаунтов: не удалось обновить Remnawave",
                                f"keep={keep_id} drop={drop_id}: {type(exc).__name__}: {exc}")
     sync_user_status_from_subs(keep_id)
-    # Аккаунт мог получить Telegram второго — проверяем по чёрному списку ещё раз
+    # мог получить tg drop: ещё раз чёрный список
     _enforce_blacklist(get_user(keep_id) or fresh)
     try:
         forum.send("errors", f"🔗 Аккаунты объединены: #{drop_id} → {forum.user_link(keep_id)}")
@@ -4712,8 +4509,7 @@ def panel_mass_action(body: MassActionBody, _: dict = Depends(require_panel)) ->
             raise HTTPException(400, detail={"message": "Укажите число дней"})
         if not 1 <= days <= 365:
             raise HTTPException(400, detail={"message": "Дней: от 1 до 365"})
-        # Только ДЕЙСТВУЮЩИЕ подписки (компенсация активным клиентам). Истёкшие
-        # и удалённые не трогаем — иначе они «оживут» без оплаты.
+        # только действующие подписки; истёкшие не оживляем
         rows = db.fetchall(
             "SELECT id FROM subscriptions WHERE status = 'Active' AND (expires_at IS NULL OR expires_at > ?)",
             (iso(),),
@@ -4733,12 +4529,12 @@ def panel_mass_action(body: MassActionBody, _: dict = Depends(require_panel)) ->
             forum.report_error("Массовый сброс трафика не удался", f"{type(exc).__name__}: {exc}")
             raise HTTPException(502, detail={"message": "Remnawave не смогла сбросить трафик"})
         cur = db.execute("UPDATE subscriptions SET traffic_used = 0 WHERE status != 'Deleted'")
-        # Трафик снова есть — снимаем grace «по трафику» (в фоне: это запросы к Remnawave)
+        # трафик снова есть: снимаем grace по трафику
         threading.Thread(target=grace.end_traffic_all, name="grace-traffic-end", daemon=True).start()
         return {"success": True, "affected": cur.rowcount or 0}
 
-    # MASS_RESET_TRIAL: разрешаем взять пробный снова тем, у кого он уже закончился.
-    # Действующие пробные подписки не трогаем.
+    # mass_reset_trial: разрешить пробный снова после окончания
+    # действующие пробные не трогаем
     now_iso = iso()
     rows = db.fetchall(
         "SELECT DISTINCT user_id FROM subscriptions WHERE type = 'trial' "
@@ -4754,10 +4550,6 @@ def panel_mass_action(body: MassActionBody, _: dict = Depends(require_panel)) ->
         sync_user_status_from_subs(int(r["user_id"]))
     return {"success": True, "affected": len(rows)}
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL KEYS
-# ═════════════════════════════════════════════════════════════
 
 @app.get("/api/panel/keys")
 def panel_keys(
@@ -4810,7 +4602,7 @@ def panel_block_key(key_id: int, body: BlockKeyBody, p: dict = Depends(require_p
     key = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (key_id,))
     if not key:
         raise HTTPException(404, detail="Key not found")
-    # Та же запись, что и у BLOCK_KEY/UNBLOCK_KEY в карточке: причина, время, журнал
+    # та же запись, что block_key/unblock_key в карточке
     if body.blocked:
         db.execute("UPDATE subscriptions SET status = 'Banned', ban_reason = 'Заблокирована вручную', banned_at = ? WHERE id = ?",
                    (db.utcnow_iso(), key_id))
@@ -4830,10 +4622,6 @@ def panel_block_key(key_id: int, body: BlockKeyBody, p: dict = Depends(require_p
     assert key is not None
     return serialize_key(key)
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL MAILING
-# ═════════════════════════════════════════════════════════════
 
 @app.get("/api/panel/mailing/stats")
 def panel_mailing_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
@@ -4859,7 +4647,7 @@ def _mailing_recipients(target: str) -> list[dict[str, Any]]:
 
 
 def _email_html_from_message(msg: str) -> str:
-    """Разметка рассылки → HTML для письма (**жирный**, *курсив*, `моно`, переносы)."""
+    """разметка рассылки -> html для письма."""
     import re
     text = _esc_html(msg)
     text = re.sub(r"!\[(\d+)\]", "", text)  # премиум-эмодзи в письме не нужны
@@ -4869,19 +4657,13 @@ def _email_html_from_message(msg: str) -> str:
     return text.replace("\n", "<br>")
 
 
-# Параллельная рассылка: воркеры отправляют одновременно, общий лимитер держит
-# скорость у потолка Telegram (~30 msg/сек). Настраивается через .env.
+# параллельная рассылка, общий лимитер (~30 msg/s)
 BROADCAST_RATE = max(1, _env_int("BROADCAST_RATE", 25))       # сообщений/сек
 BROADCAST_WORKERS = max(1, _env_int("BROADCAST_WORKERS", 8))  # параллельных отправок
 
 
 class _RateLimiter:
-    """
-    Потокобезопасный ограничитель скорости с АВТО-АДАПТАЦИЕЙ:
-      • базовая скорость = rate/сек;
-      • при 429 (throttle) скорость снижается (интервал ×1.5), но не ниже min_rate;
-      • при чистой отправке скорость плавно восстанавливается к базовой.
-    """
+    """потокобезопасный лимитер с адаптацией под 429."""
 
     def __init__(self, rate_per_sec: float, min_rate: float = 5.0) -> None:
         base = 1.0 / max(0.1, float(rate_per_sec))
@@ -4898,7 +4680,7 @@ class _RateLimiter:
             start = self._next if self._next > now else now
             self._next = start + self._interval
             wait = start - now
-            # Плавное восстановление скорости после серии успешных отправок.
+            # плавное восстановление скорости после успехов
             self._ok_since += 1
             if self._ok_since >= 300 and self._interval > self._min_interval:
                 self._interval = max(self._min_interval, self._interval * 0.9)
@@ -4907,7 +4689,7 @@ class _RateLimiter:
             time.sleep(wait)
 
     def throttle(self, retry_after: Optional[float] = None) -> None:
-        """Telegram вернул 429 → снижаем скорость и держим паузу retry_after."""
+        """telegram 429: снижаем скорость, пауза retry_after."""
         with self._lock:
             self._interval = min(self._max_interval, self._interval * 1.5)
             self._ok_since = 0
@@ -4922,11 +4704,7 @@ class _RateLimiter:
 
 
 def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[str, Any]], channels: list[str]) -> None:
-    """
-    Фоновая доставка рассылки в Telegram и/или email — ПАРАЛЛЕЛЬНО (пул воркеров)
-    с общим ограничителем скорости. При 100к получателей это упирается только в
-    лимит Telegram (~25-30/сек ≈ ~1 час на 100к), а не в сетевую задержку.
-    """
+    """фоновая доставка рассылки пулом воркеров."""
     import concurrent.futures as _fut
 
     do_tg = "telegram" in channels
@@ -4941,21 +4719,21 @@ def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[s
 
     def _send_one(u: dict[str, Any]) -> None:
         if mailing_id in _MAILING_CANCELLED:
-            return  # рассылку удалили во время отправки — остальным не шлём
+            return  # рассылку удалили во время отправки
         ok_any = False
         if do_tg and u.get("telegram_id"):
-            limiter.acquire()  # держим общий темп только для Telegram
+            limiter.acquire()  # общий темп только для telegram
             chat_id = int(u["telegram_id"])
             msg_id = notifier.send_broadcast_message(
                 chat_id, body.message,
                 image_url=body.image_url, button_type=body.button_type,
                 button_value=body.button_value, miniapp_url=MINIAPP_URL, bot_username=BOT_USERNAME,
-                on_throttle=limiter.throttle,  # 429 → авто-снижение скорости
+                on_throttle=limiter.throttle,  # 429 -> авто-снижение скорости
             )
             if msg_id is not None:
                 ok_any = True
                 if msg_id:
-                    # Запоминаем, чтобы при удалении рассылки убрать сообщение у пользователя.
+                    # запоминаем msg_id для последующего удаления
                     try:
                         db.execute(
                             "INSERT INTO mailing_messages (mailing_id, chat_id, message_id, sent_at) VALUES (?, ?, ?, ?)",
@@ -4975,7 +4753,7 @@ def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[s
             counter["done"] += 1
             done = counter["done"]
             sent = counter["sent"]
-        # Периодически пишем прогресс (нечасто, чтобы не грузить БД).
+        # прогресс пишем нечасто
         if done % 200 == 0 or done == total:
             try:
                 db.execute("UPDATE mailings SET sent_count = ? WHERE id = ?", (sent, mailing_id))
@@ -4991,20 +4769,16 @@ def _deliver_mailing(mailing_id: int, body: MailingBody, recipients: list[dict[s
                (counter["sent"], mailing_id))
 
 
-# Рассылки, которые удаляют: отправка по ним останавливается.
+# удаляемые рассылки: отправку стопаем
 _MAILING_CANCELLED: set[int] = set()
 _MAILING_THREADS: dict[int, "threading.Thread"] = {}
 
 
 def _purge_mailing(mailing_id: int) -> None:
-    """
-    Удаляет сообщения рассылки у пользователей в Telegram, затем саму рассылку.
-    Письма удалить невозможно: они уже лежат в чужих почтовых ящиках.
-    Telegram даёт боту удалять свои сообщения только в течение 48 часов.
-    """
+    """удаляет сообщения рассылки в telegram, потом запись."""
     import concurrent.futures as _fut
 
-    # Сначала дожидаемся остановки отправки, чтобы не пропустить последние сообщения.
+    # ждём остановку отправки, чтобы не пропустить хвост
     t = _MAILING_THREADS.get(mailing_id)
     if t is not None and t.is_alive():
         t.join(timeout=120)
@@ -5043,7 +4817,7 @@ def panel_mailing_create(body: MailingBody, _: dict = Depends(require_panel)) ->
         raise HTTPException(400, detail={"message": "Почта не настроена (Настройки → Почта)"})
 
     recipients = _mailing_recipients(body.target_users)
-    # Кого реально достанем выбранными каналами.
+    # кого реально достанем выбранными каналами
     reach = [
         u for u in recipients
         if ("telegram" in channels and u.get("telegram_id")) or ("email" in channels and u.get("email"))
@@ -5102,10 +4876,6 @@ def panel_mailing_delete(mailing_id: int, _: dict = Depends(require_panel)) -> d
     }
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL PROMOCODES
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/promocodes/stats")
 def panel_promo_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
     items = db.fetchall("SELECT * FROM promocodes")
@@ -5119,7 +4889,7 @@ def panel_promo_stats(_: dict = Depends(require_panel)) -> dict[str, Any]:
 @app.get("/api/panel/promocodes")
 def panel_promocodes(_: dict = Depends(require_panel)) -> list[dict[str, Any]]:
     items = db.fetchall("SELECT * FROM promocodes ORDER BY id DESC")
-    # Системные промокоды (персональные скидки от бота) в панели не показываем.
+    # системные (персональные от бота) в панели не показываем
     return [serialize_promocode(p) for p in items if str(p.get("code") or "").upper() not in services.SYSTEM_PROMO_CODES]
 
 
@@ -5176,10 +4946,6 @@ def panel_promo_delete(promo_id: int, _: dict = Depends(require_panel)) -> dict[
     return {"success": True}
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL PROMOTIONS
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/promotions")
 def panel_promotions(_: dict = Depends(require_panel)) -> list[dict[str, Any]]:
     items = db.fetchall("SELECT * FROM promotions ORDER BY id DESC")
@@ -5188,7 +4954,7 @@ def panel_promotions(_: dict = Depends(require_panel)) -> list[dict[str, Any]]:
 
 @app.post("/api/panel/promotions")
 def panel_promo_campaign_create(body: PromotionBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    # Пополнение убрано — поддерживается только глобальная скидка.
+    # пополнение убрано, только global_discount
     now = db.utcnow_iso()
     db.execute(
         "INSERT INTO promotions (name, type, value, min_amount, max_amount, uses_limit, uses_count, "
@@ -5222,7 +4988,7 @@ def panel_promo_campaign_update(
             fields.append("is_active = ?")
             params.append(1 if bool(v) else 0)
         elif k == "type":
-            # Пополнение убрано — тип всегда глобальная скидка.
+            # тип всегда global_discount
             fields.append("type = ?")
             params.append("global_discount")
         elif k in ("min_amount", "max_amount"):
@@ -5246,10 +5012,6 @@ def panel_promo_campaign_delete(promo_id: int, _: dict = Depends(require_panel))
     db.execute("DELETE FROM promotions WHERE id = ?", (promo_id,))
     return {"success": True}
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL TRACKING LINKS
-# ═════════════════════════════════════════════════════════════
 
 def _tracking_url(code: str) -> str:
     return f"https://t.me/{BOT_USERNAME}?start=trk_{code}"
@@ -5343,10 +5105,6 @@ def panel_tracking_delete(link_id: int, _: dict = Depends(require_panel)) -> dic
     return {"success": True}
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL SQUADS (Remnawave)
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/remnawave/squads")
 def panel_remnawave_squads(_: dict = Depends(require_owner)) -> list[dict[str, Any]]:
     rows = db.fetchall("SELECT squad_uuid, squad_name FROM squads WHERE is_active = 1")
@@ -5364,7 +5122,7 @@ def panel_squads(_: dict = Depends(require_owner)) -> dict[str, Any]:
 
 @app.post("/api/panel/squads/sync")
 def panel_squads_sync(_: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Синхронизация внутренних сквадов из Remnawave (/api/internal-squads)."""
+    """синхронизация internal-squads из remnawave."""
     client = _rw_client()
     if client is None:
         raise HTTPException(503, detail={"message": "Remnawave не настроена (укажите URL и API-токен)"})
@@ -5406,7 +5164,7 @@ def panel_squads_sync(_: dict = Depends(require_owner)) -> dict[str, Any]:
                 (su, name, members, inb),
             )
 
-    # Сквады, которых больше нет в Remnawave, помечаем неактивными.
+    # сквады, которых нет в remnawave, помечаем неактивными
     if seen:
         placeholders = ",".join("?" * len(seen))
         db.execute(f"UPDATE squads SET is_active = 0 WHERE squad_uuid NOT IN ({placeholders})", seen)
@@ -5460,10 +5218,6 @@ def panel_grace_save(body: GraceSettingsBody, _: dict = Depends(require_owner)) 
     return panel_grace_get(_)
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL BACKUPS
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/backups/status")
 def panel_backup_status(_: dict = Depends(require_owner)) -> dict[str, Any]:
     return get_backup_settings()
@@ -5492,7 +5246,7 @@ def panel_backup_download(name: str = Query(...), _: dict = Depends(require_owne
         return FileResponse(path, media_type="application/octet-stream", filename=safe)
     item = next((x for x in _s3_backups() if x["name"] == safe), None)
     if item and s3store.enabled():
-        # Копии нет на диске — отдаём временную ссылку на S3 (сжатый файл)
+        # нет на диске: временная ссылка на s3
         return {"url": s3store.presign_get(item["key"], 600)}
     raise HTTPException(404, detail={"message": "Бэкап не найден"})
 
@@ -5504,10 +5258,6 @@ def panel_backup_settings(body: BackupSettingsBody, _: dict = Depends(require_ow
     return get_backup_settings()
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL FORUM (группа-форум + топики)
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/panel/forum")
 def panel_forum_get(_: dict = Depends(require_owner)) -> dict[str, Any]:
     return forum.get_config()
@@ -5517,10 +5267,6 @@ def panel_forum_get(_: dict = Depends(require_owner)) -> dict[str, Any]:
 def panel_forum_put(body: ForumConfigBody, _: dict = Depends(require_owner)) -> dict[str, Any]:
     return forum.save_config(body.forum_chat_id or "", body.topics or {}, panel_url_value=body.panel_url)
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL MONITORING (мониторинг серверов, см. monitoring.py / node.sh)
-# ═════════════════════════════════════════════════════════════
 
 class MonNodeCreateBody(BaseModel):
     name: str
@@ -5532,8 +5278,8 @@ class MonNodeUpdateBody(BaseModel):
     name: Optional[str] = None
     ip: Optional[str] = None
     port: Optional[int] = None
-    vless: Optional[str] = None       # "" — убрать проверку VLESS
-    pay_date: Optional[str] = None    # ISO-дата; "" — убрать
+    vless: Optional[str] = None       # "": убрать проверку vless
+    pay_date: Optional[str] = None    # "": убрать iso-дату
     pay_url: Optional[str] = None
 
 
@@ -5552,7 +5298,7 @@ def panel_mon_overview(_: dict = Depends(require_panel)) -> dict[str, Any]:
 @app.post("/api/panel/monitoring/nodes")
 def panel_mon_create(body: MonNodeCreateBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
     node, secret = _mon(monitoring.create_node, body.name, body.ip, body.port or monitoring.DEFAULT_PORT)
-    # Ключ показывается один раз — в базе он хранится только зашифрованным
+    # ключ показывается один раз, в бд только шифротекст
     return {"node": monitoring.node_brief(node), "secret": secret}
 
 
@@ -5628,10 +5374,6 @@ def panel_mon_delete(node_id: int, _: dict = Depends(require_panel)) -> dict[str
     return {"ok": True}
 
 
-# ═════════════════════════════════════════════════════════════
-# PANEL WITHDRAWALS (выводы реф. средств)
-# ═════════════════════════════════════════════════════════════
-
 def _serialize_withdrawal_admin(w: dict[str, Any]) -> dict[str, Any]:
     user = get_user(int(w["user_id"])) if w.get("user_id") else None
     data = services.serialize_withdrawal(w)
@@ -5664,7 +5406,7 @@ def panel_withdrawals(status: Optional[str] = Query(None), _: dict = Depends(req
 
 @app.post("/api/panel/withdrawals/{withdrawal_id}/approve")
 def panel_withdraw_approve(withdrawal_id: int, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Одобрить: статус «Одобрен», админ видит адрес и делает перевод."""
+    """одобрить вывод: статус «одобрен»."""
     try:
         w = services.approve_withdrawal(withdrawal_id)
     except services.ServiceError as exc:
@@ -5674,7 +5416,7 @@ def panel_withdraw_approve(withdrawal_id: int, _: dict = Depends(require_panel))
 
 @app.post("/api/panel/withdrawals/{withdrawal_id}/complete")
 def panel_withdraw_complete(withdrawal_id: int, body: WithdrawCompleteBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Завершить: сохраняем hash, статус «Завершено», пользователю — сообщение в Telegram."""
+    """завершить вывод: hash + статус + сообщение юзеру."""
     try:
         w = services.complete_withdrawal(withdrawal_id, body.tx_hash)
     except services.ServiceError as exc:
@@ -5691,7 +5433,7 @@ def panel_withdraw_complete(withdrawal_id: int, body: WithdrawCompleteBody, _: d
 
 @app.post("/api/panel/withdrawals/{withdrawal_id}/reject")
 def panel_withdraw_reject(withdrawal_id: int, body: WithdrawRejectBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Отказ с причиной; refund=True — вернуть сумму на реферальный баланс."""
+    """отказ; refund=true вернуть сумму на реф. баланс."""
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(400, detail={"message": "Укажите причину отказа"})
@@ -5709,13 +5451,9 @@ def panel_withdraw_reject(withdrawal_id: int, body: WithdrawRejectBody, _: dict 
 
 
 def _reject_withdrawals_on_ban(user_id: int) -> int:
-    """При бане пользователя все незавершённые выводы отклоняются с возвратом на баланс."""
+    """при бане незавершённые выводы отклоняются с возвратом."""
     return len(services.reject_open_withdrawals_for_user(user_id, "Аккаунт заблокирован"))
 
-
-# ═════════════════════════════════════════════════════════════
-# PANEL CONTENT / PLANS
-# ═════════════════════════════════════════════════════════════
 
 @app.get("/api/panel/content/offer")
 def panel_get_offer(_: dict = Depends(require_owner)) -> dict[str, Any]:
@@ -5787,10 +5525,6 @@ def panel_put_plans(body: PlansUpdateBody, _: dict = Depends(require_owner)) -> 
     return {"plans": get_active_plans(), **get_plans_meta()}
 
 
-# ═════════════════════════════════════════════════════════════
-# MINI-APP
-# ═════════════════════════════════════════════════════════════
-
 @app.get("/api/app/config")
 def app_config() -> dict[str, Any]:
     bot_id = ""
@@ -5817,10 +5551,9 @@ def app_config() -> dict[str, Any]:
     }
 
 
-# Заблокированный аккаунт видит в мини-приложении обычную главную в состоянии
-# «Заблокирована» — для этого ему доступны только вход и чтение профиля.
+# заблокированный видит главную в состоянии «заблокирована»
 _BANNED_ALLOWED_PATHS = {"/api/app/auth", "/api/app/me", "/api/app/membership",
-                         # Заблокированным поддержка нужна больше всех («Обратитесь в поддержку»)
+                         # заблокированным поддержка всё равно нужна
                          "/api/app/support", "/api/app/support/upload", "/api/app/support/messages",
                          "/api/app/support/read", "/api/app/support/close"}
 
@@ -5841,7 +5574,7 @@ def _resolve_app_user_from_tg(tg: dict[str, Any], allow_banned: bool = False) ->
 
 
 def _resolve_app_user_from_email(email: str) -> dict[str, Any]:
-    """Находит пользователя по email или создаёт нового (вход = регистрация)."""
+    """найти юзера по email или создать (вход = регистрация)."""
     email = email.strip().lower()
     user = db.fetchone("SELECT * FROM users WHERE lower(email) = ?", (email,))
     if user:
@@ -5863,17 +5596,13 @@ def _resolve_app_user_from_email(email: str) -> dict[str, Any]:
 def app_auth(x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data")) -> dict[str, Any]:
     data = validate_webapp_init_data(x_telegram_init_data or "")
     user = _resolve_app_user_from_tg(data.get("user") or {}, allow_banned=True)
-    # Сессия-«страховка»: работает, когда подпись Telegram устареет (приложение
-    # долго открыто). Принимается только вместе с initData того же аккаунта.
+    # сессия-страховка, когда initdata протух
     token = create_app_session(int(user["id"]))
     return {"user": serialize_app_user(user), "token": token}
 
 
 def _apply_web_referral(user_id: int, code: Optional[str]) -> None:
-    """
-    Реферал с сайта (ссылка /?ref=<id>): как в боте — только для НОВОГО аккаунта,
-    не на самого себя и без взаимных петель.
-    """
+    """реферал с сайта /?ref=<id>: только для нового аккаунта."""
     code = str(code or "").strip()
     if not code or len(code) > 32:
         return
@@ -5911,18 +5640,13 @@ def app_auth_oauth(body: OauthLoginBody, request: Request = None) -> dict[str, A
     return {"user": serialize_app_user(user), "token": token}
 
 
-# ── Вход по email (без паролей): запрос кода → проверка кода ──
-
 @app.post("/api/app/auth/email/request")
 def app_auth_email_request(body: EmailRequestBody, request: Request = None) -> dict[str, Any]:  # type: ignore[assignment]
     email = (body.email or "").strip().lower()
     if not _valid_email(email):
         raise HTTPException(400, detail={"message": "Введите корректный email"})
 
-    # Не больше 3 писем за 5 минут и 10 в час на адрес; с одного IP — 10 за
-    # 5 минут и 30 в час (защита от рассылки кодов на чужие адреса).
-    # Лимиты на адрес — с учётом IP (чужие запросы не мешают владельцу почты
-    # получить код) + общий потолок на адрес, чтобы не заваливать почту.
+    # лимиты писем на адрес и с ip
     ip = _client_ip(request) or "unknown"
     allowed, retry = ratelimit.rate_limit(f"emailcode:{email}:{ip}", 3, 300)
     if allowed:
@@ -5942,18 +5666,14 @@ def app_auth_email_request(body: EmailRequestBody, request: Request = None) -> d
     if not throttled:
         send_login_code(email, code)
     resp: dict[str, Any] = {"ok": True, "throttled": throttled, "resend_after": EMAIL_CODE_RESEND}
-    # Если доставка писем не настроена — отдаём код для отладки (не в проде).
+    # без smtp отдаём код для отладки (не в проде)
     if ENV != "production" and not mailer.is_configured():
         resp["dev_code"] = code
     return resp
 
 
 def _email_verify_limits(email: str, request: Optional[Request]) -> None:
-    """
-    Перебор кода: не больше 10 проверок в час на адрес с одного IP и 30 в час с IP.
-    Счётчик «на адрес» — с учётом IP: чужие запросы не могут заблокировать вход
-    владельцу почты. От перебора с многих IP защищает лимит 5 попыток на код.
-    """
+    """лимиты перебора кода на адрес и ip."""
     ip = _client_ip(request) or "unknown"
     allowed, retry = ratelimit.rate_limit(f"emailverify:{email}:{ip}", 10, 3600)
     if allowed:
@@ -6005,13 +5725,12 @@ def _app_user_from_init(
 ) -> dict[str, Any]:
     allow_banned = request.url.path in _BANNED_ALLOWED_PATHS
     token = _extract_app_token(authorization, x_app_session)
-    # 1) Telegram Mini App — подпись initData
+    # 1) telegram mini app: подпись initdata
     if x_telegram_init_data:
         try:
             data = validate_webapp_init_data(x_telegram_init_data)
         except InitDataExpired as exc:
-            # Мини-приложение открыто дольше срока подписи. Пускаем по сессии,
-            # выданной при входе, — только если она того же Telegram-аккаунта.
+            # initdata протух: пускаем по сессии того же tg
             sess = get_app_session(token) if token else None
             user = get_user(int(sess["user_id"])) if sess else None
             if not user or not exc.telegram_id or int(user.get("telegram_id") or 0) != exc.telegram_id:
@@ -6022,7 +5741,7 @@ def _app_user_from_init(
         tg = data.get("user") or {}
         if tg.get("id"):
             return _resolve_app_user_from_tg(tg, allow_banned)
-    # 2) Сессионный токен (веб-вход по email / OAuth)
+    # 2) сессионный токен (email / oauth)
     if token:
         sess = get_app_session(token)
         if not sess:
@@ -6033,34 +5752,27 @@ def _app_user_from_init(
         if user.get("is_banned") and not allow_banned:
             raise HTTPException(403, detail={"message": "Аккаунт заблокирован"})
         return user
-    # 3) Dev/allow-unauth фолбэк (в проде бросит 401)
+    # 3) dev/allow-unauth (в проде 401)
     data = validate_webapp_init_data(x_telegram_init_data or "")
     return _resolve_app_user_from_tg(data.get("user") or {})
 
-
-# ── Обязательная подписка на канал (только вход через Telegram) ──────────
 
 _CHANNEL_MEMBER_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 
 def _check_channel_membership(user: dict[str, Any], *, force: bool = False) -> bool:
-    """
-    Подписан ли Telegram-пользователь на обязательный канал. Кэшируется
-    (channel_ok/channel_checked_at) на CHANNEL_CHECK_TTL, чтобы не упираться в
-    лимиты Telegram. Если проверить нельзя (бот не админ канала/ошибка) —
-    fail-open (True), чтобы не залочить всех, и пишем в лог.
-    """
+    """подписан ли на обязательный канал (с кэшем ttl)."""
     tgid = user.get("telegram_id")
     if not tgid or not REQUIRED_CHANNEL_ID:
         return True
-    # Кэш: подтверждённая подписка не перепроверяется чаще TTL.
+    # кэш: channel_ok не чаще ttl
     if not force and int(user.get("channel_ok") or 0) == 1:
         ts = parse_iso(user.get("channel_checked_at"))
         if ts and (utcnow() - ts).total_seconds() < CHANNEL_CHECK_TTL:
             return True
     status = notifier.get_chat_member_status(REQUIRED_CHANNEL_ID, int(tgid))
     if status is None:
-        # Не смогли проверить (обычно бот не добавлен админом в канал).
+        # не смогли проверить (бот не админ канала?)
         print(f"[channel] не удалось проверить подписку user {user.get('id')} "
               f"(бот админ канала {REQUIRED_CHANNEL_ID}?)", flush=True)
         return True  # fail-open
@@ -6079,11 +5791,7 @@ def require_channel_dep(
     user: dict = Depends(_app_user_from_init),
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
 ) -> dict[str, Any]:
-    """
-    Зависимость для действий: аккаунт с Telegram без подписки на канал → 403.
-    Проверяется для любого входа (мини-приложение или сайт через Telegram) —
-    иначе обязательную подписку можно было обойти, войдя через сайт.
-    """
+    """действия: tg без подписки на канал -> 403."""
     if user.get("telegram_id") and REQUIRED_CHANNEL_ID:
         if not _check_channel_membership(user, force=False):
             raise HTTPException(403, detail={
@@ -6100,14 +5808,11 @@ def app_membership(
     user: dict = Depends(_app_user_from_init),
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
 ) -> dict[str, Any]:
-    """
-    Статус обязательной подписки на канал. Только для входа через Telegram;
-    при веб-входе (email) — required=False.
-    """
+    """статус обязательной подписки; для email required=false."""
     fresh = get_user(int(user["id"])) or user
     if not fresh.get("telegram_id") or not REQUIRED_CHANNEL_ID:
         return {"required": False, "subscribed": True, "channel_url": REQUIRED_CHANNEL_URL}
-    # Принудительная перепроверка ходит в Telegram API — ограничиваем частоту.
+    # принудительная перепроверка: rate limit
     if force:
         allowed, _ = ratelimit.rate_limit(f"membership:{fresh['id']}", 6, 60)
         force = 1 if allowed else 0
@@ -6137,7 +5842,7 @@ def app_me_email_request(body: UpdateEmailBody, user: dict = Depends(_app_user_f
     if clash:
         other = get_user(int(clash["id"]))
         if other:
-            merge = merge_preview(get_user(int(user["id"])) or user, other)  # бросит 409, если объединить нельзя
+            merge = merge_preview(get_user(int(user["id"])) or user, other)  # 409, если объединить нельзя
 
     allowed, retry = ratelimit.rate_limit(f"emailbind:{user['id']}", 3, 300)
     if allowed:
@@ -6160,7 +5865,7 @@ def app_me_email_request(body: UpdateEmailBody, user: dict = Depends(_app_user_f
 
 @app.post("/api/app/me/terms")
 def app_me_accept_terms(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Согласие с офертой и политикой конфиденциальности (обязательно при первом входе)."""
+    """согласие с офертой и политикой."""
     db.execute("UPDATE users SET terms_accepted_at = COALESCE(terms_accepted_at, ?) WHERE id = ?",
                (iso(), user["id"]))
     fresh = get_user(int(user["id"]))
@@ -6170,7 +5875,7 @@ def app_me_accept_terms(user: dict = Depends(_app_user_from_init)) -> dict[str, 
 
 @app.put("/api/app/me/email")
 def app_me_email(body: EmailVerifyBody, request: Request, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Привязать/сменить email только после ввода кода из письма."""
+    """привязать/сменить email после кода из письма."""
     email = (body.email or "").strip().lower()
     if not _valid_email(email):
         raise HTTPException(400, detail={"message": "Некорректный email"})
@@ -6178,7 +5883,7 @@ def app_me_email(body: EmailVerifyBody, request: Request, user: dict = Depends(_
     clash = db.fetchone("SELECT id FROM users WHERE lower(email) = ? AND id != ?", (email, user["id"]))
     other = get_user(int(clash["id"])) if clash else None
     if other and not body.merge:
-        # Код не тратим: сначала пользователь должен согласиться на объединение
+        # код не тратим, пока нет согласия на объединение
         raise HTTPException(409, detail={"message": "Этот email уже есть у другого аккаунта",
                                          "merge": merge_preview(get_user(int(user["id"])) or user, other)})
     if not verify_email_code(email, body.code or ""):
@@ -6210,8 +5915,7 @@ def app_me_email_unbind(user: dict = Depends(_app_user_from_init)) -> dict[str, 
 @app.put("/api/app/me/telegram")
 def app_me_telegram(body: OauthBody, merge: bool = Query(False),
                     user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Привязать/изменить Telegram (веб-вход). Отвязать нельзя.
-    Если этот Telegram уже есть у другого аккаунта — 409 с предупреждением, а с ?merge=1 аккаунты объединяются."""
+    """привязать telegram; при конфликте 409 или merge=1."""
     validated = validate_oauth_login(body.model_dump())
     new_tg = int(validated.get("id") or 0)
     if not new_tg:
@@ -6231,8 +5935,7 @@ def app_me_telegram(body: OauthBody, merge: bool = Query(False),
     )
     fresh = get_user(int(user["id"]))
     assert fresh is not None
-    # Пользователь в Remnawave ищется по Telegram ID — переносим привязку туда же,
-    # иначе новый аккаунт на старом Telegram получил бы чужого пользователя Remnawave.
+    # rw ищет по tg id: переносим привязку вместе
     if before.get("telegram_id") != new_tg:
         try:
             client, rw = _rw_find_user(before)
@@ -6255,7 +5958,7 @@ def _has_any_sub(user_id: int) -> bool:
 
 
 def _trial_available_for(user_id: int) -> bool:
-    """Пробный доступен: включён админом, у аккаунта нет подписок и его Telegram ещё не брал пробный."""
+    """пробный доступен: вкл, нет подписок, tg ещё не брал."""
     if not trial_enabled() or _has_any_sub(user_id):
         return False
     u = get_user(user_id) or {}
@@ -6287,7 +5990,7 @@ def app_subscription(user: dict = Depends(_app_user_from_init)) -> dict[str, Any
         "status": status,
         "until": paid_until_for_user(int(fresh["id"])) if status in ("active", "trial") else None,
         "key": active if status in ("active", "trial") else None,
-        # Закончившаяся подписка и дата её автоудаления (если не продлить).
+        # закончившаяся подписка и дата автоудаления
         "expired_key": expired_key,
         "delete_at": delete_at,
         "keys": [k for k in serialized if k.get("status") != "Deleted"],
@@ -6297,7 +6000,7 @@ def app_subscription(user: dict = Depends(_app_user_from_init)) -> dict[str, Any
 
 
 def _rw_traffic(rw: dict[str, Any]) -> dict[str, Any]:
-    """Трафик пользователя Remnawave (в 3.x он лежит в userTraffic)."""
+    """трафик юзера remnawave (userTraffic в 3.x)."""
     ut = rw.get("userTraffic") if isinstance(rw.get("userTraffic"), dict) else {}
 
     def _n(*vals: Any) -> Optional[int]:
@@ -6319,7 +6022,7 @@ def _rw_traffic(rw: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/app/subscription/traffic")
 def app_subscription_traffic(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Сколько трафика потрачено (из Remnawave). available=False — узнать не удалось."""
+    """сколько трафика потрачено; available=false если не узнали."""
     fresh = get_user(int(user["id"])) or user
     try:
         _client, rw = _rw_find_user(fresh)
@@ -6332,12 +6035,7 @@ def app_subscription_traffic(user: dict = Depends(_app_user_from_init)) -> dict[
 
 @app.get("/api/app/setup-status")
 def app_setup_status(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """
-    Нужно ли показать онбординг-модалку «Вы не завершили настройку»: у
-    пользователя есть активная подписка, но он ни разу не
-    подключался к VPN (не добавил подписку в приложение). Если проверить
-    подключение нельзя (Remnawave недоступна) — модалку НЕ показываем.
-    """
+    """нужен ли онбординг «не завершили настройку»."""
     fresh = get_user(int(user["id"])) or user
     has_sub = bool(db.fetchone(
         "SELECT id FROM subscriptions WHERE user_id = ? AND status = 'Active' LIMIT 1",
@@ -6358,10 +6056,7 @@ def app_setup_status(user: dict = Depends(_app_user_from_init)) -> dict[str, Any
 
 
 def unfreeze_legacy_frozen_subscriptions() -> int:
-    """
-    Функция заморозки удалена. Подписки, которые остались в статусе 'Frozen',
-    один раз возвращаются в работу: срок = сейчас + сохранённый остаток.
-    """
+    """заморозка удалена: frozen один раз возвращаем в работу."""
     rows = db.fetchall("SELECT * FROM subscriptions WHERE status = 'Frozen'")
     for sub in rows:
         rem = int(sub.get("frozen_remaining") or 0)
@@ -6386,7 +6081,7 @@ def unfreeze_legacy_frozen_subscriptions() -> int:
 
 @app.post("/api/app/trial")
 def app_activate_trial(user: dict = Depends(require_channel_dep)) -> dict[str, Any]:
-    """Активация бесплатного пробного периода (параметры — из настроек панели)."""
+    """активация бесплатного пробного."""
     allowed, retry = ratelimit.rate_limit(f"trial:{user['id']}", 5, 3600)
     if not allowed:
         raise HTTPException(429, detail={"message": f"Слишком часто. Повторите через {retry} сек."})
@@ -6400,8 +6095,7 @@ def app_activate_trial(user: dict = Depends(require_channel_dep)) -> dict[str, A
         raise HTTPException(400, detail={"message": "Пробный доступен только при входе через Telegram"})
     if _has_any_sub(int(fresh["id"])):
         raise HTTPException(400, detail={"message": "Пробный период уже был активирован"})
-    # Один пробный на Telegram навсегда. Отметка ставится атомарно ДО выдачи:
-    # параллельные запросы и смена Telegram / объединение аккаунтов не дают второй.
+    # один пробный на tg; отметка атомарно до выдачи
     cur = db.execute("INSERT OR IGNORE INTO trial_claims (telegram_id, user_id, claimed_at) VALUES (?, ?, ?)",
                      (int(fresh["telegram_id"]), int(fresh["id"]), iso()))
     if not cur.rowcount:
@@ -6416,8 +6110,8 @@ def app_activate_trial(user: dict = Depends(require_channel_dep)) -> dict[str, A
 
 
 def _app_sub_url(user: dict[str, Any]) -> Optional[str]:
-    """URL подписки пользователя для импорта в приложение (Remnawave sub-link или fallback)."""
-    # 1) Remnawave — настоящая ссылка подписки
+    """url подписки для импорта в приложение."""
+    # 1) remnawave: настоящая ссылка
     client, rw = _rw_find_user(user)
     if client and rw:
         try:
@@ -6426,7 +6120,7 @@ def _app_sub_url(user: dict[str, Any]) -> Optional[str]:
                 return str(u)
         except Exception:  # noqa: BLE001
             pass
-    # 2) Fallback: строим из short_uuid или берём сохранённый конфиг
+    # 2) fallback: short_uuid или сохранённый конфиг
     row = db.fetchone(
         "SELECT short_uuid, key_config FROM subscriptions WHERE user_id = ? AND status != 'Banned' "
         "ORDER BY id DESC LIMIT 1",
@@ -6445,12 +6139,7 @@ def app_subscription_applink(
     app: str = Query("incy"),
     user: dict = Depends(require_channel_dep),
 ) -> dict[str, Any]:
-    """
-    Deep-link для добавления подписки в приложение (генерация на самой машине).
-      app=incy  → incy://crypt1/... (шифрование на самой машине)
-      app=happ  → happ://crypt5/... (внешний API happ, fallback crypt4)
-      app=other → просто ссылка на подписку
-    """
+    """deep-link для добавления подписки в приложение."""
     fresh = get_user(int(user["id"]))
     assert fresh is not None
     if subscription_status_for_user(fresh) == "blocked":
@@ -6472,15 +6161,14 @@ def app_subscription_applink(
         except Exception as exc:  # noqa: BLE001
             forum.report_error(f"Не удалось сформировать ссылку {which}", f"{type(exc).__name__}: {exc}")
             raise HTTPException(502, detail={"message": "Не удалось сформировать ссылку. Попробуйте ещё раз или выберите «Другое приложение»."})
-        # Telegram не открывает схемы incy:// / happ:// напрямую, поэтому отдаём
-        # https-страницу-редирект (на домене сайта), которая уже открывает схему.
+        # telegram не открывает incy/happ://, отдаём https-редирект
         return {"app": which, "link": link, "encrypted": True, "open_url": _deeplink_redirect_url(link)}
-    # other — просто ссылка (https, открывается напрямую)
+    # other: просто https
     return {"app": "other", "link": sub_url, "encrypted": False, "open_url": sub_url}
 
 
 def _deeplink_redirect_url(deep_link: str) -> str:
-    """https://<сайт>/redirect.html?url=<incy|happ://...> — для открытия из Telegram."""
+    """https://сайт/redirect.html?url=<схема> для telegram."""
     from urllib.parse import quote
     base = (_env("SITE_URL") or MINIAPP_URL).rstrip("/")
     if not base:
@@ -6498,10 +6186,10 @@ def app_devices(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
         (fresh["id"],),
     )
     limit = max((int(k.get("devices_limit") or 0) for k in keys), default=1)
-    # Докупка устройств — только к платной подписке (к пробной нельзя).
+    # докупка устройств только к платной
     can_buy = any(str(k.get("type") or "") != "trial" for k in keys)
 
-    # Реальные HWID-устройства из Remnawave.
+    # реальные hwid из remnawave
     devices: list[dict[str, Any]] = []
     client, rw = _rw_find_user(fresh)
     if client and rw:
@@ -6531,7 +6219,7 @@ def app_revoke_device(device_id: str, user: dict = Depends(_app_user_from_init))
     if not device_id:
         raise HTTPException(400, detail={"message": "Не указано устройство"})
     try:
-        # Отвязываем только у СВОЕГО аккаунта Remnawave — чужое устройство не тронуть.
+        # отвязываем только у своего rw-аккаунта
         client.delete_hwid_device({"userId": _rw_num_id(rw), "hwid": device_id})
     except Exception as exc:  # noqa: BLE001
         forum.report_error("Не удалось отвязать устройство (мини-приложение)", f"{type(exc).__name__}: {exc}")
@@ -6540,14 +6228,10 @@ def app_revoke_device(device_id: str, user: dict = Depends(_app_user_from_init))
 
 
 def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[str, Any]:
-    """
-    Считает цену заказа (₽ и звёзды) с учётом назначения и скидки. Единый источник
-    для создания платежа и предпросмотра-квоты (чтобы цены совпадали).
-    Бросает HTTPException при некорректных данных.
-    """
+    """цена заказа (руб/звёзды) с учётом назначения и скидки."""
     prices = plan_price_map()
     meta = get_plans_meta()
-    # Подписка продаётся только на 1 месяц за раз (год = 12 оплат по месяцу)
+    # подписка продаётся помесячно
     if int(body.months or 1) != 1:
         raise HTTPException(400, detail={"message": "Оплата — только на 1 месяц"})
     months = 1
@@ -6564,7 +6248,7 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
         price = tr_price
         stars = int(round(tr_price))
     elif purpose == "devices":
-        # Докупка устройств. Цена ∝ ОСТАТКУ дней: extra_price × (дней/30) × кол-во.
+        # докупка устройств: цена пропорциональна остатку дней
         if extra <= 0:
             raise HTTPException(400, detail={"message": "Не указано число устройств"})
         sub = None
@@ -6593,7 +6277,7 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
         if price <= 0:
             raise HTTPException(400, detail={"message": "Стоимость докупки не рассчитана"})
     else:
-        # Покупка/продление тарифа: число устройств ДОЛЖНО соответствовать плану.
+        # покупка/продление: число устройств = план
         target, _upg = fulfillment.find_extend_target(int(user["id"]), purpose, body.subscription_id)
         if target and target.get("no_renew"):
             raise HTTPException(400, detail={"message": "Продление этой подписки недоступно"})
@@ -6603,13 +6287,11 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
         total_devices = int(body.plan_devices) + extra
         keep = fulfillment.retained_devices(
             int(user["id"]), purpose, body.subscription_id, total_devices)
-        # Доп. устройства (и докупленные ранее, которые сохраняются при продлении)
-        # стоят extra_price в МЕСЯЦ — как и тариф, умножаются на срок.
+        # доп. устройства в месяц, как тариф, на срок
         price = float(base) * months + (extra + keep) * extra_price * months
         stars = int(round(price))  # курс 1 звезда = 1 рубль
 
-    # Скидка (сброс трафика скидкой не облагается). Промо/акция + бонус за опрос
-    # суммируются.
+    # скидка: промо/акция + бонус опроса; reset трафика без скидки
     full_price = round(float(price), 2)
     percent = 0.0
     if purpose != "traffic_reset":
@@ -6623,11 +6305,7 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
 
 
 def _referral_split(bal: float, price: float, pmin: float) -> float:
-    """
-    Сколько списать с реф. баланса: сколько возможно (до всей цены). Остаток к
-    оплате провайдеру не может быть меньше его минимума (кроме нуля): тогда
-    списываем всю цену (если баланса хватает) или оставляем ровно минимум.
-    """
+    """сколько списать с реф. баланса с учётом минимума провайдера."""
     if bal <= 0 or price <= 0:
         return 0.0
     desired = min(bal, price)
@@ -6638,7 +6316,7 @@ def _referral_split(bal: float, price: float, pmin: float) -> float:
 
 
 def _referral_preview(user_id: int, price: float, method: str, use_ref: bool) -> dict[str, Any]:
-    """Сколько спишется с реф. баланса и итоговая сумма к оплате (без заморозки)."""
+    """сколько спишется с реф. баланса и итог к оплате."""
     pmin = provider_min_rub(method)
     if not use_ref or method == "tg_stars" or price <= 0:
         return {"referral_applied": 0.0, "charge": round(price, 2), "provider_min": pmin}
@@ -6650,7 +6328,7 @@ def _referral_preview(user_id: int, price: float, method: str, use_ref: bool) ->
 
 @app.post("/api/app/payment/quote")
 def app_payment_quote(body: CreatePaymentBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Предпросмотр цены (без создания платежа): итог, скидка, списание с баланса."""
+    """предпросмотр цены без создания платежа."""
     q = _compute_order_price(get_user(int(user["id"])) or user, body)
     is_stars = body.method == "tg_stars"
     prev = _referral_preview(int(user["id"]), q["price"], body.method, bool(body.use_referral_balance))
@@ -6671,7 +6349,7 @@ _MAIN_APP_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
 
 
 def _bot_has_main_app() -> bool:
-    """Настроено ли у бота «главное мини-приложение» (BotFather → Configure Mini App)."""
+    """есть ли у бота главное мини-приложение."""
     now = time.time()
     if _MAIN_APP_CACHE["value"] is not None and now - _MAIN_APP_CACHE["at"] < 600:
         return bool(_MAIN_APP_CACHE["value"])
@@ -6683,12 +6361,7 @@ def _bot_has_main_app() -> bool:
 
 
 def _payment_return_url(payment_id: str, in_telegram: bool, failed: bool = False) -> Optional[str]:
-    """
-    Куда Platega вернёт после оплаты — туда, откуда платили:
-      • с сайта — на сайт, к этому платежу;
-      • из мини-приложения — обратно в мини-приложение (ссылка t.me), к этому платежу.
-    failed — адрес для неуспешной оплаты (окно сразу покажет «Платёж отклонён»).
-    """
+    """куда platega вернёт после оплаты (сайт или мини-приложение)."""
     if in_telegram and BOT_USERNAME:
         tag = f"{'payfail' if failed else 'pay'}_{payment_id}"
         link = (_env("TELEGRAM_MINIAPP_LINK") or "").strip().rstrip("/")
@@ -6696,7 +6369,7 @@ def _payment_return_url(payment_id: str, in_telegram: bool, failed: bool = False
             return f"{link}?startapp={tag}"
         if _bot_has_main_app():
             return f"https://t.me/{BOT_USERNAME}?startapp={tag}"
-        # Главного мини-приложения нет — через бота: он пришлёт кнопку «Открыть»
+        # нет главного мини-приложения: кнопка «открыть» через бота
         return f"https://t.me/{BOT_USERNAME}?start={tag}"
     suffix = "&result=fail" if failed else ""
     if MINIAPP_URL:
@@ -6707,7 +6380,7 @@ def _payment_return_url(payment_id: str, in_telegram: bool, failed: bool = False
 
 @app.post("/api/app/payment/create")
 def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = Depends(require_channel_dep)) -> dict[str, Any]:
-    # Ограничение частоты: не даём заваливать создание платежей.
+    # rate limit на создание платежей
     allowed, retry = ratelimit.rate_limit(f"pay:{user['id']}", 20, 600)
     if not allowed:
         raise HTTPException(429, detail={"message": f"Слишком часто. Повторите через {retry} сек."})
@@ -6720,8 +6393,7 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
     months = q["months"]
     extra = q["extra"]
 
-    # Докупка устройств обязана быть привязана к конкретной подписке (grant по ней
-    # прибавляет лимит). Если клиент не прислал id — берём активную подписку.
+    # докупка без subscription_id: берём активную
     if q["purpose"] == "devices" and not body.subscription_id:
         s = db.fetchone(
             "SELECT id FROM subscriptions WHERE user_id = ? AND status = 'Active' "
@@ -6732,10 +6404,7 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
     is_stars = body.method == "tg_stars"
     pmin = provider_min_rub(body.method)
 
-    # ── Оплата реферальным балансом (только рубли, не Stars) — до 100% ──
-    # Можно покрыть всю цену. Если после списания провайдеру осталось бы меньше
-    # его минимума (>0 и <pmin) — либо покрываем полностью, либо оставляем ровно
-    # минимум. Заморозка баланса — атомарная.
+    # оплата реф. балансом (рубли, не stars), до 100%
     referral_applied = 0.0
     if body.use_referral_balance and not is_stars and price > 0:
         fresh = get_user(int(user["id"]))
@@ -6753,7 +6422,7 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
 
     charge = round(float(price) - referral_applied, 2)
 
-    # ── Минимальная сумма провайдера (только если что-то платится провайдеру) ──
+    # минимум провайдера, если ему что-то платим
     if not is_stars and charge > 0 and charge < pmin:
         if referral_applied > 0:  # разморозить, раз платёж не создаём
             db.execute("UPDATE users SET partner_balance = partner_balance + ? WHERE id = ?",
@@ -6763,7 +6432,7 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
         raise HTTPException(400, detail={
             "message": f"Минимальная сумма оплаты {method_name} — {int(pmin)} ₽"})
 
-    # Полностью оплачено балансом → провайдер не нужен, выдаём сразу.
+    # полностью с баланса: провайдер не нужен
     fully_by_balance = (not is_stars) and charge <= 0 and referral_applied > 0
     provider = "tg_stars" if is_stars else ("balance" if fully_by_balance else "platega")
 
@@ -6786,7 +6455,6 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
     if ret.startswith("/") and not ret.startswith("//") and len(ret) <= 200:
         db.execute("UPDATE payments SET return_to = ? WHERE payment_id = ?", (ret, payment_id))
 
-    # ── Полная оплата реферальным балансом: выдаём немедленно ──
     if fully_by_balance:
         res = fulfillment.fulfill_payment(payment_id)
         if res.get("ok"):
@@ -6798,11 +6466,10 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
         fulfillment.mark_failed(payment_id, "balance_fulfill_failed")  # вернёт баланс
         raise HTTPException(502, detail={"message": "Не удалось активировать. Средства возвращены на баланс."})
 
-    # Описание для провайдера и счёта Stars: «<Назначение> (внутренний id юзера)».
+    # описание для провайдера: «назначение (id юзера)»
     title = "BlinVPN"
     description = _payment_description(q["purpose"], int(user["id"]))
 
-    # ── Telegram Stars ───────────────────────────────────────
     if is_stars:
         if telegram_stars is None or not telegram_stars.TelegramStars().is_configured():
             fulfillment.mark_failed(payment_id, "stars_not_configured")
@@ -6827,7 +6494,6 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
             "status": "pending",
         }
 
-    # ── Platega (СБП / карта / SberPay) ──────────────────────
     if platega is None:
         fulfillment.mark_failed(payment_id, "platega_module_missing")
         raise HTTPException(503, detail={"message": "Платёжная система недоступна"})
@@ -6837,7 +6503,7 @@ def app_payment_create(body: CreatePaymentBody, request: Request, user: dict = D
         raise HTTPException(503, detail={"message": "Платёжная система не настроена"})
 
     method_code = platega.APP_METHOD_MAP.get(body.method, platega.METHOD_SBP)
-    # Возврат — туда, откуда платят сейчас: мини-приложение (есть initData) или сайт
+    # return url: мини-приложение или сайт
     in_telegram = bool((request.headers.get("X-Telegram-Init-Data") or "").strip())
     return_url = _payment_return_url(payment_id, in_telegram)
     failed_url = _payment_return_url(payment_id, in_telegram, failed=True)
@@ -6888,12 +6554,7 @@ def _devices_label(n: int) -> str:
 @app.get("/api/app/payment/unseen")
 def app_payment_unseen(payment_id: Optional[str] = Query(None, max_length=64),
                        user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """
-    Платёж, результат которого пользователь ещё не видел (приложение закрылось или
-    перезагрузилось во время оплаты): оплаченный за последние сутки или ожидающий
-    не дольше 30 минут. Мини-приложение при запуске снова показывает окно оплаты.
-    payment_id — вернулись из Platega к конкретному платежу (за последние сутки).
-    """
+    """платёж, итог которого юзер ещё не видел."""
     now = utcnow()
     if payment_id:
         row = db.fetchone(
@@ -6927,7 +6588,7 @@ class PaymentSeenBody(BaseModel):
 
 @app.post("/api/app/payment/seen")
 def app_payment_seen(body: PaymentSeenBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Пользователь увидел итог оплаты — больше не показываем его при запуске."""
+    """юзер увидел итог оплаты: больше не показываем при старте."""
     db.execute(
         "UPDATE payments SET result_seen_at = ? WHERE payment_id = ? AND user_id = ? AND result_seen_at IS NULL",
         (db.utcnow_iso(), str(body.payment_id), int(user["id"])),
@@ -6943,9 +6604,7 @@ def app_payment_status(
     if not payment or int(payment["user_id"]) != int(user["id"]):
         raise HTTPException(404, detail={"message": "Платёж не найден"})
 
-    # Если ещё в ожидании — спрашиваем провайдера (подстраховка на случай задержки
-    # callback), но не чаще раза в 10 секунд на платёж: окно оплаты опрашивает
-    # нас каждые 2 секунды, а вебхук и так обновит статус мгновенно.
+    # pending: спросить провайдера не чаще раза / 10 сек
     if payment["status"] == "pending":
         allowed, _ = ratelimit.rate_limit(f"paycheck:{payment_id}", 1, 10)
         if allowed:
@@ -6971,10 +6630,9 @@ def app_payment_status(
     }
 
 
-
 @app.post("/api/app/promocode/redeem")
 def app_promo_redeem(body: RedeemPromoBody, user: dict = Depends(require_channel_dep)) -> dict[str, Any]:
-    # Защита от перебора промокодов.
+    # защита от перебора промокодов
     allowed, retry = ratelimit.rate_limit(f"promo:{user['id']}", 10, 600)
     if not allowed:
         raise HTTPException(429, detail={"message": f"Слишком много попыток. Повторите через {retry} сек."})
@@ -6990,12 +6648,12 @@ def app_promo_redeem(body: RedeemPromoBody, user: dict = Depends(require_channel
 
 @app.get("/api/app/discount")
 def app_discount(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Итоговая скидка (промо/акция + бонус за опрос), либо {active: false}."""
+    """итоговая скидка или {active: false}."""
     return effective_discount(int(user["id"]))
 
 
 def mask_email(email: str) -> str:
-    """user@gmail.com → u**er@gmail.com (маскируем локальную часть)."""
+    """маскировка локальной части email."""
     email = (email or "").strip()
     if "@" not in email:
         return email
@@ -7008,11 +6666,7 @@ def mask_email(email: str) -> str:
 
 
 def _referral_display(u: dict[str, Any]) -> dict[str, Any]:
-    """
-    Данные приглашённого для мини-приложения: ник (или маскированная почта),
-    буква-инициал для аватарки. Фото других пользователей Telegram недоступно,
-    поэтому аватар рисуется по инициалу на клиенте.
-    """
+    """данные приглашённого для мини-приложения."""
     username = (u.get("username") or "").lstrip("@")
     email = u.get("email")
     if username:
@@ -7020,7 +6674,7 @@ def _referral_display(u: dict[str, Any]) -> dict[str, Any]:
     elif email:
         name = mask_email(str(email))
     elif u.get("telegram_id"):
-        # Telegram ID приглашённого целиком не показываем (приватность).
+        # telegram id приглашённого целиком не показываем
         tg = str(u.get("telegram_id"))
         name = f"id{tg[:3]}•••{tg[-2:]}" if len(tg) > 5 else "Пользователь"
     else:
@@ -7040,8 +6694,7 @@ def app_referral(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
     fresh = get_user(int(user["id"]))
     assert fresh is not None
     refs = db.fetchall("SELECT * FROM users WHERE referred_by = ? ORDER BY id DESC", (fresh["id"],))
-    # Сколько заработано с каждого приглашённого: реферальные начисления пишутся
-    # в transactions с описанием «referral bonus from user <id>».
+    # заработок с приглашённого из transactions
     earned: dict[int, float] = {}
     for r in db.fetchall(
         "SELECT description, SUM(amount) AS total FROM transactions "
@@ -7058,10 +6711,10 @@ def app_referral(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
         item = _referral_display(u)
         item["earned"] = earned.get(int(u["id"]), 0)
         items.append(item)
-    # Сначала те, кто принёс больше, затем новые.
+    # сначала кто принёс больше, потом новые
     items.sort(key=lambda x: -float(x["earned"] or 0))
     return {
-        # Реферальная ссылка = id пользователя: t.me/<bot>?start=ref_72
+        # реф. ссылка: t.me/<bot>?start=ref_<id>
         "code": str(fresh["id"]),
         "link": f"https://t.me/{BOT_USERNAME}?start=ref_{fresh['id']}",
         "is_partner": bool(fresh.get("is_partner")),
@@ -7088,7 +6741,7 @@ def app_withdrawals(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]
 
 @app.post("/api/app/withdraw")
 def app_withdraw(body: WithdrawBody, user: dict = Depends(require_channel_dep)) -> dict[str, Any]:
-    # Ограничение частоты создания заявок на вывод.
+    # rate limit на заявки вывода
     allowed, retry = ratelimit.rate_limit(f"withdraw:{user['id']}", 5, 600)
     if not allowed:
         raise HTTPException(429, detail={"message": f"Слишком часто. Повторите через {retry} сек."})
@@ -7097,7 +6750,7 @@ def app_withdraw(body: WithdrawBody, user: dict = Depends(require_channel_dep)) 
     except services.ServiceError as exc:
         raise HTTPException(exc.status, detail={"message": exc.message})
 
-    # Уведомление в форум «Выводы» (обработка — в панели).
+    # уведомление в форум «выводы»
     try:
         res = forum.notify_withdrawal(w)
         if res and res.get("message_id"):
@@ -7117,7 +6770,7 @@ def app_withdraw(body: WithdrawBody, user: dict = Depends(require_channel_dep)) 
 def app_history(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
     uid = int(user["id"])
     items = db.fetchall(
-        # Только проведённые операции и возвраты: неоплаченные/отменённые платежи не показываем
+        # только проведённые и возвраты
         "SELECT t.*, p.purpose AS p_purpose, p.method AS p_method, p.provider AS p_provider, "
         "p.stars AS p_stars, p.amount AS p_amount, p.extra_devices AS p_extra, p.grant_info AS p_grant, "
         "p.id AS p_id FROM transactions t "
@@ -7126,13 +6779,13 @@ def app_history(user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
         "ORDER BY t.created_at DESC, t.id DESC",
         (uid,),
     )
-    # Самая первая оплата подписки — «Покупка», все следующие — «Продление»
+    # первая оплата: покупка, дальше продление
     first = db.fetchone(
         "SELECT MIN(id) AS id FROM payments WHERE user_id = ? AND purpose IN ('subscription', 'extend') "
         "AND status IN ('paid', 'completed', 'refunded')", (uid,))
     first_id = (first or {}).get("id")
     out = [_history_item(tx, first_id) for tx in items]
-    # Выводы реферальных средств (отклонённые не показываем — деньги остались на балансе)
+    # выводы (отклонённые не показываем)
     wd_status = {"pending": "на рассмотрении", "approved": "одобрен, ждёт перевода", "completed": "выплачено"}
     for w in db.fetchall("SELECT * FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'approved', 'completed')", (uid,)):
         out.append({
@@ -7150,12 +6803,7 @@ _HISTORY_METHOD = {"sbp": "СБП", "card": "картой", "sberpay": "SberPay"
 
 
 def _history_item(tx: dict[str, Any], first_sub_payment_id: Any = None) -> dict[str, Any]:
-    """
-    Строка истории для мини-приложения. Названия — только из списка:
-    Покупка подписки / Продление подписки / Покупка устройства (3 → 4) / Сброс трафика /
-    Начисление баланса / Списание баланса / Вывод средств / Бонус за друга.
-    Покупки — расход (−), бонусы и начисления — доход (+).
-    """
+    """строка истории для мини-приложения."""
     method = str(tx.get("payment_method") or "")
     amount = float(tx.get("amount") or 0)
     stars = None
@@ -7172,7 +6820,7 @@ def _history_item(tx: dict[str, Any], first_sub_payment_id: Any = None) -> dict[
         elif purpose == "traffic_reset":
             title = "Сброс трафика"
         else:
-            # Оплата с реф. баланса и увеличение устройств при продлении — всё равно подписка
+            # оплата с реф. баланса / докупка устройств: всё равно подписка
             title = "Покупка подписки" if tx.get("p_id") == first_sub_payment_id else "Продление подписки"
         pm = str(tx.get("p_method") or tx.get("p_provider") or "")
         sub = _HISTORY_METHOD["balance"] if tx.get("p_provider") == "balance" else _HISTORY_METHOD.get(pm.lower(), "")
@@ -7197,12 +6845,10 @@ def _history_item(tx: dict[str, Any], first_sub_payment_id: Any = None) -> dict[
         "direction": direction,
         "status": tx.get("status"),
         "created_at": tx.get("created_at"),
-        # старые поля — на случай старой версии мини-приложения в кэше
+        # старые поля для кэшированной старой версии мини-приложения
         "payment_method": tx.get("payment_method"),
         "description": title,
     }
-
-
 
 
 @app.get("/api/app/plans")
@@ -7224,11 +6870,7 @@ def app_legal() -> dict[str, Any]:
 
 
 def _require_internal(secret: Optional[str]) -> None:
-    """
-    Доступ к внутренним service-to-service ручкам. Сравнение в постоянном времени.
-    Fail-closed: если секрет не настроен, в проде доступ ЗАПРЕЩЁН (иначе кто угодно
-    мог бы подтвердить свой платёж без оплаты).
-    """
+    """доступ к internal api; без секрета в проде закрыто."""
     if not INTERNAL_API_SECRET:
         if ENV == "production":
             raise HTTPException(403, detail="Forbidden")
@@ -7237,15 +6879,13 @@ def _require_internal(secret: Optional[str]) -> None:
         raise HTTPException(403, detail="Forbidden")
 
 
-# ── Telegram webhook (режим Stars = webhook; по умолчанию используется polling) ──
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: Optional[str] = Header(None, alias="X-Telegram-Bot-Api-Secret-Token"),
 ) -> dict[str, Any]:
-    # Подлинность апдейта — по секрет-токену, который мы задали в setWebhook.
-    # Fail-closed: если секрет не настроен, в проде вебхук ЗАПРЕЩЁН (иначе кто
-    # угодно мог бы прислать поддельный successful_payment и выдать себе подписку).
+    # апдейт проверяем по secret из setwebhook
+    # без секрета в проде вебхук запрещён
     if not TELEGRAM_WEBHOOK_SECRET:
         if IS_PROD:
             raise HTTPException(403, detail="Forbidden")
@@ -7259,7 +6899,7 @@ async def telegram_webhook(
         return {"ok": True}
 
     try:
-        # pre_checkout_query — подтвердить в течение 10 секунд.
+        # pre_checkout_query: ответить за 10 сек
         pcq = update.get("pre_checkout_query")
         if pcq:
             payment_id = pcq.get("invoice_payload") or ""
@@ -7295,7 +6935,6 @@ async def telegram_webhook(
     return {"ok": True}
 
 
-# Internal ping (bot / webhook ↔ api)
 @app.get("/api/internal/ping")
 def internal_ping(x_internal_secret: Optional[str] = Header(None, alias="X-Internal-Secret")) -> dict[str, Any]:
     _require_internal(x_internal_secret)
@@ -7338,11 +6977,7 @@ def internal_payment_chargeback(
     body: InternalFulfillBody,
     x_internal_secret: Optional[str] = Header(None, alias="X-Internal-Secret"),
 ) -> dict[str, Any]:
-    """
-    Platega сообщила о чарджбеке (CHARGEBACKED). Ничего не откатываем и деньги
-    не возвращаем автоматически: платёж помечается, «Возврат» по нему блокируется
-    (правило Platega), а владелец проводит «Чарджбек» в панели сам.
-    """
+    """чарджбек от platega: помечаем, автоматом не откатываем."""
     _require_internal(x_internal_secret)
     p = fulfillment.get_payment(body.payment_id)
     if not p:
@@ -7383,14 +7018,9 @@ async def http_exception_handler(_: Request, exc: HTTPException):
 
 @app.exception_handler(OverflowError)
 async def overflow_handler(_: Request, __: OverflowError):
-    # Число в адресе/запросе больше, чем влезает в SQLite (id вида 10**20) — такого объекта нет
+    # id слишком большой для sqlite: объекта нет
     return JSONResponse(status_code=404, content={"detail": {"message": "Не найдено"}, "error": "Не найдено"})
 
-
-
-# ═════════════════════════════════════════════════════════════
-# SUPPORT (служба поддержки, см. support.py)
-# ═════════════════════════════════════════════════════════════
 
 def _sup(fn, *a, **k):
     try:
@@ -7400,7 +7030,7 @@ def _sup(fn, *a, **k):
 
 
 def _support_user(user: dict[str, Any]) -> dict[str, Any]:
-    """Пользователь из общего чёрного списка поддержку не видит (как и раньше кнопку)."""
+    """из чёрного списка поддержку не видит."""
     fresh = get_user(int(user["id"])) or user
     if fresh.get("is_banned") and str(fresh.get("ban_reason") or "").startswith(blacklist.BAN_REASON_PREFIX):
         raise HTTPException(403, detail={"message": "Поддержка недоступна"})
@@ -7413,12 +7043,12 @@ def _support_limits() -> dict[str, Any]:
 
 
 def _for_user(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Пользователю — без имён сотрудников, служебных пометок и номеров обращений."""
+    """ответ юзеру без имён сотрудников и номеров."""
     return [support.public_message(m) for m in msgs if not m.get("internal")]
 
 
 async def _stream_upload(request: Request, chat_id: int, uploader: str, uploader_id: str, name: str) -> dict[str, Any]:
-    """Тело запроса = байты файла. Пишем на диск по ходу загрузки, обрываем сверх лимита."""
+    """тело = байты файла; обрыв сверх лимита."""
     try:
         declared = int(request.headers.get("content-length") or 0)
     except ValueError:
@@ -7441,7 +7071,7 @@ async def _stream_upload(request: Request, chat_id: int, uploader: str, uploader
 
 
 def _notify_support_forum(user: dict[str, Any], chat: dict[str, Any], msg: dict[str, Any]) -> None:
-    """Сообщение от пользователя → топик «Поддержка» (не чаще раза в 2 минуты на переписку, пока не прочитано)."""
+    """сообщение юзера -> топик поддержки."""
     try:
         fresh = support.get_chat(int(chat["id"])) or chat
         t = support.ticket_info(fresh) or {}
@@ -7469,7 +7099,7 @@ def _notify_support_forum(user: dict[str, Any], chat: dict[str, Any], msg: dict[
 
 
 def _notify_support_user(user: dict[str, Any], msg: dict[str, Any], chat: Optional[dict[str, Any]] = None) -> Optional[int]:
-    """Ответ поддержки → пользователю в бота (кнопка «Открыть чат») и на почту (не чаще раза в 10 минут)."""
+    """ответ поддержки -> бот и почта."""
     email = (user.get("email") or "").strip()
     if email and chat is not None and mailer.is_configured():
         last = parse_iso(chat.get("last_email_at")) if chat.get("last_email_at") else None
@@ -7492,7 +7122,7 @@ def _notify_support_user(user: dict[str, Any], msg: dict[str, Any], chat: Option
 
 
 def _support_cleanup_loop() -> None:
-    """Раз в час: чистка переписок поддержки и журнала панели (старше 180 дней)."""
+    """раз в час: чистка старых переписок и журнала."""
     while True:
         try:
             db.execute("DELETE FROM panel_audit WHERE ts < ?", (iso(utcnow() - timedelta(days=180)),))
@@ -7508,7 +7138,7 @@ def _support_cleanup_loop() -> None:
 
 
 def _support_autoclose_loop() -> None:
-    """Раз в минуту: закрыть обращения, где на вопрос о закрытии не ответили 60 минут."""
+    """раз в минуту: закрыть тикеты без ответа 60 мин."""
     while True:
         time.sleep(60)
         try:
@@ -7516,10 +7146,6 @@ def _support_autoclose_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[support] autoclose failed: {exc}", flush=True)
 
-
-# ═════════════════════════════════════════════════════════════
-# БАЛАНСИРОВЩИК ПОДПИСКИ (XBM) — панель → «Балансировщик», только владелец
-# ═════════════════════════════════════════════════════════════
 
 def _xbm_client():
     client = _rw_client()
@@ -7533,7 +7159,7 @@ def _xbm_hosts_raw() -> Any:
 
 
 def _xbm_templates() -> tuple[Optional[list[dict[str, Any]]], Optional[str]]:
-    """Шаблоны Xray JSON из Remnawave; (None, ошибка), если их взять не удалось."""
+    """шаблоны xray json из remnawave."""
     try:
         return xbm.normalize_templates(_xbm_client().get_subscription_templates()), None
     except xbm.XbmError as e:
@@ -7587,14 +7213,13 @@ def panel_xbm_save(body: dict[str, Any] = Body(...), _: dict = Depends(require_o
     try:
         hosts = xbm.normalize_hosts(_xbm_hosts_raw())
         tpls, tpl_err = _xbm_templates()
-        with xbm.save_lock:  # фоновая сверка не вклинится между сохранением и откатом
+        with xbm.save_lock:  # сверка не вклинится между save и rollback
             prev = db.get_setting(xbm.SETTINGS_KEY, "")
             xbm.save_settings(xbm.validate(body, hosts, tpls))
             try:
                 _xbm_sync(hosts, strict=True)
             except Exception:
-                # panel.json не записался (например, шаблон не скачался) — не оставляем
-                # в панели настройки, которые XBM так и не получил
+                # panel.json не записался: откатываем настройки в панели
                 db.set_setting(xbm.SETTINGS_KEY, prev)
                 raise
     except xbm.XbmError as e:
@@ -7608,12 +7233,12 @@ def panel_xbm_save(body: dict[str, Any] = Body(...), _: dict = Depends(require_o
 
 @app.get("/api/panel/xbm/preview")
 def panel_xbm_preview(user_id: int = Query(..., ge=1, le=2 ** 62), _: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Как подписку этого пользователя увидит Happ (через XBM)."""
+    """как подписку юзера увидит happ через xbm."""
     sub = db.fetchone("SELECT short_uuid FROM subscriptions WHERE user_id = ? AND status = 'Active' AND short_uuid IS NOT NULL "
                       "AND short_uuid != '' ORDER BY id DESC LIMIT 1", (int(user_id),))
     if not sub:
         raise HTTPException(404, detail={"message": "У пользователя нет активной подписки"})
-    # HWID уже привязанного устройства (если есть) — чтобы при лимите устройств Remnawave не отдала заглушку
+    # hwid уже привязанного устройства, если есть
     hwid = None
     user = get_user(int(user_id))
     try:
@@ -7632,10 +7257,6 @@ def panel_xbm_preview(user_id: int = Query(..., ge=1, le=2 ** 62), _: dict = Dep
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, detail={"message": f"XBM недоступен: {type(exc).__name__}"})
 
-
-# ═════════════════════════════════════════════════════════════
-# ПОЧТА — панель → Настройки → Почта (только владелец)
-# ═════════════════════════════════════════════════════════════
 
 _HOST_RX = re.compile(r"^(?=.{4,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
 
@@ -7671,7 +7292,7 @@ def _mail_smtp_params(body: dict[str, Any]) -> tuple[str, int, str, Optional[str
     if not _valid_email(user):
         raise HTTPException(400, detail={"message": "Неверный адрес почты"})
     pwd = body.get("password")
-    pwd = re.sub(r"\s+", "", str(pwd))[:200] if pwd else None  # Google показывает пароль с пробелами
+    pwd = re.sub(r"\s+", "", str(pwd))[:200] if pwd else None  # google показывает пароль с пробелами
     return host, port, user, pwd
 
 
@@ -7748,7 +7369,7 @@ def panel_mail_send_test(body: dict[str, Any] = Body(...), _: dict = Depends(req
 
 @app.get("/api/panel/xbm/setup")
 def panel_xbm_setup_info(_: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Мастер «XBM»: жив ли помощник на сервере, подсказки для полей."""
+    """мастер xbm: жив ли помощник, подсказки полей."""
     from urllib.parse import urlsplit
     sub_host = urlsplit(_env("REMWAVE_SUB_PUBLIC_URL") or "").hostname or ""
     return {"runner": xbm.runner_alive(), "xbm": xbm.health(),
@@ -7762,7 +7383,7 @@ def panel_xbm_setup_run(action: str, body: dict[str, Any] = Body(default={}), _:
     params = {k: str(v)[:260] for k, v in (body or {}).items()
               if k in ("remnawave_url", "sub_domain", "network", "conf", "container") and v not in (None, "")}
     if action == "xbm_connect":
-        # Чья-нибудь подписка — проверить после правки nginx, что она идёт через XBM
+        # чья-нибудь подписка: проверить nginx после правки
         tok = xbm.sample_short_uuid() or ""
         if re.fullmatch(r"[A-Za-z0-9_-]{4,128}", tok):
             params["token"] = tok
@@ -7787,7 +7408,7 @@ def panel_xbm_rules(_: dict = Depends(require_owner)) -> dict[str, Any]:
 
 @app.post("/api/panel/xbm/check")
 def panel_xbm_check(_: dict = Depends(require_owner)) -> dict[str, Any]:
-    """Проверка шага «Response Rules»: XBM отдаёт Xray JSON для подписки любого активного пользователя."""
+    """проверка response rules: xbm отдаёт xray json."""
     if not xbm.health().get("running"):
         raise HTTPException(409, detail={"message": "XBM не запущен"})
     su = xbm.sample_short_uuid()
@@ -7803,11 +7424,7 @@ def panel_xbm_check(_: dict = Depends(require_owner)) -> dict[str, Any]:
 
 
 def _xbm_sync_loop() -> None:
-    """
-    Сразу после запуска и раз в минуту: пересобрать panel.json для XBM
-    (переименовали/удалили хост или шаблон в Remnawave). Пока в панели ничего
-    не настроено, пользователи видят только авто-выбор.
-    """
+    """раз в минуту: пересобрать panel.json для xbm."""
     last_err = None
     time.sleep(5)
     while True:
@@ -7818,7 +7435,7 @@ def _xbm_sync_loop() -> None:
                 last_err = None
         except Exception as exc:  # noqa: BLE001
             err = f"{type(exc).__name__}: {getattr(exc, 'message', exc)}"
-            if err != last_err:  # не засоряем лог одной и той же ошибкой раз в минуту
+            if err != last_err:  # не спамим одной ошибкой раз в минуту
                 print(f"[xbm] sync failed: {err}", flush=True)
             last_err = err
         time.sleep(60)
@@ -7826,7 +7443,7 @@ def _xbm_sync_loop() -> None:
 
 @app.on_event("startup")
 def _clean_usernames() -> None:
-    """Разово приводим в порядок ники, попавшие в базу до проверки."""
+    """разово чиним ники, попавшие до валидации."""
     try:
         for r in db.fetchall("SELECT id, username FROM users WHERE username IS NOT NULL"):
             ok = names.tg_username(r["username"])
@@ -7860,9 +7477,9 @@ def app_support_get(after: int = Query(0, ge=0), user: dict = Depends(_app_user_
     t = support.ticket_info(chat) if chat else None
     return {
         "chat": {"id": chat["id"], "unread": int(chat.get("unread_user") or 0)} if chat else None,
-        "ticket": {"status": t["status"]} if t else None,     # номер обращения пользователю не показываем
+        "ticket": {"status": t["status"]} if t else None,     # номер обращения юзеру не показываем
         "messages": support.messages(int(chat["id"]), after, for_user=True) if chat else [],
-        # изменённые/удалённые поддержкой сообщения из уже показанных
+        # изменённые/удалённые сообщения из уже показанных
         "changes": support.changes(int(chat["id"]), after, for_user=True) if chat and after else [],
         "limits": _support_limits(),
     }
@@ -7897,7 +7514,7 @@ class SupportCloseBody(BaseModel):
 
 @app.post("/api/app/support/close")
 def app_support_close(body: SupportCloseBody, user: dict = Depends(_app_user_from_init)) -> dict[str, Any]:
-    """Кнопка «Нет, спасибо» под вопросом поддержки — закрыть обращение."""
+    """кнопка «нет, спасибо»: закрыть обращение."""
     u = _support_user(user)
     chat = support.chat_for_user(int(u["id"]), create=False)
     if not chat:
@@ -7916,12 +7533,12 @@ def app_support_read(user: dict = Depends(_app_user_from_init)) -> dict[str, Any
 
 @app.get("/api/support/file/{fid}")
 def support_file(fid: str, exp: int = Query(0), sig: str = Query("", max_length=64)):
-    """Вложение по подписанной ссылке. Показ «как картинка/видео» — только для проверенных форматов."""
+    """вложение по подписанной ссылке."""
     f = support.check_file_token(fid, exp, sig)
     if not f:
         raise HTTPException(404, detail={"message": "Файл не найден или ссылка устарела"})
     if (f.get("storage") or "local") == "s3":
-        # Файл отдаёт само хранилище по временной ссылке — сервер трафик не тратит
+        # файл отдаёт хранилище по временной ссылке
         try:
             return RedirectResponse(support.s3_download_url(f), status_code=302, headers={"Cache-Control": "no-store"})
         except s3store.S3Error:
@@ -7938,10 +7555,7 @@ def support_file(fid: str, exp: int = Query(0), sig: str = Query("", max_length=
 
 
 def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
-    """
-    Владелец и кураторы видят все переписки (в том числе закрытые и чужие).
-    Оператор — только открытые обращения из общего пула («Открыто») и свои («Мои»).
-    """
+    """что видит сотрудник: владелец/куратор все; оператор пул."""
     if is_full(p):
         return True
     if t is False:
@@ -7954,8 +7568,7 @@ def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
 
 
 def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[int]]:
-    """Какие обращения переписки видит сотрудник: владелец/куратор — все (None);
-    оператор — текущее (из пула или своё) и те, что вёл он сам."""
+    """какие обращения видит сотрудник."""
     if is_full(p):
         return None
     ids = {int(r["id"]) for r in db.fetchall("SELECT id FROM support_tickets WHERE chat_id = ? AND assigned_admin = ?",
@@ -7967,10 +7580,7 @@ def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[in
 
 
 def _tab_of(c: dict[str, Any], t: Optional[dict[str, Any]], p: dict[str, Any]) -> str:
-    """
-    Владелец/куратор: open — общий пул; work — в работе (свои и переданные админу,
-    ниже — чужие); archive — закрытые. Оператор: open — пул; mine — свои.
-    """
+    """вкладки open/work/archive для ролей."""
     if not t or t["status"] != "open":
         return "archive"
     mine = t.get("assigned_admin") == p["actor"]
@@ -7982,7 +7592,7 @@ def _tab_of(c: dict[str, Any], t: Optional[dict[str, Any]], p: dict[str, Any]) -
 
 
 def _work_group(t: Optional[dict[str, Any]], p: dict[str, Any]) -> str:
-    """Во вкладке «В работе»: mine — мои и переданные админу, others — ведут другие."""
+    """во вкладке «в работе»: mine vs others."""
     if not t:
         return ""
     if t.get("assigned_admin") == p["actor"] or (not t.get("assigned_admin") and t.get("escalated")):
@@ -8015,17 +7625,11 @@ SUPPORT_TABS_OPERATOR = ("open", "mine")
 @app.get("/api/panel/support/chats")
 def panel_support_chats(q: str = Query("", max_length=100), status: str = Query("open", max_length=10),
                         p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """
-    Вкладки: open — общий пул (взять кнопкой «Начать»), mine — мои в работе;
-    владельцу и кураторам ещё admin — передано админу, work — в работе у других,
-    closed — закрытые. Порядок: сверху те, что дольше ждут ответа; обращение с
-    вопросом о закрытии — в самом низу.
-    """
+    """список обращений по вкладкам."""
     tabs = SUPPORT_TABS_FULL if is_full(p) else SUPPORT_TABS_OPERATOR
     if status not in tabs:
         status = "open"
-    # Открытые — все (иначе самые старые, которые ждут дольше всех, выпали бы из пула),
-    # закрытые — последние 1000.
+    # открытые все; закрытые последние 1000
     rows = db.fetchall("SELECT * FROM support_chats WHERE open_ticket_id IS NOT NULL")
     if "archive" in tabs:
         rows += db.fetchall("SELECT * FROM support_chats WHERE open_ticket_id IS NULL AND last_message_at IS NOT NULL "
@@ -8053,14 +7657,11 @@ def panel_support_chats(q: str = Query("", max_length=100), status: str = Query(
     if status == "archive":
         items.sort(key=lambda ct: ct[0].get("last_message_at") or "", reverse=True)
     else:
-        # «В работе»: сначала мои и переданные админу, потом чужие. Внутри —
-        # старые без ответа сверху, «в процессе закрытия» — в самом низу.
+        # «в работе»: сначала мои, потом чужие; closing внизу
         items.sort(key=lambda ct: (0 if status != "work" or _work_group(ct[1], p) == "mine" else 1,
                                    1 if (ct[1] or {}).get("close_prompt") else 0, (ct[1] or {}).get("queue_at") or ""))
     return {"chats": [_panel_chat_row(c, p, t) for c, t in items[:500]], "counts": counts, "tabs": list(tabs)}
 
-
-# ── Общий чат сотрудников ────────────────────────────────────
 
 class TeamMessageBody(BaseModel):
     text: str = Field("", max_length=teamchat.MAX_TEXT + 100)
@@ -8086,7 +7687,7 @@ def _team_role(p: dict[str, Any]) -> str:
 def panel_team_chat(after: int = Query(0, ge=0, le=2 ** 62), before: int = Query(0, ge=0, le=2 ** 62),
                     p: dict = Depends(require_panel)) -> dict[str, Any]:
     return {"messages": teamchat.messages(p["actor"], after, before), "last_read": teamchat.last_read(p["actor"]),
-            # удалённые за последние сутки — чтобы открытые окна убрали их текст
+            # удалённые за сутки: чтобы клиенты убрали текст
             "deleted": teamchat.recently_deleted(), "edited": teamchat.recently_edited(p["actor"]) if after else [],
             "me": {"actor": p["actor"], "owner": p["kind"] == "owner"}}
 
@@ -8129,7 +7730,7 @@ def panel_team_delete(message_id: int, p: dict = Depends(require_panel)) -> dict
 
 @app.get("/api/panel/support/unread")
 def panel_support_unread(p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Цифра у пункта «Поддержка»: обращения в пуле + мои с новыми сообщениями (+ «Админу» у кураторов)."""
+    """бейдж поддержки: пул + мои с новыми."""
     n = 0
     for c in db.fetchall("SELECT * FROM support_chats WHERE open_ticket_id IS NOT NULL"):
         t = support.ticket_info(c)
@@ -8171,7 +7772,7 @@ def panel_support_chat(chat_id: int, after: int = Query(0, ge=0), p: dict = Depe
 @app.post("/api/panel/support/chats/{chat_id}/read")
 def panel_support_read(chat_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
     chat = _panel_chat(chat_id, p)
-    # Отметить прочитанным может тот, кто ведёт обращение (или куратор/владелец) — пул остаётся «новым» для всех
+    # прочитанным отмечает ведущий (или куратор/владелец)
     if is_full(p) or _started_by(chat, p):
         support.mark_read(chat["id"], "admin")
     return {"ok": True}
@@ -8197,7 +7798,7 @@ class SupportCloseBody2(BaseModel):
 
 @app.post("/api/panel/support/chats/{chat_id}/close")
 def panel_support_close(chat_id: int, body: Optional[SupportCloseBody2] = None, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """«Закрыть» — вопрос «Могу ли я ещё чем-то помочь?»; force — закрыть сразу (владелец и кураторы)."""
+    """закрыть: вопрос юзеру; force сразу (владелец/куратор)."""
     chat = _panel_chat(chat_id, p)
     full = is_full(p)
     force = bool(body and body.force)
@@ -8215,7 +7816,7 @@ def panel_support_close(chat_id: int, body: Optional[SupportCloseBody2] = None, 
 
 @app.post("/api/panel/support/chats/{chat_id}/pool")
 def panel_support_pool(chat_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """«В пул»: оператор — своё обращение; куратор/владелец — любое."""
+    """вернуть в пул."""
     chat = _panel_chat(chat_id, p)
     return _sup(support.to_pool, chat, p["actor"], p["name"], not is_full(p), _guard(p, "pool"))
 
@@ -8225,7 +7826,7 @@ class EscalateBody(BaseModel):
 
 
 def _notify_admins_escalation(chat: dict[str, Any], who: str, note: str) -> None:
-    """«Передать админу» → владельцу и кураторам в личные сообщения + push."""
+    """передать админу: лс + push."""
     u = get_user(int(chat["user_id"])) or {}
     base = forum.panel_url()
     text = (f"🆘 <b>Обращение передано админу</b>\nОт: {_esc_html(who)}\nПользователь: {_esc_html(_user_label(u))}"
@@ -8253,7 +7854,7 @@ def _notify_admins_escalation(chat: dict[str, Any], who: str, note: str) -> None
 
 @app.post("/api/panel/support/chats/{chat_id}/escalate")
 def panel_support_escalate(chat_id: int, body: Optional[EscalateBody] = None, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """«Передать админу»: оператор отдаёт своё обращение кураторам и владельцу."""
+    """оператор отдаёт своё обращение админу."""
     chat = _panel_chat(chat_id, p)
     if is_full(p):
         raise HTTPException(400, detail={"message": "Вы и так администратор — верните обращение в пул или ведите сами"})
@@ -8263,8 +7864,7 @@ def panel_support_escalate(chat_id: int, body: Optional[EscalateBody] = None, p:
 
 
 def _holder_is_senior(assigned: Optional[str], p: dict[str, Any]) -> bool:
-    """Обращение ведёт тот, кого этот сотрудник «перебить» не может: владелец
-    (для всех, кроме него самого) или другой куратор (для куратора)."""
+    """обращение ведёт тот, кого нельзя перебить."""
     if not assigned or assigned == p["actor"] or p["role"] == "owner":
         return False
     if assigned == "owner":
@@ -8279,7 +7879,7 @@ def _holder_is_senior(assigned: Optional[str], p: dict[str, Any]) -> bool:
 
 
 def _guard(p: dict[str, Any], op: str):
-    """Проверка прав на обращение внутри транзакции (без гонок между сотрудниками)."""
+    """права на обращение внутри транзакции."""
     full = is_full(p)
 
     def g(t: dict[str, Any]):
@@ -8297,7 +7897,7 @@ def _guard(p: dict[str, Any], op: str):
 
 
 def _require_writer(chat: dict[str, Any], p: dict[str, Any]) -> None:
-    """Писать может тот, кто ведёт обращение; куратор/владелец — в любое открытое."""
+    """писать может ведущий; куратор/владелец в любое открытое."""
     if _started_by(chat, p):
         return
     if is_full(p):
@@ -8325,7 +7925,7 @@ def panel_support_send(chat_id: int, body: SupportMessageBody, p: dict = Depends
     full = is_full(p)
     t = support.open_ticket(chat)
     if full and t and not t.get("assigned_admin"):
-        # куратор/владелец ответил в ничьё обращение — оно становится его
+        # куратор/владелец ответил в ничьё: оно становится его
         _sup(support.start, chat, p["actor"], p["name"], False, _guard(p, "start"))
         chat = support.get_chat(int(chat["id"])) or chat
     msg = _sup(support.send_message, chat, "admin", p["name"], body.text or "", body.files, p["actor"], body.reply_to,
@@ -8341,7 +7941,7 @@ def panel_support_send(chat_id: int, body: SupportMessageBody, p: dict = Depends
 
 
 def _staff_view(msgs: list[dict[str, Any]], p: dict[str, Any]) -> list[dict[str, Any]]:
-    """Для панели: вместо ключа автора — «моё/не моё» (править и удалять можно только своё)."""
+    """для панели: моё/не моё вместо ключа автора."""
     out = []
     for m in msgs:
         m = dict(m)
@@ -8362,7 +7962,7 @@ def _tg_support_text(text: str) -> str:
 
 @app.post("/api/panel/support/chats/{chat_id}/messages/{message_id}/edit")
 def panel_support_edit(chat_id: int, message_id: int, body: SupportEditBody, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Изменить своё сообщение (48 часов). У пользователя появится пометка «изменено»."""
+    """изменить своё сообщение (48 ч)."""
     chat = _panel_chat(chat_id, p)
     msg = _sup(support.edit_message, chat, message_id, p["actor"], body.text)
     row = db.fetchone("SELECT tg_msg_id FROM support_messages WHERE id = ?", (int(message_id),))
@@ -8381,7 +7981,7 @@ def panel_support_edit(chat_id: int, message_id: int, body: SupportEditBody, p: 
 
 @app.delete("/api/panel/support/chats/{chat_id}/messages/{message_id}")
 def panel_support_delete(chat_id: int, message_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Удалить своё сообщение (48 часов): у пользователя оно пропадёт, уведомление в Telegram тоже."""
+    """удалить своё сообщение (48 ч)."""
     chat = _panel_chat(chat_id, p)
     r = _sup(support.delete_message, chat, message_id, p["actor"])
     user = get_user(int(chat["user_id"]))
@@ -8400,12 +8000,10 @@ def panel_support_storage(_: dict = Depends(require_owner)) -> dict[str, Any]:
 
 @app.get("/api/panel/users/{user_id}/can-manage")
 def panel_user_can_manage(user_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """Может ли сотрудник менять этого пользователя (для панели: «только просмотр» или нет)."""
+    """может ли сотрудник менять этого юзера."""
     return {"can_manage": can_manage_user(p, user_id), "restricted_actions":
             sorted(staffmod.OPERATOR_FORBIDDEN_ACTIONS) if p["role"] == "operator" else []}
 
-
-# ── Хранилище S3 (Timeweb Cloud) ─────────────────────────────
 
 class S3ConfigBody(BaseModel):
     enabled: Optional[bool] = None
@@ -8413,7 +8011,7 @@ class S3ConfigBody(BaseModel):
     region: Optional[str] = None
     bucket: Optional[str] = None
     access_key: Optional[str] = None
-    secret_key: Optional[str] = None      # пусто — оставить сохранённый
+    secret_key: Optional[str] = None      # пусто: оставить сохранённый
     prefix: Optional[str] = None
     size_gb: Optional[float] = None
 
@@ -8434,7 +8032,7 @@ def panel_s3_get(_: dict = Depends(require_owner)) -> dict[str, Any]:
 def panel_s3_put(body: S3ConfigBody, _: dict = Depends(require_owner)) -> dict[str, Any]:
     data = body.model_dump()
     if data.get("enabled"):
-        # Включаем только проверенное хранилище
+        # включаем только проверенное хранилище
         cfg = {**s3store.get_config(with_secret=True), **{k: v for k, v in data.items() if v not in (None, "")}}
         _s3(s3store.check, cfg)
     cfg = _s3(s3store.save_config, data)

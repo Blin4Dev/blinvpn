@@ -10,7 +10,6 @@ export const Spinner: React.FC<{ size?: number; className?: string }> = ({ size 
   <Loader size={size} className={`animate-spin ${className}`} style={{ color: 'var(--muted)' }} />
 );
 
-// ── Modal shell ───────────────────────────────────────────
 export const Modal: React.FC<{
   onClose: () => void;
   title?: React.ReactNode;
@@ -35,14 +34,12 @@ export const Modal: React.FC<{
   document.body,
 );
 
-// ── Toggle ────────────────────────────────────────────────
 export const Toggle: React.FC<{ on: boolean; onChange: () => void }> = ({ on, onChange }) => (
   <button type="button" className={`toggle ${on ? 'on' : ''}`} onClick={onChange} aria-pressed={on}>
     <span className="knob" />
   </button>
 );
 
-// ── Segmented control ─────────────────────────────────────
 export function Segmented<T extends string>({ value, onChange, options }: {
   value: T; onChange: (v: T) => void; options: { value: T; label: string }[];
 }) {
@@ -57,7 +54,6 @@ export function Segmented<T extends string>({ value, onChange, options }: {
   );
 }
 
-// ── Stat card ─────────────────────────────────────────────
 export const Stat: React.FC<{ title: string; value: React.ReactNode; icon: React.ElementType; sub?: string }> =
   ({ title, value, icon: Icon, sub }) => (
     <div className="stat">
@@ -72,7 +68,6 @@ export const Stat: React.FC<{ title: string; value: React.ReactNode; icon: React
     </div>
   );
 
-// ── Pagination ────────────────────────────────────────────
 export const PaginationBar: React.FC<{
   page: number; totalPages: number; total: number; loading?: boolean;
   onPrev: () => void; onNext: () => void; totalLabel?: string;
@@ -90,7 +85,6 @@ export const PaginationBar: React.FC<{
   </div>
 );
 
-// ── Toasts ────────────────────────────────────────────────
 export const ToastContainer: React.FC<{ toasts: Toast[]; removeToast: (id: number) => void }> = ({ toasts, removeToast }) => (
   <div className="toasts">
     {toasts.map((t) => (
@@ -107,7 +101,7 @@ export const ToastContainer: React.FC<{ toasts: Toast[]; removeToast: (id: numbe
   </div>
 );
 
-// status → badge class
+// статус → класс бейджа
 export const userStatusBadge = (s: UserStatus, blacklist?: boolean) => {
   if (blacklist || s === 'Banned') return { cls: 'danger', label: 'Заблокирован' };
   if (s === 'Active') return { cls: 'solid', label: 'Активен' };
@@ -116,7 +110,6 @@ export const userStatusBadge = (s: UserStatus, blacklist?: boolean) => {
   return { cls: 'line', label: 'Истекла' };
 };
 
-// ── page header helper ────────────────────────────────────
 export const PageHead: React.FC<{ title: string; sub?: string; children?: React.ReactNode }> = ({ title, sub, children }) => (
   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
     <div><h2 className="h-page">{title}</h2>{sub && <p className="sub mt-1">{sub}</p>}</div>
@@ -130,7 +123,7 @@ export const Delta: React.FC<{ v?: number | null; suffix?: string }> = ({ v, suf
   return <span style={{ color: flat ? 'var(--muted)' : up ? '#34d399' : 'var(--danger)' }}>{up ? '↑' : flat ? '→' : '↓'} {fmtDelta(v)} <span className="faint">{suffix}</span></span>;
 };
 
-// Карточка-показатель с подписью под числом (Stat принимает sub только строкой)
+// kpi: подпись под числом (у Stat sub только строка)
 export const Kpi: React.FC<{ title: string; value: React.ReactNode; icon?: React.ElementType; foot?: React.ReactNode; hint?: string }> = ({ title, value, icon: Icon, foot, hint }) => (
   <div className="stat" title={hint}>
     <div className="stat-top"><span className="stat-label">{title}</span>{Icon && <Icon size={18} className="stat-ico" />}</div>
@@ -178,7 +171,7 @@ export const DCard: React.FC<{ title?: React.ReactNode; icon?: React.ElementType
   </div>
 );
 
-// Статус платежа по-русски. Возврат — серым: деньги ушли обратно, в статистике не учитывается.
+// статус платежа; возврат серым (в статистику не идёт)
 const PAY_STATUS: Record<string, { cls: string; label: string }> = {
   paid: { cls: 'solid', label: 'Оплачен' },
   completed: { cls: 'solid', label: 'Оплачен' },
@@ -196,10 +189,9 @@ export const PaymentStatusBadge: React.FC<{ status?: string | null }> = ({ statu
 export const refundedRowStyle = (status?: string | null): React.CSSProperties | undefined =>
   status === 'refunded' || status === 'chargeback' ? { opacity: 0.5 } : undefined;
 
-// ── Меню «три точки» ─────────────────────────────────────
 export type DotsItem = { label: string; icon?: React.ElementType; onClick: () => void; danger?: boolean; disabled?: boolean; hint?: string } | null | false | undefined | '' | 0;
 
-/** Кнопка «⋯» с выпадающим списком действий (рисуется поверх всего — не обрезается таблицами). */
+// меню «⋯» через portal, чтобы таблицы не обрезали
 export const DotsMenu: React.FC<{ items: DotsItem[]; title?: string; size?: number }> = ({ items, title = 'Действия', size = 32 }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);

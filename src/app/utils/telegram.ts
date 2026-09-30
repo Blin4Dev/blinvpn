@@ -1,12 +1,4 @@
-/**
- * Инициализация Telegram WebApp viewport.
- *
- *   • Телефоны (android/ios) → полноэкранный режим requestFullscreen (Bot API 8.0+),
- *     с откатом на expand(), если клиент не поддерживает fullscreen.
- *   • Компьютеры (Telegram Desktop / web) → expand() на всю доступную высоту (fullsize).
- *
- * Безопасно вызывать вне Telegram — тогда просто ничего не делает.
- */
+// viewport telegram webapp: fullscreen на телефоне, expand на десктопе
 
 type TgInset = { top?: number; bottom?: number; left?: number; right?: number };
 
@@ -28,34 +20,27 @@ type AnyTg = {
   setHeaderColor?: (color: string) => void;
 };
 
-/** В Telegram (не в браузере)? */
+// true внутри telegram, false в браузере
 export function isTelegramClient(): boolean {
   const tg = webApp();
   return Boolean(tg?.initData && tg.initData.length > 0);
 }
 
-/**
- * Верхний отступ только в Telegram fullscreen.
- * В обычном режиме у TG уже есть своя шапка — лишний pad даёт чёрную полосу.
- * В браузере всегда 0.
- */
+// верхний отступ только в tg fullscreen (иначе шапка tg уже закрывает)
 export function applyTelegramTopInset(): void {
   const root = document.documentElement.style;
   try {
     const tg = webApp();
     const bottomSafe = Number(tg?.safeAreaInset?.bottom) || 0;
     const bottomContent = Number(tg?.contentSafeAreaInset?.bottom) || 0;
-    // Нижний отступ (полоска «домой» на iPhone и т.п.) — нужен в любом режиме TG.
+    // индикатор home и т.п. в любом режиме tg
     root.setProperty("--blin-tg-pad-bottom", tg?.initData ? `${Math.round(bottomSafe + bottomContent)}px` : "0px");
 
     if (!tg?.initData || !tg.isFullscreen) {
       root.setProperty("--blin-tg-pad-top", "0px");
       return;
     }
-    // В fullscreen сверху лежат ДВА слоя: системный статус-бар (safeAreaInset)
-    // и кнопки Telegram «Закрыть / ⋯» (contentSafeAreaInset, отсчитывается
-    // ОТ safe area). Учитываем оба + небольшой воздух, иначе шапка страницы
-    // уезжает под кнопки TG.
+    // status bar + оверлеи close/menu tg; без обоих шапка уедет под них
     const content = Number(tg.contentSafeAreaInset?.top) || 0;
     const safe = Number(tg.safeAreaInset?.top) || 0;
     const top = content + safe > 0 ? content + safe + 8 : 92;
@@ -84,7 +69,6 @@ export type TgUser = {
   photo_url?: string;
 };
 
-/** Данные пользователя из Telegram WebApp (initDataUnsafe.user), либо null. */
 export function tgUser(): TgUser | null {
   try {
     const wa = (window as unknown as {
@@ -96,12 +80,7 @@ export function tgUser(): TgUser | null {
   }
 }
 
-/**
- * Вписывает фиксированный макет (ширина 402px) в реальную ширину экрана:
- * выставляет CSS-переменную --blin-scale = min(1, ширина/402). Весь #root
- * масштабируется по ней (см. global.css) — ничего не «уезжает» и не скроллится
- * вбок, кнопки попадают точно. Пересчитывается при повороте/ресайзе.
- */
+// --blin-scale = min(1, width/402); см. global.css
 const DESIGN_WIDTH = 402;
 
 export function applyStageScale(): void {
@@ -123,7 +102,6 @@ export function initStageScale(): void {
 
 export function initTelegramViewport(): void {
   const tg = webApp();
-  // Вне Telegram — отступ не нужен (браузер).
   if (!tg?.initData) {
     applyTelegramTopInset();
     return;
@@ -132,7 +110,6 @@ export function initTelegramViewport(): void {
   try { tg.ready?.(); } catch { /* noop */ }
   try { tg.expand?.(); } catch { /* noop */ }
 
-  // Цвета шапки/фона под тёплую тему приложения.
   try { tg.setBackgroundColor?.("#14110E"); } catch { /* noop */ }
   try { tg.setHeaderColor?.("#14110E"); } catch { /* noop */ }
 
@@ -144,15 +121,14 @@ export function initTelegramViewport(): void {
   const platform = String(tg.platform || "").toLowerCase();
   const isMobile = MOBILE_PLATFORMS.has(platform);
   if (isMobile) {
-    // Полноэкранный режим на телефоне (Bot API 8.0+).
-    // Верхний отступ под кнопки TG — через --blin-tg-pad-top (только Telegram fullscreen).
+    // requestFullscreen на телефоне (bot api 8.0+); отступ через --blin-tg-pad-top
     const canFullscreen =
       typeof tg.requestFullscreen === "function" &&
       (typeof tg.isVersionAtLeast !== "function" || tg.isVersionAtLeast("8.0"));
     if (canFullscreen) {
       try { tg.onEvent?.("fullscreenFailed", () => { try { tg.expand?.(); } catch { /* noop */ } applyTelegramTopInset(); }); } catch { /* noop */ }
       try { if (!tg.isFullscreen) tg.requestFullscreen?.(); } catch { try { tg.expand?.(); } catch { /* noop */ } }
-      // После перехода в fullscreen insets приходят с задержкой.
+      // insets приходят после перехода в fullscreen
       window.setTimeout(applyTelegramTopInset, 50);
       window.setTimeout(applyTelegramTopInset, 300);
     }

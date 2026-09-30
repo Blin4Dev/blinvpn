@@ -1,31 +1,3 @@
-"""
-Напоминания об окончании подписки (премиум-эмодзи).
-
-Рассылает сообщения по мере приближения конца подписки:
-  • 3d      — осталось 3 дня (≤72 ч)
-  • 2d      — осталось 2 дня (≤48 ч)
-  • 1d      — осталось меньше суток (≤24 ч), с точным числом часов
-  • expired — подписка закончилась
-
-И после окончания (если не продлили):
-  • del6 … del1 — каждый день «Подписка скоро удалится! … через N дней»
-  • deleted     — через 7 дней подписка удаляется (Remnawave + статус
-                  'Deleted' в БД — в панели остаётся в истории), сообщение
-                  «Подписка удалена».
-
-Как это масштабируется.
-  Мы НЕ опрашиваем всех пользователей Remnawave — это дорого. Вместо этого
-  берём собственную БД проекта и одним индексным запросом по
-  subscriptions(status, expires_at) выбираем только те подписки, что попадают
-  в окно (now-7d … now+72h). Стоимость прохода = число «созревших» подписок,
-  а не общее число пользователей.
-
-  Факт отправки фиксируется в таблице sub_reminders (subscription_id, stage,
-  cycle_expires_at). Повторно одно и то же напоминание не уходит; при продлении
-  подписки expires_at меняется, cycle_expires_at перестаёт совпадать — и цикл
-  напоминаний начинается заново для нового срока.
-"""
-
 from __future__ import annotations
 
 import math
@@ -39,7 +11,7 @@ import database as db  # type: ignore
 
 
 def _trial_days_text() -> str:
-    """Срок пробной подписки из настроек панели: «3 дня», «7 дней», «1 день»."""
+    """срок пробной из настроек: «3 дня», «7 дней», …"""
     try:
         n = max(1, int(float(db.get_setting("trial_days", "3") or 3)))
     except (TypeError, ValueError):
@@ -52,27 +24,23 @@ import fulfillment  # type: ignore
 import provisioning  # type: ignore
 import grace  # type: ignore
 
-# ── Премиум-эмодзи (custom_emoji_id) ─────────────────────────
-EMOJI_WARN_SOFT = (os.getenv("EMOJI_WARN_SOFT") or "5447644880824181073").strip()  # ⚠️ (3d/2d)
-EMOJI_WARN_HARD = (os.getenv("EMOJI_WARN_HARD") or "5420323339723881652").strip()  # ⚠️ (1d)
-EMOJI_STOP = (os.getenv("EMOJI_STOP") or "5260293700088511294").strip()            # ⛔️ (expired / deleted)
-EMOJI_SIREN = (os.getenv("EMOJI_SIREN") or "5395695537687123235").strip()          # 🚨 (скоро удалится)
-EMOJI_ANTIABUSE = (os.getenv("EMOJI_ANTIABUSE") or "5420323339723881652").strip()  # ⚠️ (анти-абуз: предупреждение)
+EMOJI_WARN_SOFT = (os.getenv("EMOJI_WARN_SOFT") or "5447644880824181073").strip()
+EMOJI_WARN_HARD = (os.getenv("EMOJI_WARN_HARD") or "5420323339723881652").strip()
+EMOJI_STOP = (os.getenv("EMOJI_STOP") or "5260293700088511294").strip()
+EMOJI_SIREN = (os.getenv("EMOJI_SIREN") or "5395695537687123235").strip()
+EMOJI_ANTIABUSE = (os.getenv("EMOJI_ANTIABUSE") or "5420323339723881652").strip()
 
-# Как часто проверять «созревшие» подписки (сек).
+# интервал проверки, сек
 INTERVAL = max(60, int(os.getenv("REMINDER_INTERVAL", "300") or "300"))
 
-# Пороги (в секундах) и окно выборки.
 _H = 3600
 _STAGE_72 = 72 * _H
 _STAGE_48 = 48 * _H
 _STAGE_24 = 24 * _H
-_LOOKBACK = 24 * _H  # как долго после истечения ещё пытаемся послать «expired» (дальше — «скоро удалится»)
+_LOOKBACK = 24 * _H  # окно для expired; дальше del*
 
 MINIAPP_URL = (os.getenv("MINIAPP_URL") or "").strip().rstrip("/")
 
-
-# ── Утилиты ──────────────────────────────────────────────────
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -91,12 +59,12 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
 
 
 def _utf16_len(s: str) -> int:
-    """Длина строки в UTF-16 code units — как Telegram считает смещения entity."""
+    """длина в utf-16 code units (смещения entity в telegram)."""
     return len(s.encode("utf-16-le")) // 2
 
 
 def _build(segments: list[tuple[str, Optional[dict[str, Any]]]]) -> tuple[str, list[dict[str, Any]]]:
-    """Собирает текст и entity с корректными UTF-16 смещениями."""
+    """текст + entity с utf-16 смещениями."""
     text = ""
     entities: list[dict[str, Any]] = []
     offset = 0
@@ -110,7 +78,7 @@ def _build(segments: list[tuple[str, Optional[dict[str, Any]]]]) -> tuple[str, l
 
 
 def _plural_hours(n: int) -> str:
-    """Русская форма: 1 час / 2 часа / 5 часов."""
+    """русская форма: 1 час / 2 часа / 5 часов."""
     n = abs(int(n))
     if n % 10 == 1 and n % 100 != 11:
         return f"{n} час"
@@ -127,7 +95,7 @@ _TAIL_NO_RENEW = (" ваша подписка закончится и будет
 
 
 def _message_no_renew(stage: str, remaining_sec: float) -> tuple[str, list[dict[str, Any]]]:
-    """Напоминания для подписки с запретом продления (без призыва продлить)."""
+    """напоминания для no_renew (без призыва продлить)."""
     bold = {"type": "bold"}
     if stage == "1d":
         hours = max(1, math.ceil(remaining_sec / _H))
@@ -176,7 +144,6 @@ def _message_for(stage: str, remaining_sec: float, no_renew: bool = False) -> tu
             (f"Через {_plural_hours(hours)}", bold),
             (_TAIL, None),
         ])
-    # expired
     return _build([
         ("⛔️", {"type": "custom_emoji", "custom_emoji_id": EMOJI_STOP}),
         (" ", None),
@@ -220,13 +187,8 @@ def _mark_sent(subscription_id: int, stage: str, cycle_exp: str) -> None:
     )
 
 
-# ── Основной проход ──────────────────────────────────────────
-
 def run_once(api: Callable[..., Any], log: Callable[[str], None] = print) -> int:
-    """
-    Один проход: выбирает созревшие подписки из локальной БД и рассылает
-    недостающие напоминания. Возвращает число отправленных сообщений.
-    """
+    """один проход: созревшие подписки → недостающие напоминания; число отправок."""
     now = _utcnow()
     lo = (now - timedelta(seconds=_LOOKBACK)).isoformat()
     hi = (now + timedelta(seconds=_STAGE_72)).isoformat()
@@ -253,7 +215,7 @@ def run_once(api: Callable[..., Any], log: Callable[[str], None] = print) -> int
             continue
         no_renew = bool(row.get("no_renew"))
         if no_renew and stage == "expired":
-            continue  # такие подписки сразу удаляются — сообщение шлёт run_expiry_cleanup
+            continue  # удалит run_expiry_cleanup
         sub_id = int(row["sub_id"])
         if _already_sent(sub_id, stage, exp_raw):
             continue
@@ -277,30 +239,25 @@ def run_once(api: Callable[..., Any], log: Callable[[str], None] = print) -> int
             sent += 1
         else:
             log(f"[reminders] не удалось отправить {stage} для подписки {sub_id}")
-        time.sleep(0.05)  # ≤20 сообщений/сек — уважаем лимит Telegram
+        time.sleep(0.05)  # ~20 msg/s
 
     if sent:
         log(f"[reminders] отправлено напоминаний: {sent}")
     return sent
 
 
-# ══════════════════════════════════════════════════════════════
-# Онбординг-цепочка: тем, кто запустил бота, но не оформил подписку.
-# Тайминги считаются от ПЕРВОГО /start (users.first_start_at).
-# Как только у пользователя появляется ЛЮБАЯ подписка — цепочка прекращается.
-# ══════════════════════════════════════════════════════════════
+# онбординг от first_start_at; любая подписка обрывает
 
-# Премиум-эмодзи цепочки.
 OB_EMOJI = {
-    "m30": "5341715473882955310",  # ⚙️
-    "h24": "5424972470023104089",  # 🔥
-    "h48": "5460755126761312667",  # 🚩
-    "h71": "5224607267797606837",  # ☄️
-    "h72": "5399913388845322366",  # 🌧
+    "m30": "5341715473882955310",
+    "h24": "5424972470023104089",
+    "h48": "5460755126761312667",
+    "h71": "5224607267797606837",
+    "h72": "5399913388845322366",
 }
 OB_CHAR = {"m30": "⚙️", "h24": "🔥", "h48": "🚩", "h71": "☄️", "h72": "🌧"}
 
-# (стадия, порог в часах)
+# (этап, часы)
 OB_STAGES: list[tuple[str, float]] = [
     ("m30", 0.5), ("h24", 24.0), ("h48", 48.0), ("h71", 71.0), ("h72", 72.0)
 ]
@@ -337,7 +294,6 @@ def _ob_message(stage: str) -> tuple[str, list[dict[str, Any]]]:
             ("\n\nВы ещё помните про персональную скидку ", None), ("10%", b),
             ("? Так вот... Остался всего час, чтобы успеть воспользоваться ею.", None),
         ])
-    # h72
     return _build([
         (ch, em), (" ", None), ("Мы пытались...", b),
         ("\n\nЗдесь могло быть ещё одно сообщение, чтобы заставить вас купить подписку, "
@@ -347,7 +303,7 @@ def _ob_message(stage: str) -> tuple[str, list[dict[str, Any]]]:
 
 
 def _ob_keyboard(stage: str) -> Optional[dict[str, Any]]:
-    # На «прощальном» сообщении кнопку не показываем.
+    # h72 без кнопки
     if stage == "h72" or not MINIAPP_URL:
         return None
     return {"inline_keyboard": [[{"text": "Оформить подписку", "web_app": {"url": MINIAPP_URL}}]]}
@@ -381,8 +337,7 @@ def run_onboarding_once(api: Callable[..., Any], log: Callable[[str], None] = pr
         due = [name for name, th in OB_STAGES if hours >= th and name not in done]
         if not due:
             continue
-        # Чтобы не слать пачку при простое планировщика — шлём только последнюю
-        # созревшую стадию, остальные помечаем отправленными (без отправки).
+        # после простоя шлём только последнюю стадию; остальные mark без send
         target = due[-1]
         for name in due[:-1]:
             _ob_mark(r["uid"], name)
@@ -407,16 +362,13 @@ def run_onboarding_once(api: Callable[..., Any], log: Callable[[str], None] = pr
             sent += 1
         else:
             log(f"[onboarding] не удалось отправить {target} пользователю {r['uid']}")
-        time.sleep(0.05)  # ≤20 сообщений/сек
+        time.sleep(0.05)  # ~20 msg/s
 
     if sent:
         log(f"[onboarding] отправлено сообщений: {sent}")
     return sent
 
 
-# ── Проверка «подключился ли» после пробной подписки (через 15 минут) ────
-
-# ❌ (премиум-эмодзи) для сообщения о неудачном подключении пробной подписки.
 EMOJI_TRIAL_FAIL = (os.getenv("EMOJI_TRIAL_FAIL") or "5210952531676504517").strip()
 
 
@@ -432,7 +384,7 @@ def _trial_no_connect_message() -> tuple[str, list[dict[str, Any]]]:
 
 
 def run_trial_connection_checks(api: Callable[..., Any], log: Callable[[str], None] = print) -> int:
-    """Через 15 минут после выдачи ПРОБНОЙ подписки — не подключился ни разу → ЛС."""
+    """через 15 мин после trial: ни разу не подключился → лс."""
     try:
         import provisioning  # type: ignore
     except Exception:  # noqa: BLE001
@@ -447,14 +399,14 @@ def run_trial_connection_checks(api: Callable[..., Any], log: Callable[[str], No
         tg = int(r.get("telegram_id") or 0)
         connected = provisioning.user_ever_connected(tg) if tg else None
         if connected is None:
-            # Пока не можем определить — добьём отметку, если запись уже старая.
+            # unknown: закрываем старые записи
             if str(r.get("granted_at") or "") <= give_up:
                 db.execute("UPDATE trial_checks SET checked = 1 WHERE id = ?", (r["id"],))
             continue
         db.execute("UPDATE trial_checks SET checked = 1 WHERE id = ?", (r["id"],))
         if connected:
             continue
-        # Подписка ещё пробная и активна? (мог проапгрейдиться на платную)
+        # ещё trial?
         sub = db.fetchone("SELECT type, status FROM subscriptions WHERE id = ?", (r["subscription_id"],))
         if not sub or sub.get("type") != "trial":
             continue
@@ -469,24 +421,18 @@ def run_trial_connection_checks(api: Callable[..., Any], log: Callable[[str], No
                                     [{"text": "Поддержка", "web_app": {"url": f"{MINIAPP_URL}/support"}}]]}
         if api("sendMessage", payload) is not None:
             sent += 1
-        time.sleep(0.05)  # ≤20 сообщений/сек
+        time.sleep(0.05)  # ~20 msg/s
     if sent:
         log(f"[trial-check] отправлено сообщений: {sent}")
     return sent
 
 
-# ── Приглашение в опрос: через 1 час после первого подключения к VPN ─────
-
-SURVEY_DELAY_HOURS = 1        # через сколько после первого коннекта звать в опрос
-SURVEY_GIVEUP_DAYS = 14       # если так и не подключился — перестаём ждать
+SURVEY_DELAY_HOURS = 1        # часов после первого коннекта
+SURVEY_GIVEUP_DAYS = 14       # не ждать дольше
 
 
 def run_survey_invites(api: Callable[..., Any], log: Callable[[str], None] = print) -> int:
-    """
-    Тем, кто оформил подписку и впервые подключился к VPN, через час шлём
-    приглашение пройти опрос. Время первого коннекта берём из Remnawave один
-    раз и кэшируем в survey_invites.connected_at — дальше Remnawave не дёргаем.
-    """
+    """через час после первого vpn-коннекта: приглашение в опрос (connected_at кэшируем)."""
     try:
         import provisioning  # type: ignore
         import survey  # type: ignore
@@ -505,11 +451,11 @@ def run_survey_invites(api: Callable[..., Any], log: Callable[[str], None] = pri
         uid, tg = int(r["uid"]), int(r["tg"])
         conn_iso = r.get("conn")
         if not conn_iso:
-            # Ещё не знаем времени первого коннекта — спросим Remnawave.
+            # connected_at неизвестен -> remnawave
             u = db.fetchone("SELECT email FROM users WHERE id = ?", (uid,))
             conn_iso = provisioning.user_first_connected_at(tg, (u or {}).get("email"))
             if not conn_iso:
-                # Не подключился. Слишком долго ждём — сдаёмся.
+                # так и не подключился: сдаёмся
                 if str(r.get("enrolled") or "") <= giveup_before:
                     db.execute("UPDATE survey_invites SET gave_up = 1 WHERE user_id = ?", (uid,))
                 continue
@@ -518,13 +464,12 @@ def run_survey_invites(api: Callable[..., Any], log: Callable[[str], None] = pri
         if not conn_dt:
             continue
         if (now - conn_dt).total_seconds() < SURVEY_DELAY_HOURS * 3600:
-            continue  # ещё не прошёл час после первого подключения
+            continue  # ещё рано
         if survey.has_completed(uid):
             db.execute("UPDATE survey_invites SET invited = 1 WHERE user_id = ?", (uid,))
             continue
-        # Помечаем «отправлено» ДО отправки: даже если ответ Telegram потеряется
-        # (сообщение уже доставлено), следующий проход не пошлёт дубликат.
-        # Приглашение в опрос — строго один раз, чтобы не спамить человеку.
+        # mark до send (антидубль если ack потерялся)
+        # invite строго один раз
         db.execute(
             "UPDATE survey_invites SET invited = 1, invited_at = ? WHERE user_id = ?",
             (db.utcnow_iso(), uid),
@@ -533,17 +478,14 @@ def run_survey_invites(api: Callable[..., Any], log: Callable[[str], None] = pri
             sent += 1
         else:
             log(f"[survey] не удалось отправить приглашение пользователю {uid}")
-        time.sleep(0.05)  # ≤20 сообщений/сек
+        time.sleep(0.05)  # ~20 msg/s
     if sent:
         log(f"[survey] отправлено приглашений: {sent}")
     return sent
 
 
-# ── Удаление неоплаченных подписок (через 7 дней после окончания) ──
-
 _DAY = 24 * _H
-# Если подписка закончилась давно (например, до выкатки этой функции или бот
-# долго лежал), удаляем её молча — без запоздалого «Подписка удалена».
+# давно истёкшие удаляем молча
 _DELETE_NOTIFY_WINDOW_DAYS = 2
 
 
@@ -634,14 +576,9 @@ def send_antiabuse_warning(api: Callable[..., Any], chat_id: int, kind: str, cou
 
 
 def delete_subscription(sub: dict[str, Any], log: Callable[[str], None] = print) -> bool:
-    """
-    Удаляет неоплаченную подписку: пользователь Remnawave удаляется, строка в БД
-    получает статус 'Deleted' (остаётся в истории панели). Если Remnawave
-    недоступна — не трогаем БД, попробуем в следующий проход.
-    """
+    """удалить неоплаченную sub (rw + status Deleted); при сбое remnawave бд не трогаем."""
     uid = int(sub["user_id"])
-    # У пользователя может быть другая действующая подписка на том же аккаунте
-    # Remnawave — тогда аккаунт не удаляем, только помечаем эту строку.
+    # другая активная sub на том же rw-аккаунте -> только mark строки
     other_alive = db.fetchone(
         "SELECT id FROM subscriptions WHERE user_id = ? AND id != ? AND status = 'Active' "
         "AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
@@ -667,10 +604,7 @@ def delete_subscription(sub: dict[str, Any], log: Callable[[str], None] = print)
 
 
 def run_expiry_cleanup(api: Callable[..., Any], log: Callable[[str], None] = print) -> int:
-    """
-    Закончившиеся и не продлённые подписки: ежедневные предупреждения
-    «удалится через N дней» (6…1), а на 7-й день — удаление и сообщение.
-    """
+    """истёкшие: предупреждения «удалится через N дней», на 7-й день удаление."""
     now = _utcnow()
     delete_after = int(fulfillment.DELETE_AFTER_DAYS)
     rows = db.fetchall(
@@ -684,12 +618,12 @@ def run_expiry_cleanup(api: Callable[..., Any], log: Callable[[str], None] = pri
     done = 0
     for row in rows:
         if row.get("banned"):
-            continue  # заблокированных не трогаем — ими занимается админ
+            continue  # заблокированных не трогаем
         exp_raw = str(row["expires_at"])
         exp = _parse_iso(exp_raw)
         if exp is None:
             continue
-        # Продлили другой подпиской — эта уже не «неоплаченная».
+        # продлили другой sub
         if db.fetchone(
             "SELECT id FROM subscriptions WHERE user_id = ? AND id != ? AND status = 'Active' "
             "AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
@@ -701,7 +635,7 @@ def run_expiry_cleanup(api: Callable[..., Any], log: Callable[[str], None] = pri
         chat_id = int(row["telegram_id"]) if row.get("telegram_id") else None
 
         no_renew = bool(row.get("no_renew"))
-        # С запретом продления — удаляем сразу после окончания, без 7 дней ожидания.
+        # no_renew: удаляем сразу
         limit = 0 if no_renew else delete_after
         if days_since >= limit:
             if not delete_subscription(row, log):
@@ -716,8 +650,8 @@ def run_expiry_cleanup(api: Callable[..., Any], log: Callable[[str], None] = pri
             continue
 
         if days_since < 1 or not chat_id:
-            continue  # в день окончания уходит обычное «Подписка закончилась!»
-        days_left = delete_after - days_since  # 6 … 1
+            continue  # день 0: уже ушло expired
+        days_left = delete_after - days_since  # 6..1
         stage = f"del{days_left}"
         if _already_sent(sub_id, stage, exp_raw):
             continue
@@ -739,14 +673,14 @@ def _blacklist_refresh_sec() -> int:
 
 
 def start_background(api: Callable[..., Any], log: Callable[[str], None] = print) -> threading.Thread:
-    """Запускает фоновый цикл напоминаний в демон-потоке."""
+    """фоновый цикл напоминаний в демон-потоке."""
 
     def _loop() -> None:
         log(f"[reminders] фоновый рассыльщик запущен (интервал {INTERVAL}с)")
         aa_counter = 0
         bl_last = 0.0
         while True:
-            # Общий чёрный список — обновляем раз в час (и сразу при запуске).
+            # blacklist раз в час (+ на старте)
             if time.time() - bl_last >= _blacklist_refresh_sec():
                 bl_last = time.time()
                 try:
@@ -754,7 +688,7 @@ def start_background(api: Callable[..., Any], log: Callable[[str], None] = print
                     blacklist.refresh(log)
                 except Exception as exc:  # noqa: BLE001
                     log(f"[blacklist] ошибка обновления: {type(exc).__name__}: {exc}")
-            # Grace-доступ (резервный сервер после окончания) — незаметно для пользователя
+            # grace (тихо)
             try:
                 grace.run_once(log)
             except Exception as exc:  # noqa: BLE001
@@ -779,7 +713,7 @@ def start_background(api: Callable[..., Any], log: Callable[[str], None] = print
                 run_survey_invites(api, log)
             except Exception as exc:  # noqa: BLE001
                 log(f"[survey] ошибка прохода: {type(exc).__name__}: {exc}")
-            # Анти-абуз — не каждый проход (тяжёлые запросы к Remnawave): ~10 мин.
+            # antiabuse ~раз в 10 мин
             aa_counter += 1
             if aa_counter * INTERVAL >= 600:
                 aa_counter = 0

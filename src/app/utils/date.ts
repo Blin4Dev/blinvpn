@@ -3,7 +3,7 @@ const MONTHS_GENITIVE = [
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
 
-/** "2026-09-24T…" → "24 сентября 2026" (по локальному времени пользователя). */
+// iso → «24 сентября 2026» (local time)
 export function formatDateRu(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -11,7 +11,7 @@ export function formatDateRu(iso: string | null | undefined): string {
   return `${d.getDate()} ${MONTHS_GENITIVE[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-/** Человеческое «когда»: «только что», «5 минут назад», «сегодня в 14:05», «вчера в 09:30», «3 сентября в 18:00». */
+// relative «когда»: только что / N минут назад / сегодня в …
 export function formatWhenRu(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);

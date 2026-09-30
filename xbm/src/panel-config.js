@@ -1,26 +1,7 @@
 'use strict';
 
-/**
- * [BlinVPN] Настройки из панели BlinVPN (раздел «Балансировщик»).
- *
- * Панель пишет файл PANEL_CONFIG_PATH (по умолчанию /app/state/panel.json):
- *   {
- *     "version": 2,
- *     "only_groups": true,          // пользователям видны только хосты из панели (+ авто-выбор)
- *     "auto_group_name": "🇪🇺 Автоматический выбор",
- *     "auto_template": { …Xray JSON из Remnawave… } | null,
- *     "reserve_tags":      ["de-wl-1", ...],   // «Белые списки»: в авто-выборе и в своей локации — только резерв
- *     "auto_exclude_tags": ["..."],            // хосты, которые не участвуют в авто-выборе
- *     "groups": [ { "name": "🇩🇪 Германия", "tags": ["de1", "de2"], "description": "…",
- *                   "template": { …Xray JSON… } | null } ]   // порядок = порядок в подписке
- *   }
- *
- * Хосты задаются ТОЧНЫМ названием (remark) — панель сама переводит выбранные в
- * списке хосты в их текущие названия, так что никаких «ключевых слов» в
- * названиях хостов не нужно. Файл перечитывается на лету (проверка раз в 2 с),
- * перезапуск XBM не нужен. Нет файла или он битый — работает как без панели
- * (последние удачно прочитанные настройки сохраняются).
- */
+// настройки балансировщика из панели (panel.json)
+// хосты по точному remark; файл перечитывается раз в 2с
 
 const fs = require('fs');
 const { logger } = require('./logger');
@@ -46,20 +27,19 @@ const EMPTY = Object.freeze({
 });
 
 let state = EMPTY;
-// Служебные имена хостов, переименованных из-за совпадения с названием строки (см. alias())
+// алиасы хостов, если tag совпал с именем группы (см. alias())
 const aliases = new Map();
 let lastCheck = 0;
 let lastMtime = -1;
 
 function cleanStr(v, max = MAX_STR) {
     if (typeof v !== 'string') return null;
-    // управляющие символы вон, длина ограничена
+    // убрать управляющие символы, ограничить длину
     const s = v.replace(/[\u0000-\u001f\u007f]/g, '').trim();
     return s ? s.slice(0, max) : null;
 }
 
-// Названия хостов сравниваются с remarks из Remnawave ТОЧНО (без обрезки пробелов),
-// иначе хост с пробелом в конце названия молча выпал бы из своей строки.
+// точное совпадение remark (без trim), чтобы пробелы в конце тоже матчились
 function cleanTags(arr) {
     if (!Array.isArray(arr)) return [];
     const out = [];
@@ -70,7 +50,7 @@ function cleanTags(arr) {
     return out;
 }
 
-/** Шаблон Xray JSON: только объект разумного размера, иначе — без шаблона. */
+// объект шаблона xray, или null если битый/слишком большой
 function cleanTemplate(t) {
     if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
     try {
@@ -79,7 +59,7 @@ function cleanTemplate(t) {
     return t;
 }
 
-/** Разобрать и проверить содержимое panel.json. Бросает исключение на неверном формате. */
+// разобрать и проверить panel.json
 function normalize(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('ожидается объект');
     const groups = [];
@@ -132,24 +112,22 @@ function reload(force = false) {
         if (st.size > 2 * 1024 * 1024) throw new Error('файл слишком большой');
         const next = normalize(JSON.parse(fs.readFileSync(PANEL_CONFIG_PATH, 'utf8')));
         state = next;
-        aliases.clear();  // настройки сменились — служебные переименования пересоберутся
+        aliases.clear();  // rebuild on next alias()
         lastMtime = st.mtimeMs;
         logger.info('panel', `✅ Настройки панели: локаций ${next.groups.length}, белых списков ${next.reserve.size}, вне авто-выбора ${next.autoExclude.size}`);
     } catch (err) {
-        // Файл пишется атомарно, но на всякий случай: битый файл не ломает подписку
+        // оставить последний удачный конфиг при плохом чтении
         logger.warn('panel', `Не удалось прочитать настройки панели: ${err.message} — оставляем прежние`);
         lastMtime = st.mtimeMs;
     }
 }
 
-/** Текущие настройки панели (с проверкой изменений файла не чаще раза в 2 с). */
 function get() {
     reload();
     return state;
 }
 
-// Служебные имена хостов, переименованных из-за совпадения с названием строки
-// подписки (см. server.js): «de1 · 2» → «de1». Ограничено по размеру.
+// map «de1 · 2» → «de1», если tag совпал с именем группы
 function alias(newTag, origTag) {
     if (aliases.size > 5000) aliases.clear();
     aliases.set(String(newTag), String(origTag));
@@ -159,10 +137,7 @@ function orig(tag) {
     return aliases.get(t) || t;
 }
 
-/**
- * Хосты сверяются по точному названию. Если в Remnawave два хоста с одинаковым
- * названием, XBM добавляет повтору «-N» — панель не даёт выбрать такие хосты.
- */
+// группа по точному tag (с учётом alias)
 function groupOf(tag) {
     const s = get();
     return s.tagToGroup.get(orig(tag)) || null;
@@ -172,7 +147,7 @@ function isReserve(tag) { return get().reserve.has(orig(tag)); }
 function isAutoExcluded(tag) { return get().autoExclude.has(orig(tag)); }
 function autoGroupName(fallback) { return get().autoGroupName || fallback; }
 
-/** Шаблон Xray JSON, выбранный в панели для строки подписки (или null — шаблон хоста из Remnawave). */
+// шаблон xray группы/авто из панели
 function templateFor(groupName, isAuto) {
     const s = get();
     return isAuto ? s.autoTemplate : (s.templates[groupName] || null);

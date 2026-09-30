@@ -13,7 +13,7 @@ const MAX = 4000;
 const ROLE_RU: Record<string, string> = { owner: 'администратор', curator: 'куратор', operator: 'оператор' };
 const pingUnread = () => window.dispatchEvent(new Event('support-unread'));
 
-/** Общий чат сотрудников: владелец, кураторы и операторы. Пользователи его не видят. */
+// чат сотрудников (юзеры не видят)
 export const TeamChat: React.FC<{ onBack: () => void; onToast: (t: string, m: string, ty: ToastType) => void }> = ({ onBack, onToast }) => {
   const [msgs, setMsgs] = useState<TMsg[] | null>(null);
   const [owner, setOwner] = useState(false);
@@ -92,7 +92,7 @@ export const TeamChat: React.FC<{ onBack: () => void; onToast: (t: string, m: st
     try {
       const m: TMsg = await apiFetch('/panel/team-chat/messages', { method: 'POST', body: JSON.stringify({ text: t, reply_to: reply?.id || null }) });
       stick.current = true;
-      // lastId не двигаем: сообщения коллег, пришедшие до нашего, подтянет опрос (дубли отсекаются)
+      // lastId не двигаем: чужие сообщения до нашего подтянет опрос
       setMsgs((cur) => [...(cur || []).filter((x) => x.id !== m.id), m].sort((a, b) => a.id - b.id));
       setText(''); setReply(null);
     } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось отправить'), 'error'); } finally { setBusy(false); }

@@ -1,4 +1,4 @@
-/** Приложения для подключения подписки: названия, иконки, ссылки на установку. */
+// клиенты vpn: имена, иконки, ссылки установки
 
 export type DeviceKind = "android" | "ios" | "windows" | "macos" | "linux" | "android_tv";
 export type AppKind = "incy" | "happ" | "other";

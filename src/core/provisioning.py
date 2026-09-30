@@ -1,16 +1,4 @@
-"""
-Провижининг VPN-доступа в Remnawave для BlinVPN.
-
-Единая точка, через которую ядро/вебхук/бот создают и продлевают
-пользователей Remnawave при выдаче подписки. Работает поверх
-src/api/remnawave.py. Полностью изолирует ошибки панели: если Remnawave
-не настроена или недоступна, подписка всё равно создаётся в локальной БД
-(с плейсхолдер-конфигом), а причина складывается в error.
-
-Env (см. remnawave.py):
-  REMWAVE_PANEL_URL, REMWAVE_API_KEY
-"""
-
+# создание/продление в remnawave; локальная подписка создаётся и при недоступной панели
 from __future__ import annotations
 
 import os
@@ -18,7 +6,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-try:  # remnawave живёт в src/api — он в PYTHONPATH
+try:  # remnawave lives on PYTHONPATH (src/api)
     import remnawave  # type: ignore
 except Exception:  # noqa: BLE001
     remnawave = None  # type: ignore
@@ -61,15 +49,6 @@ def provision(
     reset_traffic: bool = False,
     user_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    """
-    Создаёт или продлевает пользователя Remnawave до абсолютной даты expire_at.
-
-    user_id — внутренний ID пользователя BlinVPN; пишется в поле «Описание»
-    (description) пользователя Remnawave, в шаблонах подписки — {{DESCRIPTION}}.
-
-    Возвращает: {ok, rw_id, short_uuid, subscription_url, error}.
-    Никогда не бросает исключений — ошибки возвращаются в поле error.
-    """
     result: dict[str, Any] = {
         "ok": False,
         "rw_id": None,
@@ -87,8 +66,7 @@ def provision(
 
     try:
         client = remnawave.get_client()  # type: ignore[union-attr]
-        # Ищем пользователя Remnawave: по Telegram, а у тех, кто вошёл только по почте
-        # (сайт), — по email и по служебному имени web_<id>.
+        # поиск: telegram → email → web_<id>
         existing = client.find_user_by_telegram(int(telegram_id)) if telegram_id else None
         if not existing and email:
             existing = _resolve_quiet(client, email=email)
@@ -104,7 +82,6 @@ def provision(
                 "hwid_device_limit": int(max(1, devices)),
                 "traffic_limit_strategy": traffic_reset_strategy,
             }
-            # update_user принимает id/uuid через kwargs
             if isinstance(uid, int) or (isinstance(uid, str) and uid.isdigit()):
                 patch["id"] = int(uid)
             else:
@@ -118,7 +95,7 @@ def provision(
             if user_id:
                 patch["description"] = str(int(user_id))
             user = client.update_user(**patch)
-            # Сброс трафика (например при переходе с триала на платную).
+            # опциональный сброс трафика (напр. trial→paid)
             if reset_traffic and uid is not None:
                 try:
                     client.reset_user_traffic(uid)
@@ -159,7 +136,6 @@ def provision(
 
 def find_user(client: Any, telegram_id: Optional[int], email: Optional[str] = None,
               user_id: Optional[int] = None) -> Optional[dict[str, Any]]:
-    """Пользователь Remnawave, как его ищет provision(): Telegram → email → web_<id>."""
     rw = client.find_user_by_telegram(int(telegram_id)) if telegram_id else None
     if isinstance(rw, dict) and "response" in rw:
         rw = rw["response"]
@@ -171,7 +147,6 @@ def find_user(client: Any, telegram_id: Optional[int], email: Optional[str] = No
 
 
 def rw_ref(rw: dict[str, Any]) -> dict[str, Any]:
-    """{id: …} или {uuid: …} для update_user."""
     uid = rw.get("id") or rw.get("userId") or rw.get("uuid")
     if isinstance(uid, int) or (isinstance(uid, str) and uid.isdigit()):
         return {"id": int(uid)}
@@ -179,7 +154,6 @@ def rw_ref(rw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_quiet(client: Any, **kw: Any) -> Optional[dict[str, Any]]:
-    """resolve_user без исключений: None, если не найден."""
     try:
         rw = client.resolve_user(**kw)
     except Exception:  # noqa: BLE001
@@ -190,11 +164,6 @@ def _resolve_quiet(client: Any, **kw: Any) -> Optional[dict[str, Any]]:
 
 
 def backfill_descriptions(tg_to_user_id: dict[int, int]) -> dict[str, Any]:
-    """
-    Проставляет внутренний ID BlinVPN в «Описание» всем уже существующим
-    пользователям Remnawave (сопоставление по Telegram ID). Меняет только тех,
-    у кого описание отличается. Ничего не бросает. {ok, updated, error}.
-    """
     out: dict[str, Any] = {"ok": False, "updated": 0, "error": None}
     if not is_configured():
         out["error"] = "remnawave_not_configured"
@@ -234,10 +203,6 @@ def backfill_descriptions(tg_to_user_id: dict[int, int]) -> dict[str, Any]:
 
 
 def reset_traffic(telegram_id: int, email: Optional[str] = None) -> dict[str, Any]:
-    """
-    Досрочный сброс трафика пользователя в Remnawave. Ничего не бросает.
-    Возвращает {ok, error}.
-    """
     out: dict[str, Any] = {"ok": False, "error": None}
     if not is_configured():
         out["error"] = "remnawave_not_configured"
@@ -255,7 +220,7 @@ def reset_traffic(telegram_id: int, email: Optional[str] = None) -> dict[str, An
         if not isinstance(rw, dict):
             out["error"] = "user_not_found"
             return out
-        # 3.x: reset-traffic идентифицирует пользователя ЧИСЛОВЫМ id.
+        # remnawave 3.x ждёт числовой id для reset-traffic
         uid = rw.get("id")
         if uid is None:
             out["error"] = "user_id_missing"
@@ -269,11 +234,6 @@ def reset_traffic(telegram_id: int, email: Optional[str] = None) -> dict[str, An
 
 
 def user_ever_connected(telegram_id: int, email: Optional[str] = None) -> Optional[bool]:
-    """
-    Подключался ли пользователь к VPN хоть раз. True/False, либо None если
-    определить нельзя (Remnawave выключена/недоступна/пользователь не найден).
-    Сигналы подключения: onlineAt, потраченный трафик, наличие HWID-устройств.
-    """
     if not is_configured():
         return None
     try:
@@ -288,7 +248,7 @@ def user_ever_connected(telegram_id: int, email: Optional[str] = None) -> Option
                 rw = None
         if not isinstance(rw, dict):
             return None
-        # В Remnawave 3.4.4 онлайн/трафик лежат в userTraffic; проверяем и там, и на верхнем уровне.
+        # online/traffic могут быть в userTraffic или на верхнем уровне
         ut = rw.get("userTraffic") if isinstance(rw.get("userTraffic"), dict) else {}
         if rw.get("onlineAt") or ut.get("onlineAt") or rw.get("lastConnectedAt"):
             return True
@@ -300,7 +260,7 @@ def user_ever_connected(telegram_id: int, email: Optional[str] = None) -> Option
                 return True
         except (TypeError, ValueError):
             pass
-        num_id = rw.get("id")  # 3.x: HWID-эндпоинты по числовому id
+        num_id = rw.get("id")  # hwid endpoints use numeric id
         try:
             if num_id is not None:
                 data = client.get_user_hwid_devices(int(num_id))
@@ -317,10 +277,6 @@ def user_ever_connected(telegram_id: int, email: Optional[str] = None) -> Option
 
 
 def user_first_connected_at(telegram_id: int, email: Optional[str] = None) -> Optional[str]:
-    """
-    ISO-время первого подключения пользователя к VPN (Remnawave firstConnectedAt /
-    onlineAt), либо None если ещё не подключался / определить нельзя.
-    """
     if not is_configured():
         return None
     try:
@@ -345,7 +301,6 @@ def user_first_connected_at(telegram_id: int, email: Optional[str] = None) -> Op
 
 
 def set_enabled(telegram_id: Optional[int], enabled: bool, email: Optional[str] = None) -> dict[str, Any]:
-    """Включает/отключает пользователя в Remnawave. Ничего не бросает."""
     if not is_configured():
         return {"ok": False, "error": "remnawave_not_configured"}
     try:
@@ -371,10 +326,6 @@ def set_enabled(telegram_id: Optional[int], enabled: bool, email: Optional[str] 
 
 
 def delete_user(telegram_id: Optional[int], email: Optional[str] = None) -> dict[str, Any]:
-    """
-    Удаляет пользователя в Remnawave (по telegram_id, затем по email).
-    {ok: True} — удалён или его там уже нет; {ok: False, error} — не удалось.
-    """
     if not is_configured():
         return {"ok": False, "error": "remnawave_not_configured"}
     try:
@@ -399,9 +350,4 @@ def delete_user(telegram_id: Optional[int], email: Optional[str] = None) -> dict
 
 
 def local_fallback_config(short_uuid: str) -> str:
-    """
-    Пусто, когда Remnawave недоступна. Подписка всегда берётся из Remnawave
-    (реальная subscription-ссылка), а не из локального vless-плейсхолдера —
-    поэтому фейковый конфиг не создаём (иначе пользователь получил бы нерабочий).
-    """
     return ""

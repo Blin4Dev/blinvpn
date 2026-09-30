@@ -148,7 +148,7 @@ export const SurveyPage: React.FC<{ onToast: (t: string, m: string, ty?: ToastTy
   );
 };
 
-/** Окно вопроса: текст, тип, варианты (с уточнением текстом для «Другое»). */
+// окно вопроса: текст, тип, варианты
 const QuestionEditor: React.FC<{
   initial: SurveyConfigQ; index: number; total: number; busy: boolean;
   onClose: () => void; onSave: (q: SurveyConfigQ) => void; onDelete: () => void; onMove: (d: -1 | 1) => void;

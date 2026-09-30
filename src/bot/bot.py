@@ -1,18 +1,3 @@
-"""
-BlinVPN — основной Telegram-бот.
-
-Задачи:
-  • /start — приветствие + кнопка запуска мини-приложения (и разбор ref-ссылок);
-  • оплата звёздами Telegram: подтверждение pre_checkout_query и обработка
-    successful_payment → выдача подписки через общий модуль fulfillment.
-
-Режим по умолчанию — long polling (TELEGRAM_STARS_DELIVERY=bot). Внешних
-зависимостей нет — только стандартная библиотека.
-
-Запуск:
-  python bot.py
-"""
-
 from __future__ import annotations
 
 import json
@@ -25,7 +10,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-# src/core и src/api в путь импорта
+# src/core и src/api в path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "core"), os.path.join(_HERE, "..", "api")):
     _p = os.path.abspath(_p)
@@ -55,14 +40,12 @@ def _env(*keys: str, default: str = "") -> str:
 TOKEN = _env("TELEGRAM_BOT_TOKEN")
 MINIAPP_URL = _env("MINIAPP_URL").rstrip("/")
 BOT_USERNAME = _env("BOT_USERNAME", "VITE_BOT_USERNAME", default="blinvpn_bot")
-SUPPORT_URL = _env("SUPPORT_URL")  # запасной адрес, если мини-приложение не настроено
+SUPPORT_URL = _env("SUPPORT_URL")  # fallback если нет miniapp
 
-# Премиум-эмодзи (custom_emoji_id). Работают, только если владелец бота имеет
-# Telegram Premium (для личных сообщений) или у бота есть доп. username с Fragment,
-# и клиент/сервер на Bot API ≥ 9.4. Иначе — авто-откат на обычные эмодзи.
-EMOJI_FOX = _env("EMOJI_FOX", default="5283051451889756068")   # 🦊
-EMOJI_KEY = _env("EMOJI_KEY", default="6005570495603282482")   # 🔑
-EMOJI_CHAT = _env("EMOJI_CHAT", default="5994297722574737553")  # 💬
+# premium emoji (нужен premium/fragment + bot api 9.4+)
+EMOJI_FOX = _env("EMOJI_FOX", default="5283051451889756068")
+EMOJI_KEY = _env("EMOJI_KEY", default="6005570495603282482")
+EMOJI_CHAT = _env("EMOJI_CHAT", default="5994297722574737553")
 
 
 def api(method: str, payload: Optional[dict[str, Any]] = None, *, timeout: float = 35.0,
@@ -81,7 +64,7 @@ def api(method: str, payload: Optional[dict[str, Any]] = None, *, timeout: float
             body = json.loads(raw)
         except json.JSONDecodeError:
             return None
-        # 429 → уважаем retry_after (лимит Telegram) и повторяем один раз.
+        # 429: один retry по retry_after
         if e.code == 429 and _retries > 0:
             try:
                 ra = float(((body or {}).get("parameters") or {}).get("retry_after") or 1)
@@ -96,12 +79,8 @@ def api(method: str, payload: Optional[dict[str, Any]] = None, *, timeout: float
     return body.get("result")
 
 
-# ─────────────────────────────────────────────────────────────
-# handlers
-# ─────────────────────────────────────────────────────────────
-
 def _support_button(**extra: Any) -> Optional[dict[str, Any]]:
-    """«Поддержка» — чат поддержки внутри мини-приложения."""
+    """кнопка «поддержка» в мини-приложении."""
     if MINIAPP_URL:
         return {"text": "Поддержка", "web_app": {"url": f"{MINIAPP_URL}/support"}, **extra}
     if SUPPORT_URL:
@@ -110,7 +89,7 @@ def _support_button(**extra: Any) -> Optional[dict[str, Any]]:
 
 
 def _open_app_keyboard() -> dict[str, Any]:
-    """Простая клавиатура для сервисных сообщений (подтверждение оплаты)."""
+    """клавиатура для сервисных сообщений (оплата)."""
     buttons: list[list[dict[str, Any]]] = []
     if MINIAPP_URL:
         buttons.append([{"text": "🚀 Открыть BlinVPN", "web_app": {"url": MINIAPP_URL}}])
@@ -121,16 +100,12 @@ def _open_app_keyboard() -> dict[str, Any]:
 
 
 def _utf16_len(s: str) -> int:
-    """Длина строки в UTF-16 code units (как считает Telegram смещения entity)."""
+    """длина в utf-16 code units (смещения entity в telegram)."""
     return len(s.encode("utf-16-le")) // 2
 
 
 def _welcome_text_entities() -> tuple[str, list[dict[str, Any]]]:
-    """
-    Собирает текст приветствия и entity с ВЕРНЫМИ UTF-16 смещениями.
-    Первый символ — премиум-эмодзи лиса (🦊, custom_emoji),
-    «Добро пожаловать!» — жирным.
-    """
+    """приветствие: premium-эмодзи + bold «добро пожаловать!»."""
     segments: list[tuple[str, Optional[dict[str, Any]]]] = [
         ("🦊", {"type": "custom_emoji", "custom_emoji_id": EMOJI_FOX}),
         (" ", None),
@@ -156,11 +131,7 @@ def _launch_button() -> dict[str, Any]:
 
 
 def _send_welcome(chat_id: int) -> None:
-    """
-    Приветствие /start: премиум-эмодзи в тексте + инлайн-кнопки под сообщением —
-    синяя «Запустить» (web_app) и обычная «Поддержка» (url), обе с премиум-эмодзи.
-    Требует Bot API 9.4+ и Telegram Premium у владельца бота (или Fragment-username).
-    """
+    """/start: приветствие + кнопки «запустить» / «поддержка» (bot api 9.4+)."""
     text, entities = _welcome_text_entities()
     launch = _launch_button()
     rows: list[list[dict[str, Any]]] = [[{**launch, "style": "primary", "icon_custom_emoji_id": EMOJI_KEY}]]
@@ -177,7 +148,7 @@ def _send_welcome(chat_id: int) -> None:
 
 
 def _send_banned(chat_id: int) -> None:
-    """Заблокированному — вместо приветствия сообщение о блокировке."""
+    """заблокированному: сообщение о блокировке вместо приветствия."""
     text = "⛔️ Ваш аккаунт заблокирован за нарушение правил сервиса."
     api("sendMessage", {
         "chat_id": chat_id,
@@ -195,7 +166,7 @@ def handle_start(message: dict[str, Any]) -> None:
     frm = message.get("from") or {}
     telegram_id = int(frm.get("id") or chat_id)
 
-    # Разбор payload /start <payload>
+    # payload у /start
     text = message.get("text") or ""
     parts = text.split(maxsplit=1)
     payload = parts[1].strip() if len(parts) > 1 else ""
@@ -204,7 +175,7 @@ def handle_start(message: dict[str, Any]) -> None:
     user = fulfillment.get_user(_ensure_user(telegram_id, frm))
     is_new = not existed
 
-    # Общий чёрный список: нарушителя блокируем сразу при входе в бота.
+    # blacklist при входе
     try:
         blacklist.enforce(user, log=lambda m: print(m, flush=True))
     except Exception as exc:  # noqa: BLE001
@@ -213,7 +184,7 @@ def handle_start(message: dict[str, Any]) -> None:
         _send_banned(chat_id)
         return
 
-    # Фиксируем время ПЕРВОГО /start (для онбординг-цепочки). Ставится один раз.
+    # first_start_at один раз
     if user:
         db.execute(
             "UPDATE users SET first_start_at = ? WHERE id = ? AND first_start_at IS NULL",
@@ -235,10 +206,7 @@ def handle_start(message: dict[str, Any]) -> None:
 
 
 def _send_payment_return(chat_id: int, user: dict[str, Any], payment_id: str, failed: bool = False) -> bool:
-    """
-    Возврат из Platega, когда у бота нет «главного мини-приложения»: кнопка,
-    открывающая мини-приложение сразу на этом платеже. False — платёж не найден.
-    """
+    """возврат из platega: кнопка на платёж в мини-приложении; false если не найден."""
     if not MINIAPP_URL or not re.fullmatch(r"[a-f0-9]{16,64}", payment_id or ""):
         return False
     pay = db.fetchone("SELECT status FROM payments WHERE payment_id = ? AND user_id = ?", (payment_id, int(user["id"])))
@@ -264,7 +232,7 @@ def _send_payment_return(chat_id: int, user: dict[str, Any], payment_id: str, fa
 
 
 def _apply_tracking(user: dict[str, Any], code: str, frm: dict[str, Any], is_new: bool) -> None:
-    """Учёт перехода по специальной (трекинговой) ссылке + приветствие ссылки."""
+    """учёт перехода по трекинг-ссылке + её приветствие."""
     if not code:
         return
     try:
@@ -289,7 +257,7 @@ def _apply_tracking(user: dict[str, Any], code: str, frm: dict[str, Any], is_new
 
 
 def _apply_promo(chat_id: int, user: dict[str, Any], code: str) -> None:
-    """Активация промокода из deep-link рассылки (/start promo_CODE)."""
+    """активация промокода из deep-link (/start promo_CODE)."""
     if not code:
         return
     try:
@@ -307,7 +275,7 @@ def _apply_promo(chat_id: int, user: dict[str, Any], code: str) -> None:
 
 
 def _ensure_user(telegram_id: int, frm: dict[str, Any]) -> int:
-    """Создаёт пользователя в БД, если его ещё нет. Возвращает internal id."""
+    """создаёт пользователя в бд при отсутствии; возвращает internal id."""
     row = db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
     if row:
         return int(row["id"])
@@ -328,7 +296,7 @@ def _ensure_user(telegram_id: int, frm: dict[str, Any]) -> int:
         (
             telegram_id,
             names.tg_username(frm.get("username")),
-            None,  # имя и фамилию не храним
+            None,  # имя/фамилию не храним
             None,
             _ref_code(),
             db.utcnow_iso(),
@@ -338,11 +306,10 @@ def _ensure_user(telegram_id: int, frm: dict[str, Any]) -> int:
 
 
 def _apply_referral(user: dict[str, Any], code: str, is_new: bool = True) -> None:
-    # Привязываем реферера ТОЛЬКО для нового пользователя — иначе существующий
-    # аккаунт можно задним числом «пригласить» вторым аккаунтом и фармить бонусы.
+    # реферер только у нового юзера (иначе фарм со старого)
     if not code or user.get("referred_by") or not is_new:
         return
-    # Новые ссылки: ref_<id пользователя>. Старые ref_<КОД> продолжают работать.
+    # ref_<uid>; старые ref_<CODE> ок
     ref = None
     if code.isdigit():
         ref = db.fetchone("SELECT id, referred_by FROM users WHERE id = ?", (int(code),))
@@ -350,14 +317,14 @@ def _apply_referral(user: dict[str, Any], code: str, is_new: bool = True) -> Non
         ref = db.fetchone("SELECT id, referred_by FROM users WHERE referral_code = ?", (code,))
     if not ref or int(ref["id"]) == int(user["id"]):
         return
-    # Запрещаем взаимные петли A↔B.
+    # без петель a<->b
     if ref.get("referred_by") and int(ref["referred_by"]) == int(user["id"]):
         return
     db.execute("UPDATE users SET referred_by = ? WHERE id = ?", (ref["id"], user["id"]))
 
 
 def handle_pre_checkout(query: dict[str, Any]) -> None:
-    # Обязательно подтвердить в течение 10 секунд, иначе оплата отменится.
+    # подтвердить за 10с
     payment_id = query.get("invoice_payload") or ""
     payment = fulfillment.get_payment(payment_id) if payment_id else None
     ok = fulfillment.stars_precheckout_ok(payment, query)
@@ -394,7 +361,7 @@ def handle_successful_payment(message: dict[str, Any]) -> None:
 
 
 def handle_callback(cq: dict[str, Any]) -> None:
-    """Кнопки в форуме «Выводы»: одобрить / отклонить."""
+    """кнопки форума «выводы»: одобрить / отклонить."""
     data = str(cq.get("data") or "")
     cq_id = cq.get("id")
     from_id = int((cq.get("from") or {}).get("id") or 0)
@@ -406,7 +373,7 @@ def handle_callback(cq: dict[str, Any]) -> None:
     def answer(text: str = "") -> None:
         api("answerCallbackQuery", {"callback_query_id": cq_id, "text": text})
 
-    # ── Опрос (кнопки в личке пользователя) ──
+    # опрос
     if data == "survey:start" or data.startswith(("sv:", "svm:", "svd:")):
         answer()
         urow = db.fetchone("SELECT id FROM users WHERE telegram_id = ?", (from_id,))
@@ -422,7 +389,7 @@ def handle_callback(cq: dict[str, Any]) -> None:
             print(f"[bot] survey callback error: {type(exc).__name__}: {exc}", flush=True)
         return
 
-    # Старые сообщения о выводах с кнопками: обработка теперь только в панели.
+    # старые кнопки выводов: только панель
     if data.startswith("wd_ok_") or data.startswith("wd_no_"):
         answer("Выводы обрабатываются в панели: Пользователи → Выводы")
         return
@@ -431,7 +398,7 @@ def handle_callback(cq: dict[str, Any]) -> None:
 
 
 def handle_survey_text(message: dict[str, Any]) -> bool:
-    """Свободный ответ в опросе (Q4 «Другое», Q8), если бот ждёт текст."""
+    """свободный ответ в опросе (q4 «другое», q8), если бот ждёт текст."""
     frm = message.get("from") or {}
     from_id = int(frm.get("id") or 0)
     chat_id = (message.get("chat") or {}).get("id")
@@ -465,21 +432,17 @@ def process_update(update: dict[str, Any]) -> None:
         if text.startswith("/start"):
             handle_start(message)
             return
-        # Свободный ответ в опросе (если бот ждёт текст от этого пользователя)
+        # текст ответа в опросе
         if text and handle_survey_text(message):
             return
     except Exception as exc:  # noqa: BLE001
         print(f"[bot] ошибка обработки апдейта: {type(exc).__name__}: {exc}", flush=True)
 
 
-# ─────────────────────────────────────────────────────────────
-# long polling loop
-# ─────────────────────────────────────────────────────────────
-
 def run() -> None:
     if not TOKEN:
         print("[bot] TELEGRAM_BOT_TOKEN не задан — бот не запущен.", flush=True)
-        # Не падаем, чтобы контейнер не рестартовал бесконечно.
+        # не валимся (контейнер иначе рестартит)
         while True:
             time.sleep(3600)
 
@@ -491,13 +454,13 @@ def run() -> None:
     else:
         print("[bot] предупреждение: getMe не ответил (проверьте токен/сеть).", flush=True)
 
-    # В режиме polling убираем webhook, иначе getUpdates вернёт ошибку.
+    # polling: снять webhook
     api("deleteWebhook", {"drop_pending_updates": False})
 
-    # Единственная команда бота — /start.
+    # команда: /start
     api("setMyCommands", {"commands": [{"command": "start", "description": "Запустить BlinVPN"}]})
 
-    # Фоновая рассылка напоминаний об окончании подписки (по локальной БД).
+    # фоновые reminders по локальной бд
     reminders.start_background(api, log=lambda m: print(m, flush=True))
 
     offset = 0

@@ -1,16 +1,3 @@
-"""
-BlinVPN — сервис платёжных вебхуков (порт 5000).
-
-Nginx проксирует сюда:
-  POST https://<miniapp>/platega   → callback Platega
-
-Telegram Stars сюда НЕ приходят — они обрабатываются ботом (bot.py) через
-апдейты pre_checkout_query / successful_payment.
-
-Запуск:
-  uvicorn webhook:app --host 0.0.0.0 --port 5000
-"""
-
 from __future__ import annotations
 
 import os
@@ -20,7 +7,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
-# src/api в путь импорта
+# src/api в path
 _API_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "api"))
 if os.path.isdir(_API_DIR) and _API_DIR not in _sys.path:
     _sys.path.insert(0, _API_DIR)
@@ -73,7 +60,7 @@ def health() -> dict[str, Any]:
     return {"ok": True, "service": "webhook"}
 
 
-# Platega проверяет доступность webhook GET-запросом → отвечаем 200.
+# healthcheck platega: get → 200
 @app.get("/platega")
 def platega_probe() -> dict[str, Any]:
     return {"ok": True}
@@ -124,7 +111,7 @@ async def platega_callback(
         return JSONResponse(status_code=400, content={"error": "bad_json"})
 
     provider_txn = str(payload.get("id") or "")
-    our_payment_id = payload.get("payload")  # мы кладём наш payment_id в payload
+    our_payment_id = payload.get("payload")  # наш payment_id в payload
     if not provider_txn and not our_payment_id:
         return JSONResponse(status_code=400, content={"error": "no_transaction_id"})
 
@@ -134,15 +121,15 @@ async def platega_callback(
     if payment is None and provider_txn:
         payment = fulfillment.get_payment_by_provider_id(provider_txn)
     if payment is None:
-        # Неизвестный платёж — 200, чтобы Platega не ретраила бесконечно.
+        # неизвестный платёж: 200 без ретраев
         return JSONResponse(status_code=200, content={"ok": True, "note": "unknown_payment"})
 
-    # Callback Platega может относиться только к платежу Platega (не Stars / не баланс)
+    # только platega-платежи
     if payment.get("provider") != "platega":
         _log(f"callback для платежа {payment['payment_id']} другого провайдера ({payment.get('provider')}) — игнор")
         return JSONResponse(status_code=200, content={"ok": True, "note": "ignored"})
 
-    # ID транзакции — только тот, что мы получили от Platega при создании платежа
+    # txn id только из создания у platega
     stored_txn = str(payment.get("provider_payment_id") or "")
     if stored_txn and provider_txn and provider_txn != stored_txn:
         _log(f"callback: транзакция {provider_txn} не совпадает с {stored_txn} платежа {payment['payment_id']} — игнор")
@@ -151,7 +138,7 @@ async def platega_callback(
     if not txn_id:
         return JSONResponse(status_code=200, content={"ok": True, "note": "no_txn"})
 
-    # Перепроверяем статус и сумму напрямую у Platega
+    # статус/сумма у platega напрямую
     try:
         tx = client.get_transaction(txn_id)
     except Exception as exc:  # noqa: BLE001
@@ -179,12 +166,12 @@ async def platega_callback(
         fulfillment.mark_failed(payment["payment_id"], "provider_canceled")
         return JSONResponse(status_code=200, content={"ok": True})
     if norm == "refunded":
-        # Chargeback: отзыв подписки и реф. бонуса делает API (общая логика возвратов).
+        # chargeback: отзыв через api
         ok = _internal_post("/api/internal/payments/chargeback", {"payment_id": payment["payment_id"]})
-        # 5xx → Platega повторит callback, если API сейчас недоступен.
+        # 5xx чтобы platega повторила
         return JSONResponse(status_code=200 if ok else 503, content={"ok": ok})
 
-    # PENDING / прочее — просто подтверждаем приём.
+    # pending/прочее: ack
     return JSONResponse(status_code=200, content={"ok": True})
 
 

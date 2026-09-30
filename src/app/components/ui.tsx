@@ -152,7 +152,7 @@ export function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Строка списка в стиле главной: спокойная, без оранжевых плашек */
+// строка списка как на главной (без оранжевых чипов)
 export function ListRow({
   title,
   subtitle,
@@ -208,7 +208,7 @@ export function ListRow({
   );
 }
 
-/** Кнопка-действие как на главной */
+// кнопка действия как на главной
 export function ActionButton({
   title,
   meta,
@@ -278,7 +278,7 @@ export function ActionButton({
   );
 }
 
-/** Оболочка внутренних экранов — без сильного ambient, как спокойный кабинет */
+// оболочка внутренних экранов (мягкий ambient)
 export function Screen({
   children,
   scroll = true,
@@ -474,7 +474,7 @@ export function Field({
   );
 }
 
-/** Логотип BlinVPN из /assets/logo.png. */
+// логотип из /assets/logo.png
 export function BrandMark({ size = "lg" }: { size?: "sm" | "lg" }) {
   const px = size === "lg" ? 72 : 40;
   return (
@@ -519,7 +519,7 @@ export function LoadingScreen({ text = "Загрузка…" }: { text?: string 
   );
 }
 
-/** Карточка с нормальными внутренними отступами (Surface padded даёт всего 4px сверху/снизу). */
+// карточка с нормальными отступами (у Surface padded всего 4px)
 export function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div

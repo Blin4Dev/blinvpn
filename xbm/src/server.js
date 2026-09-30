@@ -101,7 +101,7 @@ function stripNetworkSuffixes(body) {
 // ─── HTTP сервер ───
 
 const server = http.createServer(async (req, res) => {
-    // [BlinVPN] Метка «ответ от XBM» — по ней install.sh проверяет, что nginx ходит в XBM
+    // [BlinVPN] заголовок X-XBM: install.sh проверяет, что nginx ходит в xbm
     res.setHeader('X-XBM', '1');
     const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const pathname = parsedUrl.pathname;
@@ -286,13 +286,21 @@ const server = http.createServer(async (req, res) => {
             logger.debug('proxy', `[${shortUA}] → подменяем UA на Happ/1.0 для XRAY_JSON`);
         }
 
-        if (cfg.SUB_PAGE_URL) {
-            const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
+        // remnawave в production рвёт tcp без x-forwarded-for / x-forwarded-proto: https
+        // (proxycheckmiddleware → socket hang up, не http-ошибка)
+        // нужны и при прямом remnawave_url (в blinvpn sub_page_url пустой)
+        const clientIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip']
+            || req.socket.remoteAddress || '127.0.0.1';
+        if (!forwardHeaders['x-forwarded-for'] && !forwardHeaders['X-Forwarded-For']) {
+            forwardHeaders['X-Forwarded-For'] = clientIp;
+        }
+        if (!forwardHeaders['x-real-ip'] && !forwardHeaders['X-Real-IP']) {
+            forwardHeaders['X-Real-IP'] = String(clientIp).split(',')[0].trim();
+        }
+        if (!forwardHeaders['x-forwarded-proto'] && !forwardHeaders['X-Forwarded-Proto']) {
             forwardHeaders['X-Forwarded-Proto'] = 'https';
-            if (!rawAllowed) {  // при raw уже выставили выше
-                forwardHeaders['X-Forwarded-For'] = clientIp;
-                forwardHeaders['X-Real-IP'] = clientIp;
-            }
+        }
+        if (cfg.SUB_PAGE_URL) {
             forwardHeaders['Host'] = cfg.SUB_DOMAIN || req.headers['host'] || 'localhost';
         }
 
@@ -307,7 +315,6 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // ─── ?raw=1: bypass балансера, возвращаем upstream как есть ───
         if (rawAllowed) {
             const stripped = stripNetworkSuffixes(upstream.body);
             res.writeHead(200, forwardResponseHeaders(upstream.headers, upstream.headers['content-type'] || 'application/json; charset=utf-8'));
@@ -315,7 +322,6 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // Passthrough для определённых клиентов
         if (clientType === 'passthrough') {
             logger.info('proxy', `⏭  [${shortUA}] passthrough — проксируем upstream как есть`);
             cacheUpstreamResponse(token, upstream.body, upstream.headers, upstream.headers['content-type']);
@@ -352,9 +358,6 @@ const server = http.createServer(async (req, res) => {
         }
 
         let allOutbounds = gen.collectAllProxyOutbounds(configArray);
-        // [BlinVPN] Имя хоста Remnawave совпало с названием строки подписки из панели
-        // (например, оба «🇳🇱 Нидерланды»): переименовываем служебное имя хоста, чтобы
-        // в Clash / Sing-box строка называлась ровно как в панели, без «⚡».
         {
             const pcNow = panel.get();
             if (pcNow.present && pcNow.onlyGroups) {
@@ -370,7 +373,7 @@ const server = http.createServer(async (req, res) => {
                 }
             }
         }
-        // Порядок хостов как в панели (до сортировки по нагрузке)
+        // Порядок хостов как в панели
         const upstreamOrder = allOutbounds.map(o => o.tag);
         logger.debug('proxy', `Собрано ${allOutbounds.length} outbound(ов)`);
 
@@ -380,7 +383,7 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        // ─── Фильтрация по нагрузке ───
+        // фильтрация по нагрузке
         const cache = nodeStats.getCache();
         const hasNodeStats = cfg.NODE_STATS_ENABLED && Object.keys(cache).length > 0;
         if (hasNodeStats) {
@@ -402,7 +405,7 @@ const server = http.createServer(async (req, res) => {
             allOutbounds = [...filtered, ...excluded];
         }
 
-        // ─── Группировка ───
+        // группировка
         const GROUPS = getGroups();
         const grouped = {};
         const ungrouped = [];
@@ -413,11 +416,8 @@ const server = http.createServer(async (req, res) => {
                 if (!grouped[group]) grouped[group] = [];
                 grouped[group].push(ob);
             } else if (panel.get().present && panel.get().onlyGroups) {
-                // [BlinVPN] Пользователям видны только хосты, собранные в панели; остальные
-                // хосты Remnawave работают только внутри «Автоматического выбора».
                 ungrouped.push(ob);
             } else if (cfg.AUTO_HOST_GROUPS) {
-                // Новый хост без группы в config.json — показываем его как отдельную локацию
                 grouped[ob.tag] = [ob];
             } else {
                 ungrouped.push(ob);
@@ -428,7 +428,7 @@ const server = http.createServer(async (req, res) => {
             logger.debug('proxy', `${ungrouped.length} серверов без группы — игнорируем (${ungrouped.map(o => o.tag).join(', ')})`);
         }
 
-        // Сортировка внутри групп по нагрузке
+        // сортировка внутри групп по нагрузке
         if (hasNodeStats) {
             for (const [gn, obs] of Object.entries(grouped)) {
                 grouped[gn] = obs.slice().sort((a, b) => {
@@ -441,14 +441,14 @@ const server = http.createServer(async (req, res) => {
 
         const activeRoutingProfile = (clientType === 'happ' || clientType === 'incy') ? routing.getRoutingProfile() : null;
 
-        // Порядок групп: явно заданные в config.groups + автообнаруженные после
+        // порядок групп: явно заданные в config.groups + автообнаруженные после
         let groupOrder;
         const pc = panel.get();
         if (pc.present && pc.onlyGroups) {
-            // [BlinVPN] Порядок строк — как в панели
+            // Порядок строк как в панели
             groupOrder = pc.groups.map(g => g.name).filter(n => grouped[n]);
         } else if (cfg.AUTO_HOST_GROUPS) {
-            // Порядок = порядок хостов в панели Remnawave (группа встаёт на место своего первого хоста)
+            // Порядок = порядок хостов в панели
             groupOrder = [];
             for (const tag of upstreamOrder) {
                 const gn = matchGroup(tag) || tag;
@@ -461,15 +461,12 @@ const server = http.createServer(async (req, res) => {
             if (!groupOrder.includes(gn)) groupOrder.push(gn);
         }
 
-        // ─── Sticky session: вычисляем назначения ───
-        // Sticky failure не должен ломать весь request — оборачиваем в try/catch.
-        // Если что-то пошло не так, отдадим клиенту конфиг без sticky-назначений.
-        const stickyTags = {};  // groupName → assigned tag
+        const stickyTags = {};  // groupName -> assigned tag
         if (cfg.STICKY_SESSION) {
             try {
                 const loadLookup = (tag) => nodeStats.getNodeStats(tag);
 
-                // AUTO группа
+                // auto группа
                 const fastestEnabled = cfg.config.fastest_group !== false;
                 if (fastestEnabled && !cfg.STICKY_EXCLUDE_GROUPS.includes(AUTO_GROUP_NAME) && !cfg.STICKY_EXCLUDE_GROUPS.includes(cfg.AUTO_GROUP_NAME)) {
                     const fastestExclude = new Set(cfg.config.fastest_exclude || []);
@@ -477,7 +474,7 @@ const server = http.createServer(async (req, res) => {
                     const autoCandidates = [];
                     for (const ob of allOutbounds) {
                         if (panel.isAutoExcluded(ob.tag)) continue;  // [BlinVPN] исключён в панели
-                        if (isLteOutbound(ob.tag)) continue;         // [BlinVPN] белые списки — только резерв
+                        if (isLteOutbound(ob.tag)) continue;         // [BlinVPN] белые списки только как резерв
                         const g = matchGroup(ob.tag);
                         if (g && fastestExclude.has(g)) continue;
                         if (g && fastestFallback.has(g)) continue;  // sticky над main, не fallback
@@ -489,7 +486,7 @@ const server = http.createServer(async (req, res) => {
                     }
                 }
 
-                // Страновые группы
+                // страновые группы
                 for (const groupName of groupOrder) {
                     if (cfg.STICKY_EXCLUDE_GROUPS.includes(groupName)) continue;
                     const obs = grouped[groupName];
@@ -502,18 +499,18 @@ const server = http.createServer(async (req, res) => {
                 }
             } catch (err) {
                 logger.error('sticky', `Ошибка при вычислении sticky-назначений (продолжаем без них): ${err.message}`);
-                // stickyTags остаётся пустым — клиент получит конфиг без sticky.
+                // stickyTags остаётся пустым - клиент получит конфиг без sticky.
             }
         }
 
-        // ─── Xray конфиги (Happ / INCY / xray_json / other) ───
+        // xray конфиги (Happ / INCY / xray_json / other)
         gen.resetRoutingWarning();
         const resultConfigs = [];
 
         if (clientType === 'happ' || clientType === 'incy' || clientType === 'xray_json' || clientType === 'other') {
             const baseTpl = gen.prepareBaseTemplate(baseConfig);
 
-            // Fastest (AUTO)
+            // fastest (auto)
             const fastestEnabled = cfg.config.fastest_group !== false;
             if (fastestEnabled && allOutbounds.length >= 1) {
                 const fastestExclude = cfg.config.fastest_exclude || [];
@@ -521,7 +518,7 @@ const server = http.createServer(async (req, res) => {
                 const excludeSet = new Set(fastestExclude);
                 const fallbackSet = new Set(fastestFallback);
 
-                // [BlinVPN] хосты, исключённые из авто-выбора в панели
+                // хосты, исключённые из авто-выбора в панели
                 let fastestOutbounds = allOutbounds.filter(ob => !panel.isAutoExcluded(ob.tag));
                 let fastestFallbackOutbounds = [];
 

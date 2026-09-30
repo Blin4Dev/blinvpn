@@ -32,7 +32,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [me, setMe] = useState<Me | null>(null);
 
-  // Кто вошёл и какие разделы ему доступны
+  // кто вошёл и что ему доступно
   const loadMe = () => {
     const token = getPanelToken();
     if (!token) { setIsAuthenticated(false); return; }
@@ -48,8 +48,7 @@ export default function App() {
   if (isAuthenticated === null || (isAuthenticated && !me)) return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={36} /></div>;
   if (!isAuthenticated) return <LoginForm onLogin={() => { setIsAuthenticated(null); loadMe(); }} />;
   return <MeContext.Provider value={me}><AuthenticatedApp me={me!} onLogout={async () => {
-    // Выход: отписываем это устройство от push (чтобы уведомления не приходили
-    // следующему, кто войдёт здесь) и завершаем сессию на сервере.
+    // отписать push с этого устройства и закрыть сессию
     try { await disablePush(); } catch { /* */ }
     const t = getPanelToken();
     if (t) { fetch('/api/panel/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${t}` } }).catch(() => {}); }
@@ -65,8 +64,7 @@ export const NAV = [
   { group: 'Другое', items: [{ name: 'Мониторинг', icon: Server }, { name: 'Балансировщик', icon: Shuffle }, { name: 'Настройки', icon: Settings }] },
 ];
 
-// Адреса страниц панели: у каждой свой путь, работают F5, «Назад» браузера и прямые ссылки
-// (в том числе из форума: /withdrawals, /users/123).
+// пути страниц (f5, назад, прямые ссылки)
 const PAGE_PATHS: Record<string, string> = {
   'Главная': '/', 'Статистика': '/statistics', 'Финансы': '/finance',
   'Пользователи': '/users', 'Поддержка': '/support', 'Выводы': '/withdrawals', 'Опрос': '/survey',
@@ -84,7 +82,7 @@ export function parseRoute(pathname: string, search: string): Route {
   const u = path.match(/^\/users\/(\d+)$/);
   if (u) return { ...base, page: 'Пользователи', userId: Number(u[1]) };
   const sc = path.match(/^\/support(?:\/(\d+|team))?$/);
-  // /support/team — «Чат сотрудников» (chatId 0)
+  // /support/team = чат сотрудников (chatId 0)
   if (sc) return { ...base, page: 'Поддержка', chatId: sc[1] === 'team' ? 0 : sc[1] ? Number(sc[1]) : null };
   if (path === '/monitoring') {
     const n = new URLSearchParams(search).get('node');
@@ -112,7 +110,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   const [route0] = useState(() => {
     const r = parseRoute(window.location.pathname, window.location.search);
     if (r.userId != null || canOpenPage(me, r.page)) return r;
-    // Страница недоступна сотруднику — открываем первую доступную
+    // нет доступа: первая доступная страница
     const first = NAV.flatMap((g) => g.items).find((i) => canOpenPage(me, i.name));
     return { ...r, page: first?.name || r.page };
   });
@@ -123,7 +121,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(route0.tab);
   const [settingsOpen, setSettingsOpen] = useState(route0.page === 'Настройки');
   const [chatId, setChatId] = useState<number | null>(route0.chatId ?? null);
-  // Непрочитанные обращения — цифра у пункта «Поддержка»
+  // непрочитанные у пункта «поддержка»
   const [supportUnread, setSupportUnread] = useState(0);
   const canSupport = canOpenPage(me, 'Поддержка');
   useEffect(() => {
@@ -135,11 +133,11 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   }, [canSupport]);
   const firstRun = useRef(true);
 
-  // Состояние → адрес: каждый переход добавляет запись в историю браузера
+  // синхронизация состояния → url
   useEffect(() => {
     const want = buildPath({ page: activePage, userId: detailUserId, nodeId: monNodeId, tab: settingsTab, chatId });
     const cur = window.location.pathname + window.location.search;
-    if (cur === want) return;  // после «Назад» адрес уже совпадает — ничего не добавляем
+    if (cur === want) return;  // после «назад» адрес уже совпадает
     try {
       if (firstRun.current) window.history.replaceState(null, '', want);
       else window.history.pushState(null, '', want);
@@ -147,7 +145,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   }, [activePage, monNodeId, detailUserId, settingsTab, chatId]);
   useEffect(() => { firstRun.current = false; }, []);  // после первого синка адреса
 
-  // «Назад»/«Вперёд» в браузере → состояние
+  // назад/вперёд браузера → state
   useEffect(() => {
     const onPop = () => {
       const r = parseRoute(window.location.pathname, window.location.search);
@@ -160,7 +158,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   const [userSearch, setUserSearch] = useState('');
   const [massActionType, setMassActionType] = useState<string | null>(null);
 
-  // Оператор меняет только пользователя, чьё обращение у него в работе — иначе «только просмотр»
+  // оператор правит только своего пользователя в работе, иначе read-only
   const [canManage, setCanManage] = useState<boolean | null>(null);
   useEffect(() => {
     setCanManage(null);
@@ -171,7 +169,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
   setWriteGuard(readOnly ? 'Менять можно только пользователя, чьё обращение у вас в работе' : null);
   const pageAllowed = detailUserId != null ? canOpenPage(me, 'Пользователи') : canOpenPage(me, activePage);
 
-  // Push-уведомления
+  // web push
   const [pushOn, setPushOn] = useState(false);
   useEffect(() => { syncPush().then(setPushOn).catch(() => {}); }, []);
   const togglePush = async () => {
@@ -202,7 +200,6 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
         }} />
       )}
 
-      {/* Sidebar */}
       <aside style={{
         position: 'fixed', insetBlock: 0, left: 0, zIndex: 50, width: 250,
         background: 'var(--surface)', borderRight: '1px solid var(--border)',
@@ -250,7 +247,6 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
         </nav>
       </aside>
 
-      {/* Main */}
       <main className="md:!ml-[250px]" style={{ minHeight: '100vh' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 30, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(10px)', borderBottom: '1px solid var(--border)' }}>
           <button className="icon-btn md:!hidden" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>{isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}</button>

@@ -1,7 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { fmtDateTime, fmtInt, pctStr } from '../lib/format';
 
-// ── Горизонтальные столбики (распределение, способы оплаты) ──
 export const HBarChart: React.FC<{
   data: { label: string; value: number }[];
   format?: (v: number) => string;
@@ -25,16 +24,11 @@ export const HBarChart: React.FC<{
   );
 };
 
-// ── Линейный график с подсказкой при наведении ─────────────
 export type ChartSeries = { name: string; color: string; values: (number | null)[]; dashed?: boolean };
 
 export type ChartWindow = { from: number; to: number; bucket: number };
 
-/**
- * Линейный график. С window — ось времени фиксирована на весь период, а при
- * пропуске данных линия рвётся, а не тянется через дыру. downtime — промежутки,
- * когда сервер/агент был недоступен: рисуются красными полосами.
- */
+// линейный график; window фиксирует ось, downtime красными полосами
 export const LineChart: React.FC<{
   times: number[]; series: ChartSeries[]; format: (v: number) => string; yMax?: number; height?: number;
   bars?: { values: (number | null)[]; color: string; name: string; format: (v: number) => string };
@@ -49,7 +43,7 @@ export const LineChart: React.FC<{
   if (!times.length && !bands.length) return <div className="sub" style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, border: '1px dashed var(--border)', borderRadius: 'var(--r-md)' }}>Нет данных за этот период</div>;
   const all = series.flatMap((s) => s.values.filter((v): v is number => v != null));
   const top = yMax ?? Math.max(1, ...all) * 1.15;
-  // Без окна и без точек (данные ещё грузятся) — полосы простоя не рисуем
+  // без окна и точек (ещё грузятся) полосы простоя не рисуем
   if (!win && !times.length) return <div style={{ height }} />;
   const t0 = win ? win.from : times[0]; const t1 = win ? win.to : (times[times.length - 1] || t0 + 1);
   const x = (t: number) => padL + ((Math.min(Math.max(t, t0), t1) - t0) / Math.max(1, t1 - t0)) * (W - padL);
@@ -75,7 +69,7 @@ export const LineChart: React.FC<{
     const tt = t0 + ((e.clientX - r.left) / r.width) * (t1 - t0);
     let best: number | null = null; let bd = Infinity;
     times.forEach((t, i) => { const d = Math.abs(t - tt); if (d < bd) { bd = d; best = i; } });
-    // Точка далеко от курсора (дыра в данных) — показываем время под курсором
+    // далеко от точки (дыра) → время под курсором
     if (best != null && win && bd > win.bucket * 1.5) best = null;
     setHover({ i: best, t: best != null ? times[best] : tt });
   };
@@ -145,7 +139,7 @@ export const Legend: React.FC<{ items: { name: string; color: string; bar?: bool
   </div>
 );
 
-// Столбики с подсказкой при наведении
+// столбики с подсказкой
 export const Columns: React.FC<{ data: { label: string; value: number; sub?: string }[]; format: (v: number) => string; height?: number; every?: number }> = ({ data, format, height = 150, every = 1 }) => {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(1, ...data.map((d) => d.value));

@@ -53,7 +53,7 @@ def run() -> None:
     assert "proxy_pass http://remnawave;  # панель" in out
     assert out.count("proxy_pass http://$blinvpn_sub_backend;") == 1
     assert "default remnawave-subscription-page;" in out
-    assert "xray-balancer-mw:4100;" in out
+    assert "blinvpn-xbm:4100;" in out
     assert "location @blinvpn_sub_orig {" in out
     # правка — в 443-блоке подписки (где есть location /), а не в редиректе с 80
     sub443 = out[out.index("server_name sub.example.com;\n    listen 443"):]

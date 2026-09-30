@@ -29,7 +29,7 @@ export const ShiftBadge: React.FC<{ shift?: { working_today: boolean; on_shift: 
   return <span className={`badge ${shift.on_shift ? 'solid' : 'mute'}`}>{shift.on_shift ? 'на смене' : 'сегодня'} · {hoursText(shift.intervals as Interval[])}</span>;
 };
 
-/** Редактор частей рабочего дня: «+ Перерыв» делит день ещё на одну часть. */
+// части рабочего дня (+ перерыв = ещё одна часть)
 export const IntervalsEditor: React.FC<{ value: Interval[]; onChange: (v: Interval[]) => void }> = ({ value, onChange }) => {
   const set = (i: number, j: 0 | 1, v: string) => onChange(value.map((x, k) => (k === i ? (j === 0 ? [v, x[1]] : [x[0], v]) : x)) as Interval[]);
   const addBreak = () => {
@@ -54,7 +54,7 @@ export const IntervalsEditor: React.FC<{ value: Interval[]; onChange: (v: Interv
   );
 };
 
-/** Месяц: рабочие дни с часами (и оплатой, если showPay). */
+// месяц: рабочие дни (+ оплата, если showPay)
 export const MonthCalendar: React.FC<{
   month: string; today: string; days: Record<string, Day>; showPay?: boolean;
   onMonth: (m: string) => void; onDay?: (day: string) => void;

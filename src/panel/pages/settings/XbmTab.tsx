@@ -14,7 +14,7 @@ type JobRes = { status: 'queued' | 'running' | 'ok' | 'error'; log: string[]; re
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Выполнить действие на сервере через помощника и дождаться результата. */
+// действие через помощника на сервере, ждём результат
 async function runJob(action: string, params: Record<string, string>, onLog: (l: string[]) => void): Promise<JobRes> {
   const { job } = await apiFetch(`/panel/xbm/setup/${action}`, { method: 'POST', body: JSON.stringify(params) });
   for (let i = 0; i < 600; i++) {

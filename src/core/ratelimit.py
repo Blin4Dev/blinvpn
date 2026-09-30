@@ -1,14 +1,3 @@
-"""
-Простой rate-limiter на SQLite (фиксированное окно). Переживает рестарты.
-
-rate_limit(key, limit, window) → (allowed, retry_after_seconds)
-  • за окно window допускается не более limit обращений с этим ключом;
-  • при превышении allowed=False и retry_after — сколько ждать до сброса окна.
-
-Счётчик обновляется ОДНИМ атомарным запросом (UPSERT … RETURNING), поэтому
-параллельные запросы не могут проскочить лимит.
-"""
-
 from __future__ import annotations
 
 import math
@@ -19,7 +8,7 @@ try:
 except ImportError:
     import database as db  # type: ignore
 
-# Записи, окно которых давно закончилось, удаляются фоновой чисткой.
+# просроченные окна чистит фон
 _CLEANUP_AGE = 2 * 86400
 
 

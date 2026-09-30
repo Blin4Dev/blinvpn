@@ -15,7 +15,7 @@ proxy_pass сохраняется в комментарии, всё добавл
 
 Использование:
   nginx_xbm.py status  --conf /opt/remnawave/nginx/nginx.conf --domain sub.example.com
-  nginx_xbm.py enable  --conf ... --domain ... [--xbm xray-balancer-mw:4100]
+  nginx_xbm.py enable  --conf ... --domain ... [--xbm blinvpn-xbm:4100]
   nginx_xbm.py disable --conf ...
 Код выхода: 0 — успех/включено, 3 — выключено (для status), 1 — ошибка.
 """
@@ -121,7 +121,7 @@ def is_enabled(text: str) -> bool:
 _UNSUPPORTED = re.compile(r"^\s*(location|resolver|proxy_intercept_errors|error_page|if|return|rewrite|limit_except)\b")
 
 
-def enable(text: str, domain: str, xbm: str = "xray-balancer-mw:4100") -> str:
+def enable(text: str, domain: str, xbm: str = "blinvpn-xbm:4100") -> str:
     if not re.fullmatch(r"[A-Za-z0-9.-]+(:\d{1,5})?", xbm):
         raise NginxXbmError("Неверный адрес XBM")
     if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", domain):
@@ -224,7 +224,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("action", choices=["status", "enable", "disable"])
     ap.add_argument("--conf", required=True)
     ap.add_argument("--domain", default="")
-    ap.add_argument("--xbm", default="xray-balancer-mw:4100")
+    ap.add_argument("--xbm", default="blinvpn-xbm:4100")
     a = ap.parse_args(argv)
     try:
         with open(a.conf, encoding="utf-8", newline="") as f:  # CRLF — как есть

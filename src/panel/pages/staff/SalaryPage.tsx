@@ -4,7 +4,7 @@ import { apiFetch } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
 import { Day, hoursText, money, monthEnd, monthStart, MonthCalendar, ruDate, ShiftBadge, StatBox } from './common';
 
-/** Сотрудник: свой график, начисления, штрафы, выплаты и баланс. */
+// свой график, начисления, штрафы, выплаты
 export const SalaryPage: React.FC = () => {
   const [d, setD] = useState<any>(null);
   const [month, setMonth] = useState<string | null>(null);

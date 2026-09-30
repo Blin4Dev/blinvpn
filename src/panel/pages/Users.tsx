@@ -22,7 +22,7 @@ export const UsersPage: React.FC<{
   const [statusFilter, setStatusFilter] = useState<'all' | 'Active' | 'Trial' | 'Expired' | 'None' | 'Banned'>('all');
   const [showFilter, setShowFilter] = useState(false);
   const [showMass, setShowMass] = useState(false);
-  const canEdit = isOwner(useMe());  // массовые действия — только владелец
+  const canEdit = isOwner(useMe());  // массовые действия только owner
   const massRef = useOutside<HTMLDivElement>(() => setShowMass(false));
   const filterRef = useOutside<HTMLDivElement>(() => setShowFilter(false));
 

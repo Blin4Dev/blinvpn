@@ -3,11 +3,7 @@ import PaymentSheet, { type PendingPayment } from "./PaymentSheet";
 import { useNavigate } from "react-router-dom";
 import { fetchUnseenPayment, markPaymentSeen } from "../utils/api";
 
-/**
- * Вернулись из Platega к конкретному платежу: на сайт — /payment/return?payment_id=…,
- * в мини-приложение — ссылкой t.me/…?startapp=pay_… Читаем при запуске, до любых
- * переходов (вход, редиректы).
- */
+// возврат platega / tg startapp pay_… читаем при старте до редиректов
 type ReturnInfo = { id: string; failed: boolean };
 
 function readReturnId(): ReturnInfo | null {
@@ -28,7 +24,7 @@ function readReturnId(): ReturnInfo | null {
 
 let returnId: ReturnInfo | null = readReturnId();
 
-/** Куда вести по «Попробовать снова»: туда же, откуда начинали эту оплату. */
+// повтор ведёт туда, где начиналась оплата
 function retryPath(purpose: string, returnTo?: string): string {
   if (purpose === "devices") return "/subscription/increase";
   if (purpose === "traffic_reset") return "/payment?type=traffic_reset";
@@ -36,11 +32,7 @@ function retryPath(purpose: string, returnTo?: string): string {
   return "/subscription/extend";
 }
 
-/**
- * Если приложение закрылось или перезагрузилось во время оплаты — при следующем
- * запуске снова показываем окно оплаты: «Ожидаем оплату…» или «Оплата прошла!»
- * с продолжением настройки.
- */
+// снова открыть окно оплаты, если приложение закрыли во время платежа
 export default function PaymentResume() {
   const [p, setP] = useState<(PendingPayment & { returnTo?: string; status: string }) | null>(null);
   const navigate = useNavigate();
@@ -77,7 +69,7 @@ export default function PaymentResume() {
       }}
       onDone={() => setP(null)}
       onClose={() => {
-        // Закрыли, не дождавшись оплаты — больше не навязываем это окно
+        // закрыли до оплаты: больше не навязывать
         void markPaymentSeen(p.paymentId);
         setP(null);
       }}

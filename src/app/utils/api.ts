@@ -1,4 +1,4 @@
-/** API-клиент мини-приложения BlinVPN */
+// клиент api мини-приложения
 
 export type Plan = { devices: number; price_rub: number; price_stars: number };
 export type PlansResponse = {
@@ -27,11 +27,11 @@ export type AppUser = {
   is_partner?: boolean;
   partner_balance?: number;
   discount?: Discount;
-  /** Принял оферту и политику конфиденциальности. */
+  // приняты оферта и политика
   terms_accepted?: boolean;
 };
 
-/** Активная скидка пользователя (для зачёркнутой цены). Возвращает percent 0, если нет. */
+// активная скидка для зачёркнутой цены; percent 0 если нет
 export async function fetchDiscount(): Promise<{ active: boolean; percent: number; expires_at?: string | null }> {
   try {
     return await appFetch("/discount");
@@ -40,7 +40,7 @@ export async function fetchDiscount(): Promise<{ active: boolean; percent: numbe
   }
 }
 
-/** Применить процент скидки к цене (округление до целого, не ниже 1). */
+// применить скидку %; округлить, минимум 1
 export function applyDiscount(amount: number, percent: number): number {
   if (!percent || percent <= 0) return amount;
   return Math.max(1, Math.round(amount * (1 - percent / 100)));
@@ -87,7 +87,7 @@ export function initDataHeader(): Record<string, string> {
   return headers;
 }
 
-/** Ошибка API: помимо текста хранит detail ответа (например, предупреждение об объединении аккаунтов). */
+// ошибка api с detail ответа (напр. предупреждение об объединении)
 export class ApiError extends Error {
   status: number;
   detail: any;
@@ -98,7 +98,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Предупреждение об объединении аккаунтов (когда email/Telegram уже есть у другого аккаунта). */
+// предупреждение, если email/tg уже у другого аккаунта
 export type MergePreview = {
   merge: true;
   other: { id: number; label: string };
@@ -178,7 +178,6 @@ export async function authAndGetUser(): Promise<AppUser | null> {
   }
 }
 
-// ── Платежи ────────────────────────────────────────────────
 
 export type PaymentMethod = "sbp" | "card" | "sberpay" | "tg_stars";
 export type PaymentPurpose = "subscription" | "extend" | "devices" | "traffic_reset";
@@ -191,7 +190,7 @@ export type CreatePaymentRequest = {
   purpose?: PaymentPurpose;
   subscription_id?: number | null;
   use_referral_balance?: boolean;
-  /** Экран, куда вернуть после оплаты (в т.ч. если приложение закроется во время оплаты) */
+  // экран для возврата после оплаты (если закрыли приложение во время платежа)
   return_to?: string;
 };
 
@@ -232,7 +231,7 @@ export type UnseenPayment = {
   invoice_link?: string | null;
 };
 
-/** Платёж, итог которого пользователь ещё не видел (приложение закрылось во время оплаты). */
+// платёж, итог которого пользователь ещё не видел (закрыл приложение во время оплаты)
 export async function fetchUnseenPayment(paymentId?: string): Promise<UnseenPayment | null> {
   try {
     const q = paymentId ? `?payment_id=${encodeURIComponent(paymentId)}` : "";
@@ -276,12 +275,12 @@ export type PaymentQuote = {
   charge: number;
   provider_min: number;
   is_stars: boolean;
-  /** Цена без скидки и процент скидки (промокод / акция / бонус за опрос). */
+  // цена до скидки + % скидки
   full_price?: number;
   discount_percent?: number;
 };
 
-/** Предпросмотр цены (итог + сколько спишется с реф. баланса), без создания платежа. */
+// превью цены (итого + списание с реф. баланса) без создания платежа
 export async function fetchQuote(req: CreatePaymentRequest): Promise<PaymentQuote | null> {
   try {
     return await appFetch<PaymentQuote>("/payment/quote", {
@@ -310,7 +309,6 @@ export async function fetchSubscription(): Promise<{ until?: string | null; key?
   }
 }
 
-// ── Telegram WebApp ────────────────────────────────────────
 
 type TgWebApp = {
   openInvoice?: (
@@ -332,7 +330,6 @@ export function tgWebApp(): TgWebApp | null {
   }
 }
 
-/** Открыть счёт Telegram Stars; резолвится финальным статусом. */
 export function openStarsInvoice(url: string): Promise<string> {
   return new Promise((resolve) => {
     const wa = tgWebApp();
@@ -345,14 +342,12 @@ export function openStarsInvoice(url: string): Promise<string> {
   });
 }
 
-/** Открыть ссылку t.me внутри Telegram (вне Telegram — в новой вкладке). */
 export function openTgLink(url: string): void {
   const wa = tgWebApp();
   if (wa?.openTelegramLink) wa.openTelegramLink(url);
   else window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** Открыть внешнюю платёжную ссылку (Platega). */
 export function openPayUrl(url: string): void {
   const wa = tgWebApp();
   if (wa?.openLink) wa.openLink(url);
@@ -361,15 +356,14 @@ export function openPayUrl(url: string): void {
 
 export const SUPPORT_PREFILL_KEY = "blin_support_prefill";
 
-/** Открыть чат поддержки в приложении с уже вписанным текстом ошибки. */
+// открыть чат поддержки с готовым текстом ошибки
 export function openSupportWithError(errorLog: string, _supportBase?: string): void {
   try { sessionStorage.setItem(SUPPORT_PREFILL_KEY, `Здравствуйте. У меня возникла ошибка: ${errorLog}`); } catch { /* ignore */ }
-  // Окно ошибки живёт вне роутера: меняем адрес и сообщаем роутеру
+  // модалка ошибки вне роутера: push url + событие
   window.history.pushState(null, "", "/support");
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-// ── Аккаунт / безопасность ─────────────────────────────────
 
 export async function acceptTerms(): Promise<AppUser> {
   const b = await appFetch<{ user: AppUser }>("/me/terms", { method: "POST" });
@@ -405,7 +399,6 @@ export async function unbindEmail(): Promise<AppUser> {
   return b.user;
 }
 
-// ── Авторизация: email-код + сессии ────────────────────────
 
 export type EmailRequestResult = { ok: boolean; throttled: boolean; resend_after: number; dev_code?: string; merge?: MergePreview };
 
@@ -416,7 +409,7 @@ export async function requestEmailCode(email: string): Promise<EmailRequestResul
   });
 }
 
-/** Реферальный код из ссылки сайта (?ref=…), запомненный при первом заходе. */
+// реф. код с сайта ?ref=, сохраняется при первом визите
 export function getWebRef(): string {
   try {
     return localStorage.getItem("blinvpn_ref") || "";
@@ -425,7 +418,7 @@ export function getWebRef(): string {
   }
 }
 
-/** Запоминаем ?ref=… один раз (первый приглашающий «выигрывает»). */
+// сохранить ?ref= один раз (первый реферер побеждает)
 export function captureWebRef(): void {
   try {
     const ref = new URLSearchParams(window.location.search).get("ref");
@@ -456,7 +449,7 @@ export async function logout(): Promise<void> {
   clearAppToken();
 }
 
-/** Проверка текущей авторизации (Telegram initData или сохранённая сессия). */
+// проверка авторизации (tg initData или сохранённая сессия)
 export async function checkAuth(): Promise<boolean> {
   const inTelegram = (() => {
     try {
@@ -467,8 +460,7 @@ export async function checkAuth(): Promise<boolean> {
     }
   })();
   if (inTelegram) {
-    // Получаем сессию-«страховку»: она выручит, если приложение будет открыто
-    // дольше срока подписи Telegram (сервер примет её только для этого же аккаунта).
+    // запасная сессия, если подпись tg истечёт, пока приложение открыто
     try {
       const headers = initDataHeader();
       delete headers["X-App-Session"];
@@ -478,7 +470,7 @@ export async function checkAuth(): Promise<boolean> {
         if (body.token) setAppToken(body.token);
       }
     } catch {
-      /* без страховки — просто продолжаем */
+      /* ignore */
     }
     return true;
   }
@@ -509,7 +501,6 @@ export async function bindTelegram(payload: TelegramOAuthPayload, merge = false)
   return b.user;
 }
 
-// ── Устройства ──────────────────────────────────────────────
 
 export async function revokeDevice(deviceId: string): Promise<boolean> {
   try {
@@ -520,7 +511,6 @@ export async function revokeDevice(deviceId: string): Promise<boolean> {
   }
 }
 
-// ── Конфиг / пробный период ─────────────────────────────────
 
 export async function fetchConfig(): Promise<Record<string, unknown>> {
   try {
@@ -530,7 +520,6 @@ export async function fetchConfig(): Promise<Record<string, unknown>> {
   }
 }
 
-/** Запущено ли приложение внутри Telegram (есть подписанный initData). */
 export function isTelegram(): boolean {
   try {
     const wa = (window as unknown as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp;
@@ -546,12 +535,12 @@ export type Membership = {
   channel_url: string;
 };
 
-/** Статус обязательной подписки на канал (только для Telegram-входа). */
+// статус обязательной подписки на канал (только вход через tg)
 export async function fetchMembership(force = false): Promise<Membership> {
   try {
     return await appFetch<Membership>(`/membership${force ? "?force=1" : ""}`);
   } catch {
-    // не смогли проверить — не блокируем
+    // проверка не удалась: не блокируем
     return { required: false, subscribed: true, channel_url: "https://t.me/blinvpn" };
   }
 }
@@ -562,11 +551,7 @@ export type SetupStatus = {
   ever_connected: boolean | null;
 };
 
-/**
- * Нужно ли показать онбординг-модалку «Вы не завершили настройку»: есть
- * подписка, но пользователь ни разу не подключался к VPN. При ошибке —
- * не показываем (не мешаем пользователю).
- */
+// подсказка настройки, если подписка есть, но ни разу не подключался; при ошибке скрыть
 export async function fetchSetupStatus(): Promise<SetupStatus> {
   try {
     return await appFetch<SetupStatus>("/setup-status");
@@ -584,7 +569,6 @@ export async function activateTrial(): Promise<{ success: boolean; message?: str
   }
 }
 
-// ── Вывод реферальных средств (USDT TON) ───────────────────
 
 export type Withdrawal = {
   id: number;
@@ -614,7 +598,6 @@ export async function requestWithdraw(
   });
 }
 
-// ── Deep-links подписки в приложения (incy / happ / другое) ──
 
 export type SubAppLink = { app: string; link: string; encrypted: boolean; open_url?: string };
 
@@ -622,11 +605,7 @@ export async function fetchAppLink(app: "incy" | "happ" | "other"): Promise<SubA
   return appFetch<SubAppLink>(`/subscription/applink?app=${encodeURIComponent(app)}`);
 }
 
-/**
- * Открыть подписку в приложении. Telegram не открывает схемы incy:// / happ://
- * напрямую, поэтому сервер отдаёт https `open_url` (страница-редирект на сайте),
- * которую мы открываем через openLink. Для http-ссылок — тоже openLink.
- */
+// открыть подписку в клиенте через https open_url (tg не открывает incy:// / happ://)
 export function openDeepLink(res: SubAppLink | string): void {
   const link = typeof res === "string" ? res : (res.open_url || res.link);
   const isHttp = /^https?:\/\//i.test(link);
@@ -635,7 +614,7 @@ export function openDeepLink(res: SubAppLink | string): void {
     wa.openLink(link);
     return;
   }
-  // Запасной путь (вне Telegram / нет https open_url)
+  // fallback вне tg / без https open_url
   try {
     window.location.href = link;
   } catch {
@@ -660,7 +639,7 @@ export async function fetchTraffic(): Promise<TrafficInfo> {
   }
 }
 
-/** 12,4 ГБ / 850 МБ */
+// 12,4 ГБ / 850 МБ
 export function formatBytesRu(v: number): string {
   const gb = v / 1024 ** 3;
   if (gb >= 100) return `${Math.round(gb)} ГБ`;
@@ -670,25 +649,21 @@ export function formatBytesRu(v: number): string {
 }
 
 
-// ── Поддержка ────────────────────────────────────────────────
-
 export type SupportFile = { id: string; kind: "image" | "video" | "file" | "deleted"; name: string; size: number; url: string };
 export type SupportQuote = { id: number; sender?: string; text?: string; files?: number; deleted?: boolean };
 export type SupportMessage = {
   id: number; ticket_id?: number | null; sender: "user" | "admin" | "system"; author?: string | null; text: string;
   created_at: string; files: SupportFile[]; reply_to?: SupportQuote | null;
-  /** close_prompt — вопрос «Могу ли я ещё чем-то помочь?» с кнопкой «Нет, спасибо» */
+  // close_prompt = «ещё помочь?» + «нет, спасибо»
   kind?: "close_prompt" | null; action_active?: boolean | null;
-  /** ответ «нет, спасибо» закрыл обращение */
   ticket_closed?: boolean;
-  /** поддержка изменила сообщение */
   edited?: boolean;
 };
 export type SupportState = {
   chat: { id: number; unread: number } | null;
   ticket: { status: "open" | "closed" } | null;
   messages: SupportMessage[];
-  /** изменённые (или удалённые: {id, deleted: true}) сообщения из уже загруженных */
+  // изменённые или удалённые ({id, deleted: true}) среди уже загруженных
   changes?: (SupportMessage & { deleted?: boolean })[];
   limits: { max_file_mb: number; max_files: number; max_text: number; keep_days?: number };
 };
@@ -701,7 +676,6 @@ export function sendSupportMessage(text: string, files: string[], replyTo?: numb
   return appFetch<SupportMessage>("/support/messages", { method: "POST", body: JSON.stringify({ text, files, reply_to: replyTo || null }) });
 }
 
-/** «Нет, спасибо» под вопросом поддержки — закрыть обращение. */
 export function closeSupportTicket(messageId: number): Promise<unknown> {
   return appFetch("/support/close", { method: "POST", body: JSON.stringify({ message_id: messageId }) });
 }
@@ -710,7 +684,7 @@ export function markSupportRead(): Promise<unknown> {
   return appFetch("/support/read", { method: "POST" }).catch(() => null);
 }
 
-/** Загрузка вложения с прогрессом (0..1). Возвращает описание файла на сервере. */
+// загрузка вложения с прогрессом 0..1
 export function uploadSupportFile(file: File, onProgress: (p: number) => void): { promise: Promise<Omit<SupportFile, "url">>; abort: () => void } {
   const xhr = new XMLHttpRequest();
   const promise = new Promise<Omit<SupportFile, "url">>((resolve, reject) => {

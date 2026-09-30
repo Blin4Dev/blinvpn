@@ -1,6 +1,5 @@
 import { apiFetch } from './api';
 
-/** Push-уведомления панели (Web Push). */
 export const pushSupported = () =>
   typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
 
@@ -28,7 +27,7 @@ export async function enablePush(): Promise<void> {
   try {
     await postSub(sub);
   } catch (e: any) {
-    // устройство было подписано другим аккаунтом — берём новый адрес подписки
+    // был чужой аккаунт: новый endpoint
     if (!/другим аккаунтом/.test(String(e?.message))) throw e;
     await sub.unsubscribe();
     sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
@@ -41,7 +40,7 @@ const postSub = (sub: PushSubscription) => {
   return apiFetch('/panel/push/subscribe', { method: 'POST', body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys }) });
 };
 
-/** При входе: подписка этого браузера принадлежит мне? Если другому аккаунту — отписываем браузер. */
+// при входе: чужая подписка браузера → отписать
 export async function syncPush(): Promise<boolean> {
   const sub = await currentSubscription();
   if (!sub) return false;

@@ -8,7 +8,7 @@ const RESET_TEXT: Record<string, string> = {
   MONTH: "Счётчик обнуляется каждый месяц",
 };
 
-/** Сколько трафика потрачено: «12,4 ГБ из 200 ГБ» с полосой. */
+// used traffic: «12,4 ГБ из 200 ГБ» + bar
 export default function TrafficCard({ t }: { t: TrafficInfo }) {
   if (!t.available || t.used_bytes == null) return null;
   const used = Math.max(0, t.used_bytes);

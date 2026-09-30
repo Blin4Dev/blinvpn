@@ -1,29 +1,4 @@
-"""
-Анти-абуз: периодический опрос Remnawave по активным подпискам BlinVPN.
-
-Правила (по каждой активной подписке, лимит = devices_limit):
-  1. HWID: если число HWID-устройств ≥ 2 × лимит — бан.
-     (лимит 1 → ≥2, лимит 2 → ≥4, лимит 3 → ≥6 …)
-  2. IP: если число активных IP ≥ лимит + 2 — бан.
-     (лимит 1 → ≥3, лимит 2 → ≥4, лимит 3 → ≥5 …)
-     Активные IP берутся из «Активных сессий» Remnawave (/api/connections/by-node):
-     каждая нода отдаёт подключённых пользователей и их IP со временем последней
-     активности; учитываются IP, активные за последние IP_ACTIVE_MINUTES минут,
-     по всем нодам сразу.
-
-Сначала предупреждение, потом бан:
-  • первое нарушение — пользователю приходит предупреждение в бота, бана нет;
-  • следующие WARN_GRACE_HOURS (24 ч) нарушения игнорируются — время всё исправить;
-  • нарушение позже 24 ч (но в пределах WARN_VALID_DAYS после предупреждения) — бан;
-  • если после предупреждения прошло больше WARN_VALID_DAYS — снова предупреждение.
-
-Бан = подписка помечается 'Banned' в БД + пользователь Remnawave отключается.
-
-Осторожно: IP-правило срабатывает ТОЛЬКО когда из Remnawave реально удаётся
-получить IP-адреса устройств (иначе пропускаем — чтобы не забанить оплатившего
-по недостатку данных). HWID-правило работает всегда, пока Remnawave доступна.
-"""
-
+# скан hwid/ip активных подписок через remnawave
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -54,11 +29,11 @@ except Exception:  # noqa: BLE001
     remnawave = None  # type: ignore
 
 MAX_PER_RUN = 400
-IP_ACTIVE_MINUTES = 10       # IP считается активным, если был виден за это время
-NODE_JOB_TIMEOUT = 60        # сколько ждать ответа ноды, сек
+IP_ACTIVE_MINUTES = 10  # ip считается активным, если был виден за это время
+NODE_JOB_TIMEOUT = 60  # сколько ждать ответа ноды, сек
 HWID_MULTIPLIER = 2  # бан, если HWID-устройств ≥ 2 × лимит тарифа
-WARN_GRACE_HOURS = 24   # после предупреждения нарушения игнорируются это время
-WARN_VALID_DAYS = 7     # предупреждение «действует» столько дней, потом — новое
+WARN_GRACE_HOURS = 24  # после предупреждения нарушения игнорируются это время
+WARN_VALID_DAYS = 7  # предупреждение «действует» столько дней, потом - новое
 
 
 def enabled() -> bool:
@@ -74,12 +49,11 @@ def _int(key: str, default: int, lo: int, hi: int) -> int:
 
 
 def limits() -> dict[str, int]:
-    """Пороги анти-абуза (настраиваются в панели → Цены → Защита)."""
     return {
-        "hwid_multiplier": _int("aa_hwid_multiplier", HWID_MULTIPLIER, 2, 10),   # HWID ≥ N × лимит
-        "ip_extra": _int("aa_ip_extra", 2, 1, 20),                             # IP ≥ лимит + N
-        "grace_hours": _int("aa_grace_hours", WARN_GRACE_HOURS, 1, 168),       # после предупреждения не считаем
-        "warn_days": _int("aa_warn_days", WARN_VALID_DAYS, 1, 60),             # предупреждение действует
+        "hwid_multiplier": _int("aa_hwid_multiplier", HWID_MULTIPLIER, 2, 10),  # hwid ≥ N × лимит
+        "ip_extra": _int("aa_ip_extra", 2, 1, 20),  # ip ≥ лимит + N
+        "grace_hours": _int("aa_grace_hours", WARN_GRACE_HOURS, 1, 168),  # после предупреждения не считаем
+        "warn_days": _int("aa_warn_days", WARN_VALID_DAYS, 1, 60),  # предупреждение действует
     }
 
 
@@ -93,11 +67,6 @@ def _client():
 
 
 def _rw_num_id_for(sub: dict[str, Any], client) -> Optional[int]:
-    """
-    ЧИСЛОВОЙ id пользователя Remnawave (3.x идентифицирует им HWID/disable).
-    В нашей БД rw_id — это uuid, поэтому резолвим пользователя по telegram_id
-    и берём числовое поле id.
-    """
     tg = db.fetchone("SELECT telegram_id FROM users WHERE id = ?", (sub.get("user_id"),))
     if not (tg and tg.get("telegram_id")):
         return None
@@ -146,11 +115,6 @@ def _parse_ts(value: Any):
 
 
 def collect_active_ips(client, log=print) -> Optional[dict[int, set[str]]]:
-    """
-    «Активные сессии» со всех подключённых нод: {числовой id пользователя Remnawave:
-    множество IP, активных за последние IP_ACTIVE_MINUTES}. None — данных нет
-    (тогда IP-правило пропускается, чтобы не банить вслепую).
-    """
     import time
     from datetime import datetime, timedelta, timezone
 
@@ -237,7 +201,6 @@ def _ban(sub: dict[str, Any], client, rw_id: Optional[int], reason: str,
 
 
 def _warn(sub: dict[str, Any], kind: str, count: int, limit: int, notify, log) -> None:
-    """Первое нарушение: отмечаем предупреждение и сообщаем пользователю."""
     db.execute("UPDATE subscriptions SET aa_warned_at = ? WHERE id = ?", (db.utcnow_iso(), sub["id"]))
     what = "устройств (HWID)" if kind == "hwid" else "IP-адресов"
     moderation.log(int(sub["user_id"]), "aa_warn", f"{count} {what} при лимите {limit}", sub_id=int(sub["id"]),
@@ -260,7 +223,6 @@ def _warn(sub: dict[str, Any], kind: str, count: int, limit: int, notify, log) -
 
 
 def _decide(sub: dict[str, Any]) -> str:
-    """'warn' | 'ignore' | 'ban' — что делать с нарушением с учётом предупреждения."""
     from datetime import datetime, timedelta, timezone
     warned = _parse_ts(sub.get("aa_warned_at")) if sub.get("aa_warned_at") else None
     if warned is None:
@@ -275,10 +237,6 @@ def _decide(sub: dict[str, Any]) -> str:
 
 
 def scan_once(log=print, notify=None) -> dict[str, Any]:
-    """
-    Один проход анти-абуза. Возвращает {checked, warned, banned}.
-    notify(telegram_id, kind, count, limit) — отправка предупреждения пользователю.
-    """
     if not enabled():
         return {"checked": 0, "banned": 0, "skipped": "disabled"}
     client = _client()
@@ -307,11 +265,11 @@ def scan_once(log=print, notify=None) -> dict[str, Any]:
         checked += 1
         hwid_count = len(devices)
         violation: Optional[tuple[str, int, str]] = None
-        # Правило 1 — HWID ≥ 2×лимит
+        # hwid сверх лимита
         if hwid_count >= mult * limit:
             violation = ("hwid", hwid_count, f"HWID {hwid_count} ≥ {mult * limit} (лимит {limit})")
         else:
-            # Правило 2 — активные IP ≥ лимит+2 («Активные сессии», если данные есть)
+            # активных ip сверх лимита (если есть данные сессий)
             ipc = len(active_ips.get(rw_id, ())) if active_ips is not None else None
             if ipc is not None and ipc >= limit + extra:
                 violation = ("ip", ipc, f"IP {ipc} ≥ {limit + extra} (лимит {limit})")
@@ -325,15 +283,11 @@ def scan_once(log=print, notify=None) -> dict[str, Any]:
         elif decision == "ban":
             _ban(sub, client, rw_id, reason + " — повторно после предупреждения", log)
             banned += 1
-        # 'ignore' — 24 часа после предупреждения нарушения не считаем
+        # игнор в период grace после предупреждения
     if banned or warned:
         log(f"[antiabuse] проверено {checked}, предупреждений {warned}, забанено {banned}")
     return {"checked": checked, "warned": warned, "banned": banned}
 
-
-# ─────────────────────────────────────────────────────────────
-# Пробный период: не больше N пробных на одно устройство (HWID)
-# ─────────────────────────────────────────────────────────────
 
 def trial_hwid_limits() -> tuple[bool, int]:
     on = db.get_setting("trial_hwid_enabled", "1") in ("1", "true", "True", "yes")
@@ -341,7 +295,6 @@ def trial_hwid_limits() -> tuple[bool, int]:
 
 
 def _paid_user_ids(user_ids: list[int]) -> set[int]:
-    """Кто из пользователей брал (или имеет) платную подписку — таких не считаем."""
     if not user_ids:
         return set()
     marks = ",".join("?" * len(user_ids))
@@ -381,11 +334,6 @@ def _ban_account_trial(uid: int, hwid: str, count: int, limit: int, log) -> None
 
 
 def scan_trial_hwids(log=print) -> dict[str, Any]:
-    """
-    Запоминает HWID устройств активных пробных подписок и банит аккаунты сверх лимита:
-    на одно устройство — не больше N пробных (аккаунты, бравшие платную подписку, не считаются).
-    Банятся самые новые аккаунты сверх лимита; разбаненных вручную повторно не трогаем.
-    """
     on, limit = trial_hwid_limits()
     if not on:
         return {"checked": 0, "banned": 0, "skipped": "disabled"}
@@ -414,8 +362,7 @@ def scan_trial_hwids(log=print) -> dict[str, Any]:
         rows = db.fetchall("SELECT user_id, seen_at FROM trial_hwids WHERE hwid = ?", (hwid,))
         uids = [int(r["user_id"]) for r in rows]
         paid = _paid_user_ids(uids)
-        # Порядок — кто раньше появился на этом устройстве (самые ранние «законные»),
-        # при равенстве — у кого раньше пробная, затем старший аккаунт
+        # оставляем самые ранние аккаунты на hwid; остальные сверх лимита баним
         order = []
         for r in rows:
             uid = int(r["user_id"])

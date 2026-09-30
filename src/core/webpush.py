@@ -1,19 +1,3 @@
-"""
-Push-уведомления в браузер панели (Web Push: RFC 8030 + шифрование RFC 8291
-aes128gcm + подпись сервера VAPID RFC 8292). Только стандартная библиотека и
-cryptography (уже в зависимостях).
-
-• Ключи VAPID создаются при первом использовании; закрытый хранится в базе
-  зашифрованным (monitoring.encrypt).
-• Отправлять можно ТОЛЬКО на адреса известных push-сервисов браузеров
-  (Google/Firefox/Apple/Microsoft) — сервер не станет слать запросы куда угодно
-  по адресу из подписки (защита от SSRF).
-• Кто что получает:
-    - новые обращения в поддержку — все (владелец, кураторы, операторы);
-    - передано админу — владелец и кураторы;
-    - покупки, инциденты, выводы — только владелец.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -39,12 +23,12 @@ try:
 except ImportError:  # pragma: no cover
     import database as db  # type: ignore
 
-# Хосты push-сервисов браузеров (точное совпадение или поддомен)
+# push hosts (exact или subdomain)
 ALLOWED_PUSH_HOSTS = (
-    "fcm.googleapis.com", "android.googleapis.com",          # Chrome, Edge (Android), Opera, Яндекс
-    "updates.push.services.mozilla.com",                     # Firefox
-    "web.push.apple.com",                                    # Safari / iOS
-    "notify.windows.com",                                    # Edge (Windows): *.notify.windows.com
+    "fcm.googleapis.com", "android.googleapis.com",          # chrome/edge/opera/yandex
+    "updates.push.services.mozilla.com",                     # firefox
+    "web.push.apple.com",                                    # safari
+    "notify.windows.com",                                    # edge win
 )
 MAX_SUBS_PER_ACTOR = 10
 TTL = 12 * 3600
@@ -66,10 +50,6 @@ def _crypto():
         import monitoring  # type: ignore
     return monitoring
 
-
-# ─────────────────────────────────────────────────────────────
-# VAPID
-# ─────────────────────────────────────────────────────────────
 
 _key_lock = threading.Lock()
 
@@ -116,10 +96,6 @@ def vapid_header(endpoint: str, key: Optional[ec.EllipticCurvePrivateKey] = None
     return f"vapid t={jwt}, k={_b64u(pub)}"
 
 
-# ─────────────────────────────────────────────────────────────
-# Шифрование (RFC 8291, aes128gcm)
-# ─────────────────────────────────────────────────────────────
-
 def _hkdf(salt: bytes, ikm: bytes, info: bytes, length: int) -> bytes:
     return HKDF(algorithm=hashes.SHA256(), length=length, salt=salt, info=info).derive(ikm)
 
@@ -141,13 +117,9 @@ def encrypt(plaintext: bytes, ua_public_b64: str, auth_b64: str, *, salt: Option
     rs = 4096
     if len(plaintext) > rs - 17 - 86:
         raise ValueError("payload too large")
-    ct = AESGCM(cek).encrypt(nonce, plaintext + b"\x02", None)   # один (последний) блок: разделитель 0x02
+    ct = AESGCM(cek).encrypt(nonce, plaintext + b"\x02", None)   # last record delimiter 0x02
     return salt + struct.pack("!I", rs) + bytes([len(as_pub)]) + as_pub + ct
 
-
-# ─────────────────────────────────────────────────────────────
-# Подписки
-# ─────────────────────────────────────────────────────────────
 
 class PushError(Exception):
     def __init__(self, message: str, status: int = 400) -> None:
@@ -183,8 +155,7 @@ def subscribe(actor: str, endpoint: str, p256dh: str, auth: str) -> None:
     except ValueError:
         raise PushError("Неверные ключи подписки")
     now = datetime.now(timezone.utc).isoformat()
-    # Подписку, привязанную к другому человеку, перехватить нельзя: браузер должен
-    # сначала отписаться и получить новый адрес (панель делает это сама).
+    # чужую подписку не перехватываем: браузер сам возьмёт новый endpoint
     cur = db.fetchone("SELECT actor FROM push_subs WHERE endpoint = ?", (endpoint,))
     if cur and cur["actor"] != actor:
         raise PushError("Это устройство подписано другим аккаунтом", 409)
@@ -192,7 +163,7 @@ def subscribe(actor: str, endpoint: str, p256dh: str, auth: str) -> None:
                "ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, "
                "created_at = excluded.created_at WHERE push_subs.actor = excluded.actor",
                (actor, endpoint, p256dh.strip(), auth.strip(), now))
-    # не больше MAX_SUBS_PER_ACTOR браузеров на человека — старые убираем
+    # лимит подписок на actor, старые режем
     rows = db.fetchall("SELECT id FROM push_subs WHERE actor = ? ORDER BY id DESC", (actor,))
     for r in rows[MAX_SUBS_PER_ACTOR:]:
         db.execute("DELETE FROM push_subs WHERE id = ?", (r["id"],))
@@ -227,7 +198,7 @@ def _send_one(sub: dict[str, Any], payload: dict[str, Any], urgency: str = "norm
         with _opener.open(req, timeout=10) as r:
             ok = 200 <= r.status < 300
     except urllib.error.HTTPError as e:
-        if e.code in (404, 410):          # подписка больше не действует
+        if e.code in (404, 410):          # 404/410: подписки нет
             db.execute("DELETE FROM push_subs WHERE id = ?", (sub["id"],))
         return False
     except (urllib.error.URLError, OSError, ValueError):

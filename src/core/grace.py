@@ -1,30 +1,4 @@
-"""
-Grace-доступ (по мотивам Bedolaga): когда подписка заканчивается (или кончается
-трафик), у человека продолжает работать резервный сквад — обычно один
-специальный сервер — с небольшим лимитом трафика (по умолчанию 1 ГБ).
-Так он не остаётся совсем без связи и может спокойно продлить подписку.
-
-Когда выдаётся:
-  • срок: за GRACE_BEFORE (5 мин) до конца подписки — до её удаления
-    (DELETE_AFTER_DAYS = 7 дней после окончания);
-  • трафик: Remnawave пометила пользователя LIMITED — до конца подписки или до
-    ежемесячного сброса трафика (что раньше).
-  В обоих случаях: сквады → резервные, счётчик трафика обнуляется, лимит = квота.
-
-Как устроено:
-  • Подписка в БД не меняется (срок, статус, оплаты — как были). Grace — только
-    «накладка» в Remnawave.
-  • grace_cycle — за что выдан: expires_at (срок) или «t|expires_at|время выдачи»
-    (трафик); выдаётся один раз за цикл. grace_until — до какого момента
-    действует (NULL — не действует).
-  • Продлили / сбросили трафик — reconcile_user() обнуляет счётчик трафика и
-    ставит обычные сквады, лимит и срок. Фоновая сверка подчищает всё, что не успели.
-  • Не выдаётся: забаненным, подпискам с запретом продления (они удаляются
-    сразу), пробным (если не включено), при другой живой подписке.
-
-Проходы запускает фоновый цикл бота (reminders.start_background).
-"""
-
+# grace после окончания/лимита трафика (резервный сквад)
 from __future__ import annotations
 
 import json
@@ -42,9 +16,7 @@ except ImportError:  # pragma: no cover
 
 GB = 1024 ** 3
 MAX_TRAFFIC_GB = 1000
-# Сколько подписок обрабатываем за проход (остальные — в следующий).
 BATCH = 200
-# За сколько до конца подписки переключаем на grace
 GRACE_BEFORE = timedelta(minutes=5)
 
 _lock = threading.Lock()
@@ -60,10 +32,6 @@ def _parse(v: Any) -> Optional[datetime]:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
-
-# ─────────────────────────────────────────────────────────────
-# Настройки
-# ─────────────────────────────────────────────────────────────
 
 def settings() -> dict[str, Any]:
     squads = db.loads(db.get_setting("grace_squads", "[]"), []) or []
@@ -92,10 +60,6 @@ def save_settings(enabled: bool, squads: list[str], traffic_gb: int, trial: bool
     return settings()
 
 
-# ─────────────────────────────────────────────────────────────
-# Remnawave
-# ─────────────────────────────────────────────────────────────
-
 def _client_and_user(user: dict[str, Any]) -> tuple[Any, Optional[dict[str, Any]]]:
     import remnawave  # type: ignore
     client = remnawave.get_client()
@@ -108,7 +72,6 @@ def _rw_uid(rw: dict[str, Any]) -> Any:
 
 
 def _cycle_exp(cycle: Any) -> str:
-    """expires_at, для которого выдан grace (из grace_cycle любого вида)."""
     c = str(cycle or "")
     return c.split("|")[1] if c.startswith("t|") and c.count("|") >= 2 else c
 
@@ -118,17 +81,12 @@ def is_traffic_cycle(cycle: Any) -> bool:
 
 
 def _grace_valid(sub: dict[str, Any], now: datetime) -> bool:
-    """Grace действует: не истёк, подписку не продлили (срок тот же), не вернули и не забанили."""
     until = _parse(sub.get("grace_until"))
     return bool(until and until > now and sub.get("status") in ("Active", "Expired")
                 and sub.get("expires_at") and _cycle_exp(sub.get("grace_cycle")) == str(sub.get("expires_at")))
 
 
 def _live_sub(user_id: int, exclude: Optional[set[int]] = None, skip_grace: bool = True) -> Optional[dict[str, Any]]:
-    """
-    Действующая подписка пользователя (платная — в приоритете). Подписки на
-    действующем grace не считаются (skip_grace): доступ по ним уже резервный.
-    """
     now = _now()
     rows = db.fetchall(
         "SELECT * FROM subscriptions WHERE user_id = ? AND status = 'Active' "
@@ -151,10 +109,6 @@ def _other_live(sub: dict[str, Any]) -> bool:
 
 
 def mask_rw(user_id: int, rw: Any) -> Any:
-    """
-    Пока действует grace, показываем аккаунт Remnawave таким, каким он был до него
-    (статус, срок, трафик, сквады): ни в панели, ни в приложении grace не виден.
-    """
     if not isinstance(rw, dict):
         return rw
     now = _now()
@@ -170,7 +124,7 @@ def mask_rw(user_id: int, rw: Any) -> Any:
                          "trafficLimitStrategy": "traffic_limit_strategy"}.get(k, "_"), None)
         exp = _parse(sub.get("expires_at"))
         if snap.get("status") in ("ACTIVE", None) and exp and exp <= now:
-            out["status"] = "EXPIRED"  # подписка закончилась — так её и показываем
+            out["status"] = "EXPIRED"
         if snap.get("usedTrafficBytes") is not None:
             out["usedTrafficBytes"] = snap["usedTrafficBytes"]
             out.pop("used_traffic_bytes", None)
@@ -181,16 +135,6 @@ def mask_rw(user_id: int, rw: Any) -> Any:
 
 
 def reconcile_user(user_id: int, log: Callable[[str], None] = print, end_traffic: bool = False) -> bool:
-    """
-    Привести Remnawave пользователя в порядок после grace и снять устаревшие отметки:
-      • есть действующая подписка — счётчик трафика обнуляется, её сквады,
-        лимит трафика, срок, ACTIVE;
-      • end_traffic — трафик сбросили (оплата/админ): grace «по трафику» снимается;
-      • забанен / подписки возвращены или заблокированы — аккаунт выключается
-        (grace мог включить его обратно, пока шёл возврат или бан);
-      • подписка всё ещё закончилась, grace просто истёк — ничего не трогаем.
-    True — если всё сделано (или делать нечего), False — Remnawave не ответила.
-    """
     now = _now()
     subs = db.fetchall("SELECT * FROM subscriptions WHERE user_id = ?", (int(user_id),))
     flagged = [x for x in subs if x.get("grace_until")]
@@ -219,12 +163,12 @@ def reconcile_user(user_id: int, log: Callable[[str], None] = print, end_traffic
                         patch["expire_at"] = exp
                     if squads:
                         patch["active_internal_squads"] = squads
-                    # Лимит — с нуля: на grace счётчик ежемесячно не сбрасывался
+                    # обнулить счётчик, чтобы квота grace шла с нуля
                     client.reset_user_traffic(_rw_uid(rw))
                     client.update_user(**patch)
                     db.execute("UPDATE subscriptions SET traffic_used = 0 WHERE id = ?", (int(live["id"]),))
                 elif rw:
-                    # Возврат, чарджбек, бан: grace не должен держать аккаунт включённым
+                    # возврат/чарджбек/бан: отключить аккаунт
                     client.disable_user(_rw_uid(rw))
             except Exception as exc:  # noqa: BLE001
                 log(f"[grace] не удалось привести в порядок пользователя {user_id}: {type(exc).__name__}: {exc}")
@@ -239,13 +183,11 @@ def reconcile_user(user_id: int, log: Callable[[str], None] = print, end_traffic
 
 
 def end(sub_id: int, log: Callable[[str], None] = print) -> bool:
-    """Подписку продлили (или она ушла): вернуть обычный доступ пользователю этой подписки."""
     sub = db.fetchone("SELECT user_id FROM subscriptions WHERE id = ?", (int(sub_id),))
     return reconcile_user(int(sub["user_id"]), log) if sub else True
 
 
 def end_for_user(user_id: int, log: Callable[[str], None] = print, traffic: bool = False) -> None:
-    """После продления (или сброса трафика — traffic=True) из панели/оплаты."""
     try:
         if db.fetchone("SELECT id FROM subscriptions WHERE user_id = ? AND grace_until IS NOT NULL LIMIT 1", (int(user_id),)):
             reconcile_user(int(user_id), log, end_traffic=traffic)
@@ -254,26 +196,22 @@ def end_for_user(user_id: int, log: Callable[[str], None] = print, traffic: bool
 
 
 def active_for_user(user_id: int) -> bool:
-    """Сейчас у пользователя действует grace (в Remnawave — резервный доступ)."""
     now = _now()
     return any(_grace_valid(x, now) for x in db.fetchall(
         "SELECT * FROM subscriptions WHERE user_id = ? AND grace_until IS NOT NULL", (int(user_id),)))
 
 
 def end_traffic_all(log: Callable[[str], None] = print) -> None:
-    """Массовый сброс трафика: снять grace «по трафику» у всех."""
     for r in db.fetchall("SELECT DISTINCT user_id FROM subscriptions WHERE grace_until IS NOT NULL AND grace_cycle LIKE 't|%'"):
         end_for_user(int(r["user_id"]), log, traffic=True)
 
 
 def _next_month(now: datetime) -> datetime:
-    """Начало следующего месяца (UTC) — ежемесячный сброс трафика в Remnawave."""
     y, m = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
     return datetime(y, m, 1, 0, 5, tzinfo=timezone.utc)
 
 
 def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None], traffic: bool = False) -> bool:
-    """Выдать grace: по сроку (traffic=False) или по закончившемуся трафику."""
     exp_raw = str(sub["expires_at"])
     exp = _parse(exp_raw)
     if not exp:
@@ -281,19 +219,18 @@ def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None],
     now = _now()
     if traffic:
         until = min(exp, _next_month(now))
-        cycle = f"t|{exp_raw}|{fulfillment.iso(now)}"  # каждый раз новый цикл
+        cycle = f"t|{exp_raw}|{fulfillment.iso(now)}"
         rw_expire = exp
     else:
         until = exp + timedelta(days=cfg["days"])
         cycle = exp_raw
         rw_expire = until
     if until <= now + timedelta(minutes=10):
-        return False  # считанные минуты — смысла нет
-    # Уже на grace (по трафику, а теперь кончается срок): снимок «как было» оставляем прежний
+        return False  # too little time left
+    # оставить прежний снимок, если уже в grace
     prev_valid = _grace_valid(sub, now)
     prev_cycle, prev_until = sub.get("grace_cycle"), sub.get("grace_until")
-    # Сначала «занимаем» цикл в БД (атомарно, по неизменному expires_at): второй
-    # процесс или оплата, успевшая продлить подписку, не дадут выдать grace дважды.
+    # сначала claim цикла в бд (без гонок)
     cur = db.execute(
         "UPDATE subscriptions SET grace_cycle = ?, grace_until = ? WHERE id = ? AND expires_at = ? "
         "AND status IN ('Active', 'Expired') AND (grace_cycle IS NULL OR grace_cycle != ?) "
@@ -308,7 +245,7 @@ def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None],
         if not rw:
             raise RuntimeError("пользователь не найден в Remnawave")
         if not (prev_valid and sub.get("grace_snapshot")):
-            # Снимок «как было» — панель и приложение показывают его, grace снаружи не виден
+            # снимок для ui (grace остаётся невидимым)
             ut = rw.get("userTraffic") if isinstance(rw.get("userTraffic"), dict) else {}
             snap = {
                 "status": rw.get("status"),
@@ -322,8 +259,7 @@ def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None],
                        (json.dumps(snap, ensure_ascii=False, default=str), int(sub["id"]), cycle))
         gb = cfg["traffic_gb"]
         if gb:
-            # Квота — именно столько, сколько указано: счётчик обнуляем (иначе после
-            # массового сброса трафика у человека оказалось бы «потрачено + квота»)
+            # обнулить использованный трафик, чтобы квота была точной
             client.reset_user_traffic(_rw_uid(rw))
         client.update_user(**{
             **provisioning.rw_ref(rw),
@@ -334,14 +270,12 @@ def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None],
             "traffic_limit_strategy": "NO_RESET",
         })
     except Exception as exc:  # noqa: BLE001
-        # Не вышло — возвращаем прежнюю отметку, попробуем в следующий проход
+        # откатить claim; повтор в следующем проходе
         db.execute("UPDATE subscriptions SET grace_cycle = ?, grace_until = ? WHERE id = ? AND grace_cycle = ?",
                    (prev_cycle, prev_until, int(sub["id"]), cycle))
         log(f"[grace] не удалось выдать grace подписке #{sub['id']}: {type(exc).__name__}: {exc}")
         return False
-    # Пока мы ходили в Remnawave, подписку могли продлить, вернуть деньги или забанить.
-    # Проверяем заново и, если так, сразу возвращаем правильное состояние — не полагаясь
-    # на отметку grace_until (её могла уже снять оплата, до нашей записи в Remnawave).
+    # перепроверить: продление/возврат/бан могли обогнать вызов remnawave
     fresh = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (int(sub["id"]),)) or {}
     fresh_user = db.fetchone("SELECT is_banned FROM users WHERE id = ?", (int(sub["user_id"]),)) or {}
     if (str(fresh.get("expires_at")) != exp_raw or fresh.get("status") not in ("Active", "Expired")
@@ -357,7 +291,6 @@ def _apply(sub: dict[str, Any], cfg: dict[str, Any], log: Callable[[str], None],
 
 
 def _stale_users(now: datetime) -> list[int]:
-    """Пользователи, у которых grace пора снять или поправить."""
     rows = db.fetchall(
         "SELECT s.*, COALESCE(u.is_banned, 0) AS u_banned FROM subscriptions s JOIN users u ON u.id = s.user_id "
         "WHERE s.grace_until IS NOT NULL ORDER BY s.id")
@@ -374,13 +307,12 @@ def _stale_users(now: datetime) -> list[int]:
 
 
 def _limited_user_ids(log: Callable[[str], None]) -> set[int]:
-    """Пользователи BlinVPN, у которых в Remnawave закончился трафик (статус LIMITED)."""
     import remnawave  # type: ignore
     client = remnawave.get_client()
     tg_ids: set[int] = set()
     desc_ids: set[int] = set()
     start, size = 0, 250
-    for _ in range(400):  # до 100 000 пользователей
+    for _ in range(400):
         page = client.get_users(start=start, size=size)
         if isinstance(page, dict) and "response" in page:
             page = page["response"]
@@ -411,12 +343,11 @@ def _limited_user_ids(log: Callable[[str], None]) -> set[int]:
 
 
 def run_once(log: Callable[[str], None] = print) -> int:
-    """Один проход: снять grace у продлённых, выдать новым. Возвращает число выданных."""
     if not _lock.acquire(blocking=False):
         return 0
     try:
         now = _now()
-        # 1) Сверка: продлили / удалили / вернули деньги / забанили / grace истёк
+        # подтянуть устаревший grace
         for uid in _stale_users(now):
             reconcile_user(uid, log)
 
@@ -428,13 +359,13 @@ def run_once(log: Callable[[str], None] = print) -> int:
         done = 0
 
         def _one_grace_elsewhere(sub: dict[str, Any]) -> bool:
-            # У одного пользователя — один grace (аккаунт Remnawave один)
+            # один grace на пользователя
             return bool(db.fetchone(
                 "SELECT id FROM subscriptions WHERE user_id = ? AND id != ? AND grace_until > ? "
                 "AND status IN ('Active', 'Expired') LIMIT 1",
                 (int(sub["user_id"]), int(sub["id"]), fulfillment.iso(now))))
 
-        # 2) Срок: за 5 минут до конца и до удаления подписки
+        # grace по сроку
         lo = fulfillment.iso(now - timedelta(days=cfg["days"]))
         rows = db.fetchall(
             "SELECT s.* FROM subscriptions s JOIN users u ON u.id = s.user_id "
@@ -451,7 +382,7 @@ def run_once(log: Callable[[str], None] = print) -> int:
             if _apply(sub, cfg, log):
                 done += 1
 
-        # 3) Трафик: закончился у действующей подписки
+        # grace по лимиту трафика
         try:
             limited = _limited_user_ids(log)
         except Exception as exc:  # noqa: BLE001

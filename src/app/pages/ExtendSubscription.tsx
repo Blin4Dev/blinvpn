@@ -7,7 +7,7 @@ import { formatDateRu } from "../utils/date";
 
 type SubResponse = { key?: { expiry_date?: string | null; no_renew?: boolean | null } | null };
 
-/** Продление: обычная подписка — на общую страницу оплаты (устройства + способ оплаты). */
+// продление: платная подписка идёт на общую страницу оплаты
 export default function ExtendSubscription() {
   const navigate = useNavigate();
   const goBack = useSmartBack("/subscription");

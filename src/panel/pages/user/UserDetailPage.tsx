@@ -48,7 +48,7 @@ export const STATUS_META: Record<string, { label: string; cls: string }> = {
 
 const daysLabel = (d: number, has: boolean) => (!has ? 'нет подписки' : d < 1 ? 'меньше дня' : `${Math.floor(d)} дн.`);
 
-/** Объединение аккаунтов: было / станет — таблицей, без сплошного текста. */
+// merge: было / станет таблицей
 const MergeTable: React.FC<{ m: any }> = ({ m }) => {
   const any = Boolean(m.keep?.has_sub || m.drop?.has_sub);
   const cell: React.CSSProperties = { padding: '10px 12px', borderBottom: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' };
@@ -82,7 +82,7 @@ const MergeTable: React.FC<{ m: any }> = ({ m }) => {
 export const UserDetailPage: React.FC<{
   userId: number; onBack: () => void; onToast: (t: string, m: string, ty?: ToastType) => void; onOpenUser: (id: number) => void;
 }> = ({ userId, onBack, onToast, onOpenUser }) => {
-  const owner = isOwner(useMe());  // возвраты платежей — только владелец
+  const owner = isOwner(useMe());  // возвраты только owner
   const [detail, setDetail] = useState<UserDetailData | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [rw, setRw] = useState<RwInfo | null>(null);
@@ -96,7 +96,7 @@ export const UserDetailPage: React.FC<{
   const [emailDraft, setEmailDraft] = useState('');
   const [promoDraft, setPromoDraft] = useState('');
   const [special, setSpecial] = useState<'' | 'exchange' | 'transfer'>('');
-  // Привязка email/Telegram, который уже есть у другого аккаунта: предупреждение об объединении
+  // привязка email/tg, уже занятых другим аккаунтом → предупреждение о merge
   const [mergeAsk, setMergeAsk] = useState<{ act: string; value: any; message: string; merge: any } | null>(null);
 
   const load = async () => {
@@ -148,7 +148,7 @@ export const UserDetailPage: React.FC<{
   const uname = detail.username ? `@${detail.username}` : (detail.telegram_id ? `id${detail.telegram_id}` : `#${detail.id}`);
   const stMeta = detail.key_blocked ? STATUS_META.blocked : detail.is_banned ? STATUS_META.banned : (STATUS_META[detail.status] || STATUS_META.never);
   const sub = detail.subscription;
-  // Ссылка на подписку: из БД, а если там пусто — из Remnawave
+  // ссылка на подписку: из бд, иначе из remnawave
   const subLink: string = (sub?.key_config && /^https?:\/\//.test(String(sub.key_config)) ? String(sub.key_config) : '') || rw?.subscription_url || '';
 
   return (

@@ -14,7 +14,7 @@ type SMsg = {
   mine?: boolean; edited?: boolean; deleted?: boolean;
 };
 const EDIT_WINDOW_MS = 48 * 3600 * 1000;
-/** Своё сообщение, которое ещё можно изменить/удалить (48 часов). */
+// своё сообщение ещё можно править/удалить (48ч)
 const canEditMsg = (m: SMsg) => !!m.mine && !m.deleted && !m.kind && !m.internal && m.sender === 'admin'
   && Date.now() - new Date(m.created_at).getTime() < EDIT_WINDOW_MS;
 type Ticket = {
@@ -40,7 +40,7 @@ const STATUS_RU: Record<string, string> = {
   never: 'Без подписки', banned: 'Заблокирован', blocked: 'Ключ заблокирован',
 };
 
-/** «только что», «5 мин назад», «3 ч назад», иначе дата. */
+// «только что» / «n мин назад» / дата
 const ago = (iso: string) => {
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
   if (s < 60) return 'только что';
@@ -107,7 +107,7 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
   onEdit?: (m: SMsg) => void; onDelete?: (m: SMsg) => void }> =
   ({ m, onImage, onMedia, onReply, onQuote, flash, onEdit, onDelete }) => {
   if (m.sender === 'system' || (m.kind === 'close_prompt' && m.panel_text)) {
-    // Служебные события — одной серой строкой-разделителем, без времени
+    // служебные события одной серой строкой, без времени
     const text = m.panel_text ?? m.text;
     if (!text) return null;
     return (
@@ -148,7 +148,7 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
           )}
           {m.files.map((f) => <Attachment key={f.id} f={f} mine={mine} onImage={onImage} onMedia={onMedia} />)}
           {m.text && <div style={{ fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: m.files.length ? '0 6px 2px' : 0 }}>{m.text}</div>}
-          {/* время — внутри сообщения, с секундами */}
+          {/* время внутри, с секундами */}
           <div style={{ alignSelf: 'flex-end', fontSize: 11, opacity: 0.55, marginTop: -2, padding: m.files.length && !m.text ? '0 6px 2px' : 0, whiteSpace: 'nowrap' }}>
             {mine && m.author ? `${m.author} · ` : ''}{m.edited ? 'изменено · ' : ''}{hms(m.created_at)}
           </div>
@@ -163,10 +163,10 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
   );
 };
 
-// ── Правая колонка: всё о пользователе ─────────────────────
+// правая колонка: всё о пользователе
 type EditKey = 'SET_TELEGRAM_ID' | 'SET_EMAIL' | 'SET_DEVICES' | 'SET_PARTNER_RATE';
 
-/** Строка с карандашом: значение меняется прямо в чате (то же действие, что в карточке пользователя). */
+// строка с карандашом (то же действие, что в карточке пользователя)
 const EditRow: React.FC<{ k: string; v: React.ReactNode; raw: string; act: EditKey; can: boolean; type?: string;
   onSave: (act: EditKey, value: string) => Promise<boolean> }> = ({ k, v, raw, act, can, type = 'text', onSave }) => {
   const [edit, setEdit] = useState(false);
@@ -205,7 +205,7 @@ const UserInfo: React.FC<{ userId: number; onOpenUser: (id: number) => void; rel
     return () => { alive = false; };
   }, [userId]);
   useEffect(() => { setD(null); setPays(null); return load(); }, [load, reloadKey]);
-  // Оператор меняет только лимит устройств (Telegram, почта и реф. ставка — деньги/объединение аккаунтов — куратору и админу)
+  // оператор правит только лимит устройств (tg/почта/реф. ставка: curator/admin)
   const allow = (act: EditKey) => canManage && (role !== 'operator' || act === 'SET_DEVICES');
   const save = async (act: EditKey, value: string, confirm = false): Promise<boolean> => {
     try {
@@ -304,14 +304,12 @@ const UserInfo: React.FC<{ userId: number; onOpenUser: (id: number) => void; rel
   );
 };
 
-// ── Страница ───────────────────────────────────────────────
 export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: number | null) => void; onOpenUser: (id: number) => void; onToast: (t: string, m: string, ty: ToastType) => void }> =
   ({ chatId, setChatId, onOpenUser, onToast }) => {
-    // 0 — «Чат сотрудников» (у обращений id ≥ 1)
+    // 0 = чат сотрудников (у обращений id >= 1)
     const team = chatId === TEAM_CHAT_ID;
     const sid = team ? null : chatId;
-    // Высота раздела = видимая область экрана (на телефоне — над клавиатурой),
-    // страница целиком не прокручивается: листаются только список и переписка.
+    // высота = видимая область (на телефоне над клавиатурой); скроллятся только список и переписка
     const gridRef = useRef<HTMLDivElement>(null);
     const [vh, setVh] = useState(0);
     const [gridTop, setGridTop] = useState(77);
@@ -374,7 +372,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
       return () => { clearInterval(t); window.removeEventListener('support-unread', load); };
     }, []);
 
-    // Открытый чат: загрузка, отметка «прочитано», опрос новых сообщений
+    // открытый чат: загрузка, read, опрос
     useEffect(() => {
       setData(null); setText(''); setPending([]); setReply(null); setEditing(null); lastId.current = 0; stick.current = true;
       if (sid == null) return;
@@ -392,7 +390,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
           const cur0 = dataRef.current;
           const t0 = cur0?.chat.ticket, t1 = d.chat.ticket;
           if (cur0 && (t0?.status !== t1?.status || t0?.number !== t1?.number || !!t0?.close_prompt !== !!t1?.close_prompt)) {
-            // обращение закрылось/открылось или изменился вопрос о закрытии — перечитываем всё
+            // статус/вопрос о закрытии изменился → полная перечитка
             reloadChat();
             return;
           }
@@ -401,7 +399,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
             const have = new Set(cur.messages.map((m) => m.id));
             const add = d.messages.filter((m) => !have.has(m.id));
             if (d.messages.length) lastId.current = Math.max(lastId.current, ...d.messages.map((m) => m.id));
-            // изменённые/удалённые сообщения (своё правили в другой вкладке и т.п.)
+            // правки/удаления (в т.ч. из другой вкладки)
             const ch = new Map((d.changes || []).map((m) => [m.id, m]));
             let msgs = ch.size ? cur.messages.map((m) => ch.get(m.id) || m) : cur.messages;
             if (add.length) msgs = [...msgs, ...add].sort((a, b) => a.id - b.id);
@@ -409,7 +407,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
           });
           if (d.messages.some((m) => m.sender === 'user')) apiFetch(`/panel/support/chats/${sid}/read`, { method: 'POST' }).catch(() => {});
         }).catch((e) => {
-          // обращение забрали / передали — этому сотруднику оно больше не видно
+          // забрали/передали: этому сотруднику чат больше не виден
           if (alive && /Чат не найден/.test(String(e?.message))) {
             onToast('Обращение', 'Обращение больше недоступно — его взял другой сотрудник или оно передано', 'info' as ToastType);
             setChatId(null); loadChats(); pingUnread();
@@ -523,7 +521,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
       try {
         const m: SMsg = await apiFetch(`/panel/support/chats/${sid}/messages`, { method: 'POST', body: JSON.stringify({ text: text.trim(), files: ready.map((p) => p.id), reply_to: reply?.id || null }) });
         stick.current = true;
-        // lastId не двигаем: сообщение пользователя, пришедшее перед нашим, подтянет опрос
+        // lastId не двигаем: сообщение юзера перед нашим подтянет опрос
         setData((cur) => (cur ? { ...cur, messages: [...cur.messages.filter((x) => x.id !== m.id), m].sort((a, b) => a.id - b.id) } : cur));
         setText(''); setReply(null); pending.forEach((p) => p.preview && URL.revokeObjectURL(p.preview)); setPending((p) => p.filter((x) => x.error));
         loadChats();

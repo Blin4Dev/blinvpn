@@ -29,7 +29,7 @@ const genPassword = () => {
   return Array.from(buf, (x) => a[x % a.length]).join('');
 };
 
-// ── Создание / изменение сотрудника (только владелец) ────────
+// создание / правка сотрудника (owner)
 const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved: (s: Staff, pw?: string) => void; onToast: Toast }> = ({ staff, onClose, onSaved, onToast }) => {
   const isNew = !staff;
   const [username, setUsername] = useState(staff?.username || '');
@@ -91,7 +91,7 @@ const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved:
   );
 };
 
-// ── День графика ─────────────────────────────────────────────
+// день графика
 const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staffId, day, cur, onClose, onSaved, onToast }) => {
   const [working, setWorking] = useState(!!cur);
   const [iv, setIv] = useState<Interval[]>(cur?.intervals?.length ? cur.intervals : [['10:00', '19:00']]);
@@ -119,7 +119,7 @@ const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; onClose: () 
   );
 };
 
-// ── Заполнить период ─────────────────────────────────────────
+// заполнить период
 const BulkModal: React.FC<{ staffId: number; today: string; onClose: () => void; onSaved: (n: number) => void; onToast: Toast }> = ({ staffId, today, onClose, onSaved, onToast }) => {
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(addDays(today, 364));
@@ -164,7 +164,7 @@ const BulkModal: React.FC<{ staffId: number; today: string; onClose: () => void;
   );
 };
 
-// ── Штрафы (владелец и куратор) и премии (только владелец) ───
+// штрафы (owner/curator) и премии (owner)
 const FineModal: React.FC<{ staff: Staff; bonus?: boolean; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staff, bonus, onClose, onSaved, onToast }) => {
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
@@ -226,7 +226,6 @@ const FinesList: React.FC<{ fines: Fine[]; canCancel: (f: Fine) => boolean; onCa
   )
 );
 
-// ── Карточка сотрудника ──────────────────────────────────────
 const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myActor: string; onBack: () => void; onChanged: () => void; onToast: Toast }> =
   ({ staff, today, owner, myActor, onBack, onChanged, onToast }) => {
     const [tab, setTab] = useState<'schedule' | 'money' | 'profile'>('schedule');
@@ -384,7 +383,7 @@ const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myAct
     );
   };
 
-// ── Журнал действий (только владелец) ────────────────────────
+// журнал (owner)
 const ACTION_RU: Record<string, string> = { login_ok: 'Вход в панель', login_fail: 'Неверный пароль', '2fa_fail': 'Неверный код входа', login_disabled: 'Попытка входа (доступ отключён)' };
 const Journal: React.FC<{ staff: Staff[] }> = ({ staff }) => {
   const [actor, setActor] = useState('');
@@ -417,7 +416,6 @@ const Journal: React.FC<{ staff: Staff[] }> = ({ staff }) => {
   );
 };
 
-// ── Страница ─────────────────────────────────────────────────
 export const StaffPage: React.FC<{ onToast: Toast }> = ({ onToast }) => {
   const me = useMe();
   const owner = isOwner(me);

@@ -1,11 +1,3 @@
-"""
-Общий чат сотрудников (панель → Поддержка → «Чат сотрудников»).
-
-Один общий канал для владельца, кураторов и операторов. Только текст (без
-файлов), до 4000 символов. Пользователи сервиса этот чат не видят.
-Удалить сообщение может автор, а владелец — любое.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -29,7 +21,7 @@ class TeamChatError(Exception):
 
 def _clean(text: Any) -> str:
     s = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    # управляющие символы (кроме перевода строки и табуляции) — вон
+    # управляющие символы вон (кроме \n\t)
     s = "".join(ch for ch in s if ch in "\n\t" or ord(ch) >= 32)
     return s.strip()
 
@@ -65,8 +57,7 @@ def post(actor: str, name: str, role: str, text: Any, reply_to: Optional[int] = 
         (actor, (name or "")[:60], role[:16], t, rid, db.utcnow_iso()),
     )
     mid = int(cur.lastrowid)
-    # Своё сообщение прочитано, но чужие, пришедшие до него, остаются непрочитанными:
-    # сдвигаем отметку, только если всё до него уже было прочитано.
+    # cursor двигаем только если всё до своего сообщения уже прочитано
     if not db.fetchone("SELECT 1 FROM team_messages WHERE id > ? AND id < ? AND actor != ? AND deleted_at IS NULL LIMIT 1",
                        (last_read(actor), mid, actor)):
         mark_read(actor, mid)

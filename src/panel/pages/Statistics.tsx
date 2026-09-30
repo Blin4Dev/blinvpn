@@ -18,7 +18,7 @@ type Range = { from: string; to: string };
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const ruDate = (s: string) => new Date(`${s}T00:00:00`).toLocaleDateString('ru-RU');
 
-/** Выбор периода: заготовки + свои даты «с — по». */
+// период: пресеты + свои даты
 const PeriodPicker: React.FC<{ period: StatPeriod; range: Range | null; onPreset: (p: StatPeriod) => void; onRange: (r: Range) => void }> = ({ period, range, onPreset, onRange }) => {
   const [open, setOpen] = useState(false);
   const today = ymd(new Date());

@@ -24,7 +24,7 @@ const plural = (n: number, a: string, b: string, c: string) => {
 };
 const hostsWord = (n: number) => `${n} ${plural(n, 'сервер', 'сервера', 'серверов')}`;
 
-/** Панель → «Балансировщик»: список строк подписки. Нажали на строку — настроили. */
+// строки подписки: клик → настройка
 export const BalancerPage: React.FC<{ onToast: Toast }> = ({ onToast }) => {
   const [st, setSt] = useState<State | null>(null);
   const [edit, setEdit] = useState<Group | 'auto' | null>(null);
@@ -38,7 +38,7 @@ export const BalancerPage: React.FC<{ onToast: Toast }> = ({ onToast }) => {
   if (!st) return <div style={{ padding: 40, display: 'flex', justifyContent: 'center' }}><Spinner /></div>;
   const s = st.settings;
 
-  /** Сохраняет сразу — отдельной кнопки «Сохранить» на странице нет. */
+  // сохраняет сразу, отдельной кнопки нет
   const save = async (next: Settings, msg = 'Сохранено'): Promise<boolean> => {
     setBusy(true);
     try {
@@ -256,7 +256,7 @@ const GroupEditor: React.FC<{
   );
 };
 
-/** Настоящая подписка пользователя через XBM. */
+// превью реальной подписки через xbm
 const PreviewModal: React.FC<{ onToast: Toast; onClose: () => void }> = ({ onToast, onClose }) => {
   const [uid, setUid] = useState('');
   const [pv, setPv] = useState<Loc[] | null>(null);

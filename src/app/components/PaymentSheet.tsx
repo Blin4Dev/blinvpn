@@ -10,7 +10,7 @@ export type PendingPayment = {
   provider: string;
   payUrl?: string;
   invoiceLink?: string;
-  /** subscription | devices | traffic_reset — для текстов */
+  // тип: subscription | devices | traffic_reset
   purpose?: string;
 };
 
@@ -25,11 +25,7 @@ const PENDING_TEXT: Record<string, string> = {
 
 const POLL_MS = 2000;
 
-/**
- * Нижнее всплывающее окно «Ожидаем оплату».
- * Опрашивает статус платежа (его выставляет вебхук провайдера) и само
- * переключается на «Оплата прошла», после чего уводит дальше.
- */
+// bottom sheet «ожидаем оплату»; polls until paid/failed then advances
 export default function PaymentSheet({
   payment,
   returnTo,
@@ -42,13 +38,13 @@ export default function PaymentSheet({
   payment: PendingPayment;
   returnTo?: string;
   onClose: () => void;
-  /** Сам уходить дальше после оплаты (false — ждать нажатия кнопки) */
+  // уйти дальше после оплаты (false = ждать кнопку)
   autoAdvance?: boolean;
-  /** Вызывается после перехода дальше (окно больше не нужно) */
+  // вызывается после перехода дальше
   onDone?: () => void;
-  /** Platega вернула по адресу неуспешной оплаты */
+  // пришли по url неуспешной оплаты
   failedHint?: boolean;
-  /** «Попробовать снова» (по умолчанию — просто закрыть окно) */
+  // «попробовать снова» (default: just close)
   onRetry?: () => void;
 }) {
   const navigate = useNavigate();
@@ -80,22 +76,20 @@ export default function PaymentSheet({
         stopped.current = true;
         setPhase("error");
       }
-      /* иначе — сетевой сбой, пробуем снова */
+      /* network blip: poll again */
     } finally {
       inFlight.current = false;
     }
   }, [payment.paymentId]);
 
-  // Вернулись по адресу неуспешной оплаты, а провайдер ещё не прислал отказ —
-  // показываем «Платёж отклонён», но статус опрашиваем дальше: если оплата всё же
-  // пройдёт, окно само сменится на «Оплата прошла!».
+  // url отказа, но провайдер ещё не отказал: показать отказ, продолжить опрос
   useEffect(() => {
     if (!failedHint) return;
     const t = window.setTimeout(() => setPhase((ph) => (ph === "pending" ? "failed" : ph)), 6000);
     return () => window.clearTimeout(t);
   }, [failedHint]);
 
-  // Опрос + мгновенная проверка, когда пользователь вернулся из банка/окна оплаты
+  // опрос + мгновенная проверка, когда вернулись из банка/окна оплаты
   useEffect(() => {
     stopped.current = false;
     void poll();
@@ -116,14 +110,14 @@ export default function PaymentSheet({
     onDone?.();
   }, [navigate, returnTo, onDone]);
 
-  // Итог показан — при следующем запуске приложения повторно его не выводим
+  // пометить просмотренным, чтобы при следующем запуске не показывать тот же итог
   useEffect(() => {
     if (phase === "paid" || (phase === "failed" && stopped.current)) void markPaymentSeen(payment.paymentId);
   }, [phase, payment.paymentId]);
 
   const setupNext = !!returnTo && returnTo.includes("setup=1");
 
-  // После оплаты страница меняется сама
+  // после оплаты уходим сами
   useEffect(() => {
     if (phase !== "paid" || !autoAdvance) return;
     const t = window.setTimeout(finish, 1500);

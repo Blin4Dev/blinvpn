@@ -1,18 +1,4 @@
-"""
-Единый модуль выдачи подписок и обработки платежей BlinVPN.
-
-Используется ядром (core.py), вебхуком (webhook.py) и ботом (bot.py) —
-одна точка правды для:
-  • создания намерения оплаты (payments) + pending-транзакции;
-  • идемпотентного подтверждения оплаты (fulfill_payment);
-  • создания/продления подписки в локальной БД И в Remnawave;
-  • начисления реферального бонуса и уведомления администратора.
-
-Модуль НЕ импортирует core.py, чтобы не поднимать FastAPI в процессах
-вебхука/бота и не ловить циклические импорты. Работает поверх database.py
-и provisioning.py напрямую.
-"""
-
+# платежи, выдача, fulfill (общее для core/webhook/bot)
 from __future__ import annotations
 
 import os
@@ -49,11 +35,10 @@ except ImportError:
 
 DAYS_PER_MONTH = 30
 
-# Параметры подписок.
 GB = 1024 ** 3
-# Значения по умолчанию; реальные берутся из настроек панели (Настройки → Цены).
-REGULAR_TRAFFIC_GB = 100    # обычная подписка, ГБ/мес
-TRIAL_TRAFFIC_GB = 5        # пробная
+# дефолты; актуальные значения из настроек панели
+REGULAR_TRAFFIC_GB = 100  # обычная подписка, ГБ/мес
+TRIAL_TRAFFIC_GB = 5  # пробная
 TRIAL_DAYS = 3
 TRIAL_DEVICES = 1
 
@@ -71,7 +56,6 @@ def trial_days() -> int:
 
 
 def trial_traffic_gb() -> int:
-    """0 = без лимита."""
     return _int_setting("trial_traffic_gb", TRIAL_TRAFFIC_GB, 0, 100000)
 
 
@@ -80,17 +64,10 @@ def trial_devices() -> int:
 
 
 def paid_traffic_gb() -> int:
-    """0 = без лимита."""
     return _int_setting("paid_traffic_gb", REGULAR_TRAFFIC_GB, 0, 100000)
-# Через сколько дней после окончания неоплаченная подписка удаляется
-# (из Remnawave и из активных подписок; в панели остаётся в истории).
-DELETE_AFTER_DAYS = 7
-RESET_STRATEGY = "MONTH"    # стратегия сброса трафика в Remnawave — «Ежемесячно»
+DELETE_AFTER_DAYS = 7  # unpaid sub deleted after this many days
+RESET_STRATEGY = "MONTH"  # remnawave traffic reset
 
-
-# ─────────────────────────────────────────────────────────────
-# helpers
-# ─────────────────────────────────────────────────────────────
 
 def _env(*keys: str, default: str = "") -> str:
     for key in keys:
@@ -132,14 +109,6 @@ def trial_squads() -> list[str]:
 
 
 def compute_user_state(user_id: int) -> str:
-    """
-    Состояние пользователя по его подпискам (единое для панели и статистики):
-      Banned  — аккаунт заблокирован;
-      Active  — есть действующая платная подписка;
-      Trial   — есть действующая пробная (и нет платной);
-      Expired — подписки были, но действующих нет;
-      None    — подписок не было никогда.
-    """
     u = db.fetchone("SELECT is_banned FROM users WHERE id = ?", (user_id,))
     if not u:
         return "None"
@@ -168,10 +137,6 @@ def _sync_user_status(user_id: int) -> None:
         return
     db.execute("UPDATE users SET status = ? WHERE id = ?", (state, user_id))
 
-
-# ─────────────────────────────────────────────────────────────
-# payment intents
-# ─────────────────────────────────────────────────────────────
 
 def create_payment_intent(
     *,
@@ -202,7 +167,7 @@ def create_payment_intent(
             subscription_id, round(float(referral_applied or 0), 2), now,
         ),
     )
-    # Ожидающая транзакция в общей ленте (payment_id связывает её с платежом).
+    # pending-строка в ленте транзакций
     db.execute(
         "INSERT INTO transactions (user_id, amount, status, payment_method, hash, payment_id, description, created_at) "
         "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)",
@@ -245,7 +210,6 @@ def set_provider_data(
 
 
 def _release_referral_hold(payment: dict[str, Any]) -> None:
-    """Возвращает замороженный при создании реферальный баланс (при отмене/сбое)."""
     try:
         applied = float(payment.get("referral_applied") or 0)
     except (TypeError, ValueError):
@@ -257,7 +221,7 @@ def _release_referral_hold(payment: dict[str, Any]) -> None:
             "UPDATE users SET partner_balance = partner_balance + ? WHERE id = ?",
             (round(applied, 2), int(payment["user_id"])),
         )
-        # Чтобы повторная отмена/сбой не вернули баланс дважды.
+        # снять холд, чтобы повторная отмена не зачислила дважды
         db.execute("UPDATE payments SET referral_applied = 0 WHERE payment_id = ?", (payment["payment_id"],))
     except Exception:  # noqa: BLE001
         pass
@@ -273,20 +237,18 @@ def mark_failed(payment_id: str, reason: str = "") -> None:
         "UPDATE transactions SET status = 'failed' WHERE payment_id = ? AND status = 'pending'",
         (payment_id,),
     )
-    # Разморозить реферальный баланс только если это МЫ перевели платёж в failed.
+    # снять реф. холд только если статус стал failed
     if payment and cur.rowcount:
         _release_referral_hold(payment)
 
 
 def _expected_provider_amount(payment: dict[str, Any]) -> float:
-    """Сумма, которую должен подтвердить провайдер: рубли (Platega) или звёзды (Stars)."""
     if payment.get("provider") == "tg_stars":
         return float(payment.get("stars") or 0)
     return float(payment.get("amount") or 0)
 
 
 def _grant_traffic_reset(user: dict[str, Any]) -> dict[str, Any]:
-    """Досрочный сброс трафика (платная услуга): Remnawave + локальные счётчики."""
     res = provisioning.reset_traffic(int(user.get("telegram_id") or 0), user.get("email"))
     try:
         db.execute(
@@ -295,16 +257,15 @@ def _grant_traffic_reset(user: dict[str, Any]) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         pass
-    # Кончился трафик и был grace — возвращаем обычный доступ
+    # завершить grace, если причина была трафик
     try:
         try:
             from . import grace  # type: ignore
         except ImportError:
             import grace  # type: ignore
         grace.end_for_user(int(user["id"]), traffic=True)
-    except Exception:  # noqa: BLE001 — фоновая сверка доделает
+    except Exception:  # noqa: BLE001
         pass
-    # активная подписка пользователя (для привязки в ответе)
     sub = db.fetchone(
         "SELECT id FROM subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 1", (int(user["id"]),))
     return {
@@ -313,10 +274,6 @@ def _grant_traffic_reset(user: dict[str, Any]) -> dict[str, Any]:
         "remnawave": {"ok": bool(res.get("ok")), "error": res.get("error")},
     }
 
-
-# ─────────────────────────────────────────────────────────────
-# granting subscriptions (DB + Remnawave)
-# ─────────────────────────────────────────────────────────────
 
 def _create_subscription_row(
     *,
@@ -345,8 +302,7 @@ def _create_subscription_row(
     )
     sub = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (db.last_id(),))
     _sync_user_status(int(user["id"]))
-    # Ставим пользователя в очередь на опрос (приглашение уйдёт через 1ч после
-    # первого подключения к VPN). Только один раз — user_id PRIMARY KEY.
+    # один раз записать в опрос после первого подключения
     try:
         if user.get("telegram_id"):
             db.execute(
@@ -361,11 +317,6 @@ def _create_subscription_row(
 
 
 def grant_trial(user: dict[str, Any]) -> dict[str, Any]:
-    """
-    Выдаёт бесплатную пробную подписку (срок/трафик/устройства — из настроек
-    панели, по умолчанию 3 дня, 5 ГБ, 1 устройство), сброс «Ежемесячно».
-    Вызывающий обязан проверить, что триал ещё не использовался и что он включён.
-    """
     telegram_id = int(user["telegram_id"]) if user.get("telegram_id") else None
     t_days, t_gb, t_dev = trial_days(), trial_traffic_gb(), trial_devices()
     new_exp = utcnow() + timedelta(days=t_days)
@@ -378,7 +329,7 @@ def grant_trial(user: dict[str, Any]) -> dict[str, Any]:
         user=user, devices=t_dev, expire_at=new_exp, provision=prov,
         traffic_gb=t_gb, sub_type="trial", squads=trial_squads(),
     )
-    # Ставим отметку для проверки «подключился ли» через 15 минут (только для триала).
+    # метка проверки подключения пробной (~15 мин)
     try:
         db.execute(
             "INSERT INTO trial_checks (subscription_id, user_id, telegram_id, granted_at, checked) "
@@ -397,7 +348,6 @@ def grant_trial(user: dict[str, Any]) -> dict[str, Any]:
 
 
 def _apply_provision_to_sub(sub: dict[str, Any], provision: dict[str, Any]) -> None:
-    """Записать данные Remnawave в существующую подписку (при продлении)."""
     if not provision.get("ok"):
         return
     sets, params = [], []
@@ -419,11 +369,6 @@ def _apply_provision_to_sub(sub: dict[str, Any], provision: dict[str, Any]) -> N
 def find_extend_target(
     user_id: int, purpose: str, subscription_id: Optional[int]
 ) -> tuple[Optional[dict[str, Any]], bool]:
-    """
-    Определяет, какую подписку продлит grant_subscription (и апгрейд ли это триала).
-    Вынесено отдельно, чтобы цена в панели/эндпоинте совпадала с фактической выдачей.
-    Возвращает (target, upgrading_trial).
-    """
     target: Optional[dict[str, Any]] = None
     if purpose == "extend" and subscription_id:
         target = db.fetchone(
@@ -448,11 +393,6 @@ def find_extend_target(
 
 def retained_devices(user_id: int, purpose: str, subscription_id: Optional[int],
                      total_devices: int) -> int:
-    """
-    Сколько устройств сверх оплаченного тарифа СОХРАНИТСЯ при продлении (grant берёт
-    max со старым лимитом). За них надо доплатить, иначе можно продлить 5-устройств
-    по цене 1. 0 — для апгрейда триала и новых подписок.
-    """
     target, upgrading_trial = find_extend_target(user_id, purpose, subscription_id)
     if not target or upgrading_trial:
         return 0
@@ -469,19 +409,15 @@ def grant_subscription(
     extra_devices: int,
     subscription_id: Optional[int],
 ) -> dict[str, Any]:
-    """
-    Создаёт или продлевает подписку в БД и Remnawave.
-    Возвращает {subscription_id, expires_at, devices, remnawave: {...}}.
-    """
     months = max(1, int(months or 1))
     added_days = DAYS_PER_MONTH * months
-    # У вошедших только по почте (сайт) Telegram нет — Remnawave найдёт их по email.
+    # пользователи только с email: поиск в remnawave по email
     telegram_id = int(user["telegram_id"]) if user.get("telegram_id") else None
     username = user.get("username")
     email = user.get("email")
 
     if purpose == "devices" and subscription_id:
-        # Увеличение числа устройств у конкретной подписки (без изменения срока).
+        # добавить устройства, срок не трогаем
         sub = db.fetchone(
             "SELECT * FROM subscriptions WHERE id = ? AND user_id = ? AND status = 'Active'",
             (subscription_id, user["id"]),
@@ -509,7 +445,7 @@ def grant_subscription(
                      "devices_before": int(sub.get("devices_limit") or 1), "devices_after": new_devices},
         }
 
-    # Найти целевую подписку для продления (та же логика, что и в ценообразовании).
+    # тот же выбор цели, что при расчёте цены
     target, upgrading_trial = find_extend_target(int(user["id"]), purpose, subscription_id)
 
     total_devices = int(plan_devices or 1) + max(0, int(extra_devices or 0))
@@ -520,14 +456,14 @@ def grant_subscription(
             base = utcnow()
         new_exp = base + timedelta(days=added_days)
         prev_devices = int(target.get("devices_limit") or 1)
-        # При апгрейде с триала HWID берём именно оплаченный (а не max со старым=1).
+        # trial→paid: число устройств как у платной, не max(старое, платное)
         new_devices = total_devices if upgrading_trial else max(int(target.get("devices_limit") or 1), total_devices)
         new_devices = max(1, new_devices)
         prov = provisioning.provision(
             user_id=int(user["id"]), telegram_id=telegram_id, username=username, expire_at=new_exp,
             devices=new_devices, squads=vpn_squads(), email=email,
             traffic_limit_bytes=paid_traffic_gb() * GB, traffic_reset_strategy=RESET_STRATEGY,
-            reset_traffic=upgrading_trial,  # триал→платная: сбрасываем накопленный трафик
+            reset_traffic=upgrading_trial,  # clear trial traffic on upgrade
         )
         db.execute(
             "UPDATE subscriptions SET expires_at = ?, status = 'Active', devices_limit = ?, "
@@ -539,22 +475,21 @@ def grant_subscription(
         _apply_provision_to_sub(target, prov)
         _sync_user_status(int(user["id"]))
         if db.fetchone("SELECT id FROM subscriptions WHERE user_id = ? AND grace_until IS NOT NULL LIMIT 1", (int(user["id"]),)):
-            # Продлили во время grace-доступа — возвращаем обычные сквады, лимит трафика и срок
+            # продление в grace → вернуть обычный доступ
             try:
                 try:
                     from . import grace  # type: ignore
                 except ImportError:
                     import grace  # type: ignore
                 grace.end_for_user(int(user["id"]))
-            except Exception:  # noqa: BLE001 — не критично: фоновая сверка доделает
+            except Exception:  # noqa: BLE001
                 pass
         return {
             "subscription_id": target["id"],
             "expires_at": iso(new_exp),
             "devices": new_devices,
             "remnawave": prov,
-            # Для возврата: сколько времени и устройств добавил именно этот платёж,
-            # и в каком состоянии была пробная подписка до апгрейда.
+            # payload отката для возвратов
             "undo": {"kind": "extend", "sub_id": target["id"],
                      "added_seconds": int((new_exp - base).total_seconds()),
                      "added_devices": new_devices - prev_devices,
@@ -566,7 +501,7 @@ def grant_subscription(
                      "prev_squads_json": target.get("squads_json")},
         }
 
-    # Новая подписка (нет ни платной, ни триала).
+    # новая подписка
     new_exp = utcnow() + timedelta(days=added_days)
     prov = provisioning.provision(
         user_id=int(user["id"]), telegram_id=telegram_id, username=username, expire_at=new_exp,
@@ -587,10 +522,6 @@ def grant_subscription(
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# fulfillment (idempotent)
-# ─────────────────────────────────────────────────────────────
-
 def fulfill_payment(
     payment_id: str,
     *,
@@ -599,16 +530,11 @@ def fulfill_payment(
     stars_charge_id: Optional[str] = None,
     stars_payer_id: Optional[int] = None,
 ) -> dict[str, Any]:
-    """
-    Идемпотентно подтверждает платёж и выдаёт подписку.
-    Повторный вызов для уже оплаченного платежа безопасен.
-    """
     payment = get_payment(payment_id)
     if not payment:
         return {"ok": False, "error": "payment_not_found", "payment_id": payment_id}
 
-    # Один счёт в Stars оплатили второй раз (две оплаты до подтверждения первой):
-    # второе списание возвращаем автоматически, чтобы человек не платил дважды.
+    # повторный charge stars по тому же invoice → авто-возврат
     if (stars_charge_id and payment.get("provider") == "tg_stars" and payment["status"] in ("paid", "processing")
             and payment.get("provider_payment_id") and str(payment.get("provider_payment_id")) != str(stars_charge_id)):
         _refund_duplicate_stars(payment, stars_charge_id, stars_payer_id)
@@ -622,8 +548,7 @@ def fulfill_payment(
     if payment["status"] in ("failed", "refunded"):
         return {"ok": False, "error": "payment_failed", "payment_id": payment_id}
 
-    # Проверка суммы: провайдер должен подтвердить не меньше ожидаемого, иначе
-    # недоплатой можно было бы получить полную подписку.
+    # отклонить недоплату
     expected = _expected_provider_amount(payment)
     if amount is not None and expected > 0:
         try:
@@ -641,10 +566,7 @@ def fulfill_payment(
                 pass
             return {"ok": False, "error": "amount_mismatch", "payment_id": payment_id}
 
-    # АТОМАРНО «занимаем» платёж: только один вызов переведёт pending→processing.
-    # Исключает двойную выдачу подписки при гонке (callback + поллинг + ретраи).
-    # Номер списания Stars запоминаем сразу — второе списание, пришедшее, пока
-    # первое обрабатывается, распознаётся как повтор и возвращается.
+    # claim pending→processing (один победитель); сразу сохранить id charge stars
     claim = db.execute(
         "UPDATE payments SET status = 'processing', processing_at = ?, "
         "provider_payment_id = COALESCE(provider_payment_id, ?) WHERE payment_id = ? AND status = 'pending'",
@@ -660,7 +582,7 @@ def fulfill_payment(
         if st == "paid":
             return {"ok": True, "already": True, "payment_id": payment_id,
                     "subscription_id": (fresh or {}).get("subscription_id")}
-        # Кто-то уже обрабатывает (processing) либо платёж failed/refunded.
+        # уже processing или финальный статус
         return {"ok": False, "error": "already_processing", "payment_id": payment_id}
 
     user = get_user(int(payment["user_id"]))
@@ -682,8 +604,7 @@ def fulfill_payment(
                 subscription_id=payment.get("subscription_id"),
             )
     except Exception as exc:  # noqa: BLE001
-        # Выдача не удалась — возвращаем платёж в pending, чтобы повтор/поллинг
-        # смог обработать заново (реферальный холд не трогаем).
+        # выдача не удалась → снова pending для повтора
         db.execute(
             "UPDATE payments SET status = 'pending' WHERE payment_id = ? AND status = 'processing'",
             (payment_id,),
@@ -709,15 +630,13 @@ def fulfill_payment(
     )
 
     _credit_referral(user, float(payment.get("amount") or 0), payment.get("currency") or "RUB", payment.get("payment_id"))
-    # Атрибуция выручки трекинговой (специальной) ссылке, если пользователь по ней пришёл.
+    # атрибуция выручки по трекинг-ссылке
     try:
         services.credit_tracking_payment(int(user["id"]), float(payment.get("amount") or 0))
     except Exception:  # noqa: BLE001
         pass
 
-    # Платёж прошёл, но подписка в Remnawave не выдалась → пользователь получит
-    # нерабочий ключ. Оплата НЕ отменяется, но админ должен узнать немедленно.
-    # Для досрочного сброса трафика это уведомление не шлём.
+    # оплачено, но выдача в remnawave упала → алерт админу (кроме traffic_reset)
     rw = grant.get("remnawave") or {}
     if _purpose != "traffic_reset" and not rw.get("ok"):
         try:
@@ -741,7 +660,6 @@ def fulfill_payment(
 
 
 def _refund_duplicate_stars(payment: dict[str, Any], charge_id: str, payer_id: Optional[int] = None) -> None:
-    """Возврат лишнего списания тому, кто платил (счёт мог оплатить не владелец аккаунта)."""
     tg = payer_id or (get_user(int(payment["user_id"])) or {}).get("telegram_id")
     ok = False
     if tg:
@@ -757,7 +675,6 @@ def _refund_duplicate_stars(payment: dict[str, Any], charge_id: str, payer_id: O
 
 
 def stars_precheckout_ok(payment: Optional[dict[str, Any]], query: dict[str, Any]) -> bool:
-    """pre_checkout_query: платёж наш, ещё не оплачен, в звёздах и на ту же сумму."""
     if not payment or payment.get("status") != "pending" or payment.get("provider") != "tg_stars":
         return False
     if str(query.get("currency") or "") != "XTR":
@@ -769,7 +686,6 @@ def stars_precheckout_ok(payment: Optional[dict[str, Any]], query: dict[str, Any
 
 
 def platega_tx_amount(tx: dict[str, Any]) -> Optional[float]:
-    """Сумма из ответа Platega GET /transaction/{id}: она лежит в paymentDetails.amount."""
     details = tx.get("paymentDetails") if isinstance(tx.get("paymentDetails"), dict) else {}
     for val in (details.get("amount"), tx.get("amount")):
         try:
@@ -781,16 +697,11 @@ def platega_tx_amount(tx: dict[str, Any]) -> Optional[float]:
 
 
 def platega_tx_matches(tx: dict[str, Any], payment: dict[str, Any]) -> bool:
-    """Транзакция Platega действительно создана под этот платёж (payload = наш payment_id)."""
     tx_payload = tx.get("payload")
     return not tx_payload or str(tx_payload) == str(payment["payment_id"])
 
 
 def confirm_via_provider(payment_id: str) -> dict[str, Any]:
-    """
-    Активная проверка статуса у провайдера (для поллинга страницы ожидания),
-    когда callback ещё не пришёл. Работает только для Platega.
-    """
     payment = get_payment(payment_id)
     if not payment:
         return {"ok": False, "status": "not_found"}
@@ -826,23 +737,13 @@ def confirm_via_provider(payment_id: str) -> dict[str, Any]:
         return {"ok": True, "status": "pending", "note": f"{type(exc).__name__}"}
 
 
-# ─────────────────────────────────────────────────────────────
-# Фоновая сверка платежей
-# ─────────────────────────────────────────────────────────────
-
-STUCK_PROCESSING_MIN = 10       # «processing» дольше — процесс упал посреди выдачи
-RECHECK_AFTER_MIN = 3           # перепроверять у Platega не раньше чем через 3 мин
-UNPAID_EXPIRE_HOURS = 24        # неоплаченный платёж через сутки отменяется
+STUCK_PROCESSING_MIN = 10  # «processing» дольше - процесс упал посреди выдачи
+RECHECK_AFTER_MIN = 3  # перепроверять у Platega не раньше чем через 3 мин
+UNPAID_EXPIRE_HOURS = 24  # неоплаченный платёж через сутки отменяется
 RECONCILE_BATCH = 50
 
 
 def reconcile_payments(log=print) -> dict[str, int]:
-    """
-    1) Зависшие в processing (упал процесс) → снова pending.
-    2) Ожидающие платежи Platega — спрашиваем статус у Platega (callback мог потеряться,
-       а окно оплаты пользователь закрыл).
-    3) Неоплаченные дольше суток — отменяем (реферальный баланс размораживается).
-    """
     now = utcnow()
     stats = {"unstuck": 0, "confirmed": 0, "expired": 0}
 
@@ -881,10 +782,6 @@ def reconcile_payments(log=print) -> dict[str, int]:
     return stats
 
 
-# ─────────────────────────────────────────────────────────────
-# referral bonus + notifications
-# ─────────────────────────────────────────────────────────────
-
 def _credit_referral(user: dict[str, Any], amount: float, currency: str, payment_id: Optional[str] = None) -> None:
     try:
         ref_by = user.get("referred_by")
@@ -904,7 +801,7 @@ def _credit_referral(user: dict[str, Any], amount: float, currency: str, payment
         db.execute(
             "INSERT INTO transactions (user_id, amount, status, payment_method, hash, payment_id, description, created_at) "
             "VALUES (?, ?, 'completed', 'referral', ?, ?, ?, ?)",
-            # hash = «за какой платёж» — чтобы при возврате/чарджбеке снять ровно этот бонус
+            # хеш pay:<id>, чтобы возврат мог забрать бонус
             (referrer["id"], bonus, f"pay:{payment_id}" if payment_id else secrets.token_hex(8), secrets.token_hex(8),
              f"referral bonus from user {user['id']}", db.utcnow_iso()),
         )
@@ -913,7 +810,6 @@ def _credit_referral(user: dict[str, Any], amount: float, currency: str, payment
 
 
 def _notify_admin(user: dict[str, Any], payment: dict[str, Any], grant: dict[str, Any]) -> None:
-    """Уведомление о покупке → топик «Покупки»."""
     is_stars = payment.get("provider") == "tg_stars"
     if is_stars:
         amount = payment.get("stars") or payment.get("amount")

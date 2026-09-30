@@ -1,21 +1,3 @@
-"""
-Почтовый модуль BlinVPN — без внешних релеев и без почтового демона.
-
-Два режима. Если в .env задан MAIL_SMTP_HOST — письма уходят через обычный
-почтовый ящик (Яндекс, Mail.ru, Gmail…) по SMTP: это проще и работает на любом
-хостинге. Иначе приложение само доставляет письмо на почтовый сервер получателя:
-находит MX-запись домена адресата и отправляет на неё по SMTP (порт 25),
-подписывая письмо ключом DKIM. Ничего не крутится в фоне — соединение
-открывается только когда есть что отправить (код входа или рассылка).
-
-Только исходящая транзакционная почта с no-reply@<домен>. Входящих нет.
-
-Настройки задаются в панели → Настройки → Почта (хранятся в БД, пароль —
-зашифрован). Для старых установок, где почту настраивал install.sh, — из .env:
-  MAIL_ENABLED, MAIL_DOMAIN, MAIL_FROM, MAIL_FROM_NAME, MAIL_SMTP_*,
-  DKIM_SELECTOR (по умолч. mail), DKIM_PRIVATE_KEY_PATH.
-"""
-
 from __future__ import annotations
 
 import ipaddress
@@ -108,11 +90,11 @@ def _dkim_selector() -> str:
 
 
 def _dkim_key_path() -> str:
-    # Явный путь, если существует.
+    # явный путь
     p = _env("DKIM_PRIVATE_KEY_PATH")
     if p and os.path.isfile(p) and config()["source"] == "env":
         return p
-    # Иначе ищем рядом с БД: <data>/dkim/<домен>.private (работает и в контейнере, и локально).
+    # иначе <data>/dkim/<домен>.private
     dbp = _env("DB_PATH", "data/data.db")
     cand = os.path.join(os.path.dirname(os.path.abspath(dbp)), "dkim", f"{domain()}.private")
     if os.path.isfile(cand):
@@ -124,8 +106,6 @@ def is_configured() -> bool:
     return bool(enabled() and mail_from() and domain())
 
 
-# ── Построение письма ────────────────────────────────────────
-
 def _build_message(to: str, subject: str, html: str, text: str) -> bytes:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -135,7 +115,7 @@ def _build_message(to: str, subject: str, html: str, text: str) -> bytes:
     msg["Message-ID"] = make_msgid(domain=domain() or None)
     msg.attach(MIMEText(text or "", "plain", "utf-8"))
     msg.attach(MIMEText(html or "", "html", "utf-8"))
-    raw = msg.as_bytes(policy=_email_policy.SMTP)  # CRLF-переводы строк
+    raw = msg.as_bytes(policy=_email_policy.SMTP)  # crlf
     return _dkim_sign(raw)
 
 
@@ -162,11 +142,11 @@ def _dkim_sign(raw: bytes) -> bytes:
             priv = serialization.load_pem_private_key(fh.read(), password=None)
 
         header_block, _, body = raw.partition(b"\r\n\r\n")
-        # Тело: relaxed canonicalization.
+        # тело: relaxed
         body_c = _canon_body_relaxed(body)
         bh = base64.b64encode(hashlib.sha256(body_c).digest()).decode()
 
-        # Разбираем заголовки в список (имя, «сырая» строка).
+        # заголовки как (name, raw)
         headers = _split_headers(header_block)
         signed_names = [h for h in _DKIM_HEADERS if _find_header(headers, h) is not None]
 
@@ -174,7 +154,7 @@ def _dkim_sign(raw: bytes) -> bytes:
             f"v=1; a=rsa-sha256; c=relaxed/relaxed; d={domain()}; s={_dkim_selector()}; "
             f"t={int(_time.time())}; h={':'.join(signed_names)}; bh={bh}; b="
         )
-        # Каноничные подписываемые заголовки + сам DKIM-Signature (с пустым b=).
+        # signed headers + dkim-signature (b= пустой)
         signing_input = b""
         for name in signed_names:
             signing_input += _canon_header_relaxed(name, _find_header(headers, name)) + b"\r\n"
@@ -183,7 +163,7 @@ def _dkim_sign(raw: bytes) -> bytes:
         signature = priv.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
         b64sig = base64.b64encode(signature).decode()
         dkim_header = "DKIM-Signature: " + dkim_fields + b64sig
-        # Ставим DKIM-Signature первым заголовком.
+        # dkim-signature первым
         return dkim_header.encode() + b"\r\n" + header_block + b"\r\n\r\n" + body
     except Exception as exc:  # noqa: BLE001
         print(f"[mail] DKIM подпись не удалась: {exc}", flush=True)
@@ -232,24 +212,22 @@ def _canon_body_relaxed(body: bytes) -> bytes:
         line = re.sub(rb"[ \t]+", b" ", line)
         out.append(line.rstrip(b" \t"))
     text = b"\r\n".join(out)
-    text = text.rstrip(b"\r\n") + b"\r\n"  # убрать пустые хвостовые строки, оставить один CRLF
+    text = text.rstrip(b"\r\n") + b"\r\n"  # один crlf в конце
     return text
 
-
-# ── Доставка напрямую на MX получателя ───────────────────────
 
 def _resolve_mx(dom: str) -> list[str]:
     """Список хостов MX (по приоритету). Фолбэк — сам домен (A-запись)."""
     hosts: list[str] = []
     try:
-        import dns.resolver  # dnspython
+        import dns.resolver
         answers = dns.resolver.resolve(dom, "MX")
         ranked = sorted((int(r.preference), str(r.exchange).rstrip(".")) for r in answers)
         hosts = [h for _, h in ranked if h]
     except Exception:  # noqa: BLE001
         hosts = []
     if not hosts:
-        hosts = [dom]  # некоторые домены принимают почту на A-запись
+        hosts = [dom]  # fallback на a-запись
     return hosts
 
 
@@ -337,7 +315,7 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
     ehlo = _ehlo_name()
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # оппортунистический TLS: шифруем, но не валидируем cert MX
+    ctx.verify_mode = ssl.CERT_NONE  # starttls без проверки cert
 
     last_err = "нет доступных MX"
     port25_blocked = False
@@ -355,7 +333,7 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
                         server.starttls(context=ctx)
                         server.ehlo(ehlo)
                 except (smtplib.SMTPException, ssl.SSLError):
-                    pass  # доставим без TLS, если MX не смог
+                    pass  # без tls если mx не умеет
                 server.mail(sender)
                 server.rcpt(to)
                 code, _ = server.data(message)
@@ -377,8 +355,6 @@ def send(to: str, subject: str, *, html: Optional[str] = None, text: Optional[st
                      "sudo bash install.sh → «Настроить почту»")
     return False, last_err
 
-
-# ── Готовые письма ───────────────────────────────────────────
 
 def _brand_wrap(inner_html: str) -> str:
     return (
@@ -481,8 +457,6 @@ def send_broadcast(to: str, subject: str, body_html: str, body_text: Optional[st
     return send(to, subject, html=_brand_wrap(body_html), text=body_text)
 
 
-# ── Утилиты ──────────────────────────────────────────────────
-
 def _esc(s: str) -> str:
     return ((s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;").replace("'", "&#39;"))
@@ -495,8 +469,6 @@ def _html_to_text(html: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     return text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").strip()
 
-
-# ── Мастер настройки в панели ───────────────────────────────
 
 SMTP_PRESETS = {
     "yandex": ("smtp.yandex.ru", 465), "mailru": ("smtp.mail.ru", 465), "gmail": ("smtp.gmail.com", 465),
@@ -598,8 +570,7 @@ def save_config(mode: str, *, host: str = "", port: int = 465, user: str = "", p
         prev = json.loads(prev_raw) if prev_raw else {}
     except ValueError:
         prev = {}
-    # Сохранённый пароль — только для того же ящика на том же сервере
-    # (иначе при смене сервера пароль ушёл бы на новый адрес)
+    # пароль только для того же ящика/сервера
     same = prev.get("user") == user and str(prev.get("host") or "").lower() == str(host or "").lower()
     enc = prev.get("password_enc") if password is None and same else (
         _crypto().encrypt(password) if password else None)

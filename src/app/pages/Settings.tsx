@@ -28,7 +28,7 @@ export default function Settings() {
     ? (tgName || (user?.username ? `@${user.username}` : "Пользователь"))
     : (user?.email || (user?.username ? `@${user.username}` : "Пользователь"));
   const initial = (tgName || user?.username || user?.email || "B").trim().charAt(0).toUpperCase();
-  // Внутренний номер аккаунта (его называют в поддержке), а не Telegram ID.
+  // внутренний id аккаунта (поддержка), не telegram id
   const secondary = user?.id != null ? `ID ${user.id}` : "";
 
   return (
@@ -121,7 +121,7 @@ export default function Settings() {
         />
       </Surface>
 
-      {/* версия приложения — ведёт в канал с новостями */}
+      {/* app version → news channel */}
       <button
         type="button"
         onClick={() => openTgLink(APP_NEWS_URL)}

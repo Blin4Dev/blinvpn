@@ -1,16 +1,3 @@
-"""
-Опрос пользователей BlinVPN (8 вопросов) с наградой-скидкой.
-
-Приглашение уходит в ЛС через 1 час после первого подключения к VPN
-(см. reminders.run_survey_invites). По кнопке «Пройти опрос» бот по очереди
-задаёт вопросы с кнопками вариантов; часть вопросов — с мультивыбором (Q6)
-или свободным ответом текстом (Q4 «Другое», Q8). После завершения пользователю
-начисляется скидка 5%, которая СУММИРУЕТСЯ с другими скидками.
-
-Модуль не зависит от сети напрямую — Telegram-вызовы идут через переданный
-callable `api(method, payload)` (как в reminders/bot).
-"""
-
 from __future__ import annotations
 
 import json
@@ -18,16 +5,13 @@ from typing import Any, Callable, Optional
 
 import database as db  # type: ignore
 
-# ── Награда ──────────────────────────────────────────────────
-SURVEY_DISCOUNT_PERCENT = 5  # скидка за прохождение опроса (стекается с другими)
+SURVEY_DISCOUNT_PERCENT = 5  # скидка за опрос (стекается)
 
-# ── Премиум-эмодзи (custom_emoji_id обязан соответствовать базовому эмодзи) ──
-EMOJI_INVITE = "5460795800101594035"  # 🗣️ — заголовок приглашения
-EMOJI_BUTTON = "5443038326535759644"  # 💬 — иконка на зелёной кнопке
+EMOJI_INVITE = "5460795800101594035"
+EMOJI_BUTTON = "5443038326535759644"
 
-# ── Определение вопросов ─────────────────────────────────────
-# kind: "single" | "multi" | "text"
-# для варианта можно указать text_follow=True → после выбора спросим текст.
+# тип: single|multi|text
+# text_follow=True: потом спросим текст
 QUESTIONS: list[dict[str, Any]] = [
     {
         "n": 1, "kind": "single",
@@ -141,7 +125,7 @@ def validate_questions(items: Any) -> list[dict[str, Any]]:
     if len(items) > MAX_QUESTIONS:
         raise SurveyError(f"Не больше {MAX_QUESTIONS} вопросов")
     used: set[int] = set()
-    # Номер нового вопроса не должен совпасть ни с одним прежним (у старых остались ответы)
+    # n нового вопроса не должен совпасть со старыми
     old = db.fetchone("SELECT MAX(question) AS m FROM survey_answers") or {}
     top = max([int(q.get("n") or 0) for q in questions()] + [int(old.get("m") or 0),
               int(db.get_setting("survey_max_n", "0") or 0)])
@@ -204,8 +188,6 @@ def save_questions(items: Any, reward: Any = None) -> list[dict[str, Any]]:
     return qs
 
 
-# ── UTF-16 entities (премиум-эмодзи) ─────────────────────────
-
 def _utf16_len(s: str) -> int:
     return len(s.encode("utf-16-le")) // 2
 
@@ -220,8 +202,6 @@ def _build(segments: list[tuple[str, Optional[dict[str, Any]]]]) -> tuple[str, l
         offset += length
     return text, entities
 
-
-# ── Состояние ────────────────────────────────────────────────
 
 def _state(user_id: int) -> Optional[dict[str, Any]]:
     return db.fetchone("SELECT * FROM survey_state WHERE user_id = ?", (user_id,))
@@ -249,8 +229,6 @@ def reward_percent(user_id: int) -> float:
     return float(reward_value()) if has_completed(user_id) else 0.0
 
 
-# ── Клавиатуры ───────────────────────────────────────────────
-
 def _single_kb(q: dict[str, Any]) -> dict[str, Any]:
     rows = [[{"text": opt, "callback_data": f"sv:{q['n']}:{i}"}]
             for i, opt in enumerate(q["options"])]
@@ -266,8 +244,6 @@ def _multi_kb(q: dict[str, Any], chosen: list[str]) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
-# ── Отправка вопросов ────────────────────────────────────────
-
 def _send_question(api: Callable[..., Any], chat_id: int, q: dict[str, Any],
                    chosen: Optional[list[str]] = None) -> None:
     head = f"Вопрос {_pos(int(q['n']))} из {len(questions())}\n\n{q['q']}"
@@ -279,7 +255,7 @@ def _send_question(api: Callable[..., Any], chat_id: int, q: dict[str, Any],
         payload["reply_markup"] = _single_kb(q)
     elif q["kind"] == "multi":
         payload["reply_markup"] = _multi_kb(q, chosen or [])
-    # text — без клавиатуры, ждём сообщение
+    # text: ждём сообщение
     api("sendMessage", payload)
 
 
@@ -316,8 +292,6 @@ def start(api: Callable[..., Any], user_id: int, telegram_id: int) -> None:
     _send_question(api, telegram_id, first_q)
 
 
-# ── Обработка нажатий на варианты ────────────────────────────
-
 def handle_callback(api: Callable[..., Any], user_id: int, chat_id: int,
                     message_id: Optional[int], data: str) -> bool:
     """
@@ -332,7 +306,7 @@ def handle_callback(api: Callable[..., Any], user_id: int, chat_id: int,
     step = int(st.get("step") or 0)
     answers = _answers(st)
 
-    # Мультивыбор: переключение варианта
+    # multi: переключение
     if data.startswith("svm:"):
         try:
             _, sn, si = data.split(":")
@@ -356,7 +330,7 @@ def handle_callback(api: Callable[..., Any], user_id: int, chat_id: int,
                 "reply_markup": _multi_kb(q, chosen)})
         return True
 
-    # Мультивыбор: «Готово»
+    # multi: готово
     if data.startswith("svd:"):
         try:
             n = int(data.split(":")[1])
@@ -367,13 +341,13 @@ def handle_callback(api: Callable[..., Any], user_id: int, chat_id: int,
             return True
         chosen = list(answers.get(str(n)) or [])
         if not chosen:
-            return True  # ждём хотя бы один вариант
+            return True  # нужен хотя бы один
         if message_id is not None:
             _lock_message(api, chat_id, message_id, q["q"], ", ".join(chosen))
         _advance(api, user_id, chat_id, _next_n(n))
         return True
 
-    # Одиночный выбор
+    # одиночный выбор
     try:
         _, sn, si = data.split(":")
         n, i = int(sn), int(si)
@@ -384,10 +358,10 @@ def handle_callback(api: Callable[..., Any], user_id: int, chat_id: int,
         return True
     opt = q["options"][i]
 
-    # Вариант требует уточнения текстом (Q4 «Другое»)?
+    # text_follow (q4 другое)?
     follow = (q.get("text_follow") or {}).get(opt)
     if follow:
-        answers[str(n)] = opt  # предварительно; финальный текст допишем
+        answers[str(n)] = opt  # временно, текст допишем
         _save_answers(user_id, answers)
         if message_id is not None:
             _lock_message(api, chat_id, message_id, q["q"], opt)
@@ -413,8 +387,6 @@ def _lock_message(api: Callable[..., Any], chat_id: int, message_id: int,
     })
 
 
-# ── Обработка текстовых ответов (Q4 «Другое», Q8) ────────────
-
 def handle_text(api: Callable[..., Any], user_id: int, chat_id: int, text: str) -> bool:
     """Ловит свободный ответ, если опрос ждёт текст. True — если обработали."""
     st = _state(user_id)
@@ -432,7 +404,7 @@ def handle_text(api: Callable[..., Any], user_id: int, chat_id: int, text: str) 
     if q["kind"] == "text":
         answers[str(step)] = text[:1000]
     else:
-        # уточнение к выбранному варианту (Q4 «Другое»)
+        # уточнение к варианту
         base = answers.get(str(step)) or ""
         answers[str(step)] = f"{base}: {text[:500]}" if base else text[:500]
     _save_answers(user_id, answers)
@@ -441,15 +413,13 @@ def handle_text(api: Callable[..., Any], user_id: int, chat_id: int, text: str) 
     return True
 
 
-# ── Финализация ──────────────────────────────────────────────
-
 def _finish(api: Callable[..., Any], user_id: int, chat_id: int) -> None:
     st = _state(user_id)
     if not st:
         return
     answers = _answers(st)
     now = db.utcnow_iso()
-    # Нормализованные ответы для статистики (мультивыбор — по строке на вариант).
+    # ответы для статистики (multi: строка на вариант)
     db.execute("DELETE FROM survey_answers WHERE user_id = ?", (user_id,))
     for q in questions():
         val = answers.get(str(q["n"]))
@@ -466,7 +436,7 @@ def _finish(api: Callable[..., Any], user_id: int, chat_id: int) -> None:
         "UPDATE survey_state SET completed = 1, await_text = 0, completed_at = ? WHERE user_id = ?",
         (now, user_id),
     )
-    # Отметим приглашение как отработанное (на случай гонок).
+    # invite done (гонки)
     db.execute("UPDATE survey_invites SET invited = 1 WHERE user_id = ?", (user_id,))
 
     segs: list[tuple[str, Optional[dict[str, Any]]]] = [("🎁 ", None), ("Спасибо за ответы!", {"type": "bold"})]
@@ -479,8 +449,6 @@ def _finish(api: Callable[..., Any], user_id: int, chat_id: int) -> None:
         "link_preview_options": {"is_disabled": True},
     })
 
-
-# ── Приглашение в опрос ──────────────────────────────────────
 
 def invite_payload(chat_id: int) -> dict[str, Any]:
     """Сообщение-приглашение: премиум-эмодзи 🗣️ + зелёная кнопка «Пройти опрос»."""
@@ -499,8 +467,8 @@ def invite_payload(chat_id: int) -> dict[str, Any]:
         "reply_markup": {"inline_keyboard": [[{
             "text": "Пройти опрос",
             "callback_data": "survey:start",
-            "style": "success",                       # зелёная кнопка (Bot API 9.4+)
-            "icon_custom_emoji_id": EMOJI_BUTTON,     # 💬
+            "style": "success",                       # success (bot api 9.4+)
+            "icon_custom_emoji_id": EMOJI_BUTTON,
         }]]},
     }
 

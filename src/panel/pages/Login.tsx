@@ -15,9 +15,7 @@ export function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
   const [initInfo, setInitInfo] = useState<{ username?: string; password?: string; newAdmin?: boolean; passwordRegenerated?: boolean; message?: string } | null>(null);
 
   useEffect(() => {
-    // Токен сброса передаём после «#» (#setup_token=…&reset=1): часть после «#»
-    // не уходит на сервер и не попадает в логи nginx. Старый вариант «?» тоже
-    // понимаем. Токен сразу убираем из адресной строки и истории браузера.
+// токен сброса в hash (#setup_token=…&reset=1), не уходит на сервер/в логи nginx
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const queryParams = new URLSearchParams(window.location.search);
     const setupToken = hashParams.get('setup_token') || queryParams.get('setup_token') || '';
@@ -59,7 +57,7 @@ export function LoginForm({ onLogin }: { onLogin: (token: string) => void }) {
       const data = await res.json();
       if (res.ok && data.session_token) { setPanelToken(data.session_token); onLogin(data.session_token); }
       else {
-        // Код одноразовый: после ошибки нужно войти заново (новый код придёт в Telegram)
+        // код одноразовый: после ошибки нужен новый вход
         setTempToken(''); setVerifyCode('');
         setError(`${data.error || 'Неверный код'}. Введите пароль ещё раз — придёт новый код.`);
       }

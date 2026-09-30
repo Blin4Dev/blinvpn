@@ -22,7 +22,7 @@ interface StateConfig {
   ctaPrimary: boolean;
 }
 
-// Покупка: выбор устройств и оплата, после неё — окно «Добавить подписку»
+// покупка → устройства + оплата → лист настройки
 const BUY_PATH = `/payment?return=${encodeURIComponent("/subscription?setup=1")}`;
 
 const STATE_CONFIGS: Record<SubscriptionState, StateConfig> = {
@@ -82,8 +82,7 @@ const STATE_CONFIGS: Record<SubscriptionState, StateConfig> = {
   },
 };
 
-// Цвет заголовка статуса: оранжевый — активна, светло-оранжевый — скоро
-// закончится, белый — нет/истекла, красный — заблокирована.
+// цвет заголовка статуса по тону
 const TONE: Record<StateConfig["statusTone"], string> = {
   ok: T.orange,
   warn: "#FFB587",
@@ -91,7 +90,7 @@ const TONE: Record<StateConfig["statusTone"], string> = {
   danger: T.danger,
 };
 
-/** «Остался 1 день», «Осталось 2 дня», «Осталось 5 дней». */
+// «остался 1 день» / «осталось N дня|дней»
 function daysLeftTitle(n: number): string {
   if (n <= 0) return "Заканчивается сегодня";
   const a = n % 100;
@@ -135,8 +134,7 @@ function ActionTile({
         border: `1px solid ${T.border}`,
         borderRadius: T.radius.xl,
         cursor: disabled ? "not-allowed" : "pointer",
-        // Не opacity: анимация появления заканчивается на opacity 1 и перебивает её.
-        // Неактивную плитку делаем серой через цвета.
+        // не через opacity: анимация rise заканчивается на 1 и перебьёт; серый через цвета
         animation: `blinvpnRise 0.5s var(--ease-out) ${delay}s both`,
         position: "relative",
       }}
@@ -174,13 +172,13 @@ export default function BlinVPNApp() {
   const [subscriptionUntilText, setSubscriptionUntilText] = useState("");
   const [trialEnabled, setTrialEnabled] = useState(true);
   const [trialBusy, setTrialBusy] = useState(false);
-  // Непрочитанные ответы поддержки — цифра на плитке «Поддержка»
+  // непрочитанные ответы поддержки → бейдж на плитке
   const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
     fetchSupport(1e12).then((st) => setSupportUnread(st.chat?.unread || 0)).catch(() => { /* нет чата */ });
   }, []);
   const [expiringTitle, setExpiringTitle] = useState("Скоро закончится");
-  // Чёрный список: заблокирована и кнопка поддержки
+  // чёрный список: заблокирован + только поддержка
   const [blacklisted, setBlacklisted] = useState(false);
 
   const cfg = STATE_CONFIGS[subscriptionState];
@@ -220,7 +218,7 @@ export default function BlinVPNApp() {
           const st = String(me.subscription_status || "");
           const until = String(me.subscription_until || "");
           if (until) setSubscriptionUntilText(formatDateRu(until));
-          // Заблокирован ключ или весь аккаунт — одно и то же состояние «Заблокирована»
+          // key or account ban → same «заблокирована» state
           if (st === "blocked" || st === "banned") {
             setSubscriptionState("blocked");
             setBlacklisted(!!me.blacklisted);
@@ -272,14 +270,14 @@ export default function BlinVPNApp() {
             height: "100%",
             paddingLeft: 26,
             paddingRight: 26,
-            // Воздух снизу + системная полоска «домой» (в Telegram fullscreen)
+            // нижний отступ + индикатор home (tg fullscreen)
             paddingBottom: "calc(36px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
           }}
         >
-          {/* Logo — занимает свободное место по центру */}
+          {/* logo fills free space */}
           <div
             style={{
               flex: "1 1 auto",
@@ -332,7 +330,7 @@ export default function BlinVPNApp() {
             </div>
           </div>
 
-          {/* Низ: статус + история + CTA + сетка */}
+          {/* bottom: status + history + cta + grid */}
           <div style={{ flexShrink: 0 }}>
             <div
               style={{

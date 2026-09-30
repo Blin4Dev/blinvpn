@@ -1,13 +1,4 @@
-"""
-Общие «чистые» операции над БД, нужные и API (core), и боту, и fulfillment.
-Не зависят от FastAPI — только database.
-
-Содержит:
-  • активацию промокода-скидки (одноразово на пользователя, на 90 дней);
-  • учёт переходов по трекинговым (специальным) ссылкам;
-  • атрибуцию выручки трекинговым ссылкам при оплате.
-"""
-
+# промокоды, трекинг-ссылки, выводы (только бд)
 from __future__ import annotations
 
 import re
@@ -18,15 +9,13 @@ import database as db  # type: ignore
 
 PROMO_DISCOUNT_DAYS = 90
 
-# Системные промокоды (персональные скидки от бота). Их нельзя ввести вручную:
-# они хранятся с is_active = 0 и выдаются только кодом (grant_personal_discount).
+# системные промо (только бот; is_active=0, пользователи не вводят)
 SYSTEM_PROMO_CODES = {"DRIP10"}
 MIN_WITHDRAW_RUB = 100.0
 _TON_ADDR_RE = re.compile(r"^(?:UQ|EQ|0Q|kQ)[A-Za-z0-9_-]{46}$")
 
 
 class ServiceError(Exception):
-    """Ошибка бизнес-логики с человекочитаемым сообщением и HTTP-кодом."""
 
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
@@ -50,13 +39,7 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     return dt
 
 
-# ── Промокоды-скидки ─────────────────────────────────────────
-
 def activate_promocode(user_id: int, code: str) -> dict[str, Any]:
-    """
-    Активирует промокод-скидку пользователю (одноразово). Бросает ServiceError.
-    Возвращает {percent, expires_at, code, name}.
-    """
     code = (code or "").upper().strip()
     if not code:
         raise ServiceError("Пустой промокод", 400)
@@ -77,9 +60,7 @@ def activate_promocode(user_id: int, code: str) -> dict[str, Any]:
     percent = float(promo.get("value") or 0)
     expires_at = (_utcnow() + timedelta(days=PROMO_DISCOUNT_DAYS)).isoformat()
 
-    # АТОМАРНО занимаем использование: условие uses_count < uses_limit в самом
-    # UPDATE исключает гонку (иначе множество юзеров одновременно проходят
-    # проверку до инкремента и лимит превышается).
+    # атомарный uses_count с проверкой uses_limit
     if promo.get("uses_limit") is not None:
         cur = db.execute(
             "UPDATE promocodes SET uses_count = uses_count + 1 "
@@ -97,19 +78,14 @@ def activate_promocode(user_id: int, code: str) -> dict[str, Any]:
             "VALUES (?, ?, ?, ?, ?)",
             (promo["id"], user_id, percent, expires_at, db.utcnow_iso()),
         )
-    except Exception:  # noqa: BLE001 — гонка: уникальный индекс отсёк дубль
-        # Возвращаем занятое использование обратно.
+    except Exception:  # noqa: BLE001
+        # откатить uses_count при гонке unique-index
         db.execute("UPDATE promocodes SET uses_count = uses_count - 1 WHERE id = ?", (promo["id"],))
         raise ServiceError("Промокод уже активирован", 400)
     return {"percent": percent, "expires_at": expires_at, "code": code, "name": promo.get("name")}
 
 
 def grant_personal_discount(user_id: int, percent: float, hours: int, code: str = "DRIP10") -> bool:
-    """
-    Выдаёт персональную временную скидку на `hours` часов (одноразово).
-    Использует скрытый системный промокод. active_discount_for_user подхватит её.
-    Возвращает True, если скидка была выдана (или уже действует).
-    """
     promo = db.fetchone("SELECT * FROM promocodes WHERE code = ?", (code,))
     if not promo:
         db.execute(
@@ -120,7 +96,7 @@ def grant_personal_discount(user_id: int, percent: float, hours: int, code: str 
         promo = db.fetchone("SELECT * FROM promocodes WHERE code = ?", (code,))
     if not promo:
         return False
-    # Уже есть активация? Не дублируем.
+    # уже активирован
     if db.fetchone(
         "SELECT id FROM promocode_activations WHERE promocode_id = ? AND user_id = ?",
         (promo["id"], user_id),
@@ -133,13 +109,11 @@ def grant_personal_discount(user_id: int, percent: float, hours: int, code: str 
             "VALUES (?, ?, ?, ?, ?)",
             (promo["id"], user_id, float(percent), expires_at, db.utcnow_iso()),
         )
-    except Exception:  # noqa: BLE001 — уже есть активация (гонка)
+    except Exception:  # noqa: BLE001
         return True
     db.execute("UPDATE promocodes SET uses_count = uses_count + 1 WHERE id = ?", (promo["id"],))
     return True
 
-
-# ── Трекинговые (специальные) ссылки ─────────────────────────
 
 def register_tracking_click(
     code: str,
@@ -150,14 +124,6 @@ def register_tracking_click(
     full_name: Optional[str] = None,
     is_new_user: bool = False,
 ) -> Optional[dict[str, Any]]:
-    """
-    Регистрирует переход по трекинговой ссылке /start trk_<code>.
-      • +1 к clicks всегда;
-      • первый визит пользователя → +1 unique_users (и new_users, если он новый);
-      • закрепляет за пользователем tracking_code (для атрибуции выручки);
-      • автоактивирует промокод ссылки (если задан и ещё не активирован).
-    Возвращает строку ссылки (dict) либо None, если код не найден/выключен.
-    """
     code = (code or "").strip()
     if not code:
         return None
@@ -179,31 +145,30 @@ def register_tracking_click(
         db.execute(
             "INSERT INTO tracking_link_users (link_id, user_id, telegram_id, username, full_name, "
             "is_new_user, visited_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (link_id, user_id, telegram_id, username, None, 1 if is_new_user else 0, now),  # имя не храним
+            (link_id, user_id, telegram_id, username, None, 1 if is_new_user else 0, now),
         )
         db.execute("UPDATE tracking_links SET unique_users = unique_users + 1 WHERE id = ?", (link_id,))
         if is_new_user:
             db.execute("UPDATE tracking_links SET new_users = new_users + 1 WHERE id = ?", (link_id,))
 
-    # Закрепляем ссылку за пользователем (единожды) для учёта выручки.
+    # зафиксировать tracking_code один раз
     if user_id is not None:
         row = db.fetchone("SELECT tracking_code FROM users WHERE id = ?", (user_id,))
         if row is not None and not row.get("tracking_code"):
             db.execute("UPDATE users SET tracking_code = ? WHERE id = ?", (code, user_id))
 
-    # Автоактивация промокода ссылки.
+    # авто-активация промокода со ссылки
     if user_id is not None and link.get("promocode"):
         try:
             activate_promocode(user_id, str(link["promocode"]))
         except ServiceError:
-            pass  # уже активирован / истёк — не мешаем онбордингу
+            pass  # already used / expired
 
     _recalc_conversion(link_id)
     return link
 
 
 def reverse_tracking_payment(user_id: int, amount: float) -> None:
-    """При возврате снимает выручку, начисленную трекинговой ссылке этим платежом."""
     if amount is None or float(amount) <= 0:
         return
     row = db.fetchone("SELECT tracking_code FROM users WHERE id = ?", (user_id,))
@@ -228,7 +193,6 @@ def reverse_tracking_payment(user_id: int, amount: float) -> None:
 
 
 def credit_tracking_payment(user_id: int, amount: float) -> None:
-    """При успешной оплате начисляет выручку трекинговой ссылке пользователя."""
     if amount is None or float(amount) <= 0:
         return
     row = db.fetchone("SELECT tracking_code FROM users WHERE id = ?", (user_id,))
@@ -269,12 +233,7 @@ def _recalc_conversion(link_id: int) -> None:
     db.execute("UPDATE tracking_links SET conversion_rate = ? WHERE id = ?", (rate, link_id))
 
 
-# ── Вывод реф. средств (USDT TON) ────────────────────────────
-
 def valid_ton_address(address: str) -> bool:
-    """
-    Адрес для вывода: UQ…/EQ… (raw-friendly), либо домен *.ton / *.t.me.
-    """
     a = (address or "").strip()
     if not a:
         return False
@@ -295,7 +254,7 @@ def serialize_withdrawal(w: dict[str, Any]) -> dict[str, Any]:
         "address": w.get("address"),
         "method": w.get("method") or "usdt_ton",
         "status": w.get("status") or "pending",
-        # Хэш транзакции (исторически колонка называется tx_link).
+        # хеш транзакции (колонка всё ещё tx_link)
         "tx_hash": w.get("tx_link"),
         "tx_link": w.get("tx_link"),
         "reject_reason": w.get("reject_reason"),
@@ -307,10 +266,6 @@ def serialize_withdrawal(w: dict[str, Any]) -> dict[str, Any]:
 
 
 def request_withdrawal(user_id: int, amount: float, address: str) -> dict[str, Any]:
-    """
-    Создаёт запрос на вывод и ЗАМОРАЖИВАЕТ сумму (списывает с partner_balance
-    до решения администратора). Бросает ServiceError.
-    """
     try:
         amount = float(amount)
     except (TypeError, ValueError):
@@ -324,9 +279,7 @@ def request_withdrawal(user_id: int, amount: float, address: str) -> dict[str, A
     if not db.fetchone("SELECT id FROM users WHERE id = ?", (user_id,)):
         raise ServiceError("Пользователь не найден", 404)
 
-    # Списание и заявка — одной транзакцией: либо оба шага, либо ни одного
-    # (иначе при сбое на втором шаге деньги списались бы без заявки).
-    # Условие partner_balance >= amount в самом UPDATE исключает двойной вывод.
+    # списание + insert в одной tx; WHERE balance >= amount против double-spend
     with db.transaction() as tx:
         cur = tx.execute(
             "UPDATE users SET partner_balance = partner_balance - ? WHERE id = ? AND partner_balance >= ?",
@@ -358,7 +311,6 @@ def _get_withdrawal(withdrawal_id: int) -> dict[str, Any]:
 
 
 def approve_withdrawal(withdrawal_id: int) -> dict[str, Any]:
-    """Шаг 1: заявка одобрена — админ видит адрес и делает перевод. Баланс уже заморожен."""
     _get_withdrawal(withdrawal_id)
     cur = db.execute(
         "UPDATE withdrawals SET status = 'approved', approved_at = ? WHERE id = ? AND status = 'pending'",
@@ -370,7 +322,6 @@ def approve_withdrawal(withdrawal_id: int) -> dict[str, Any]:
 
 
 def complete_withdrawal(withdrawal_id: int, tx_hash: str) -> dict[str, Any]:
-    """Шаг 2: перевод сделан — сохраняем hash транзакции, статус «Завершено»."""
     _get_withdrawal(withdrawal_id)
     tx_hash = (tx_hash or "").strip()
     if not tx_hash:
@@ -388,14 +339,9 @@ def complete_withdrawal(withdrawal_id: int, tx_hash: str) -> dict[str, Any]:
 
 
 def reject_withdrawal(withdrawal_id: int, reason: str = "", refund: bool = True) -> dict[str, Any]:
-    """
-    Отказ (из «Ожидает» или «Одобрен»). reason — причина, refund — вернуть ли
-    замороженную сумму на реферальный баланс пользователя.
-    """
     w = _get_withdrawal(withdrawal_id)
     reason = (reason or "").strip()[:500]
-    # Смена статуса и возврат — одной транзакцией; возврат только если статус
-    # сменили именно мы (защита от двойного возврата).
+    # смена статуса + опциональный возврат в одной tx
     with db.transaction() as tx:
         cur = tx.execute(
             "UPDATE withdrawals SET status = 'rejected', reject_reason = ?, refunded = ?, processed_at = ? "
@@ -413,7 +359,6 @@ def reject_withdrawal(withdrawal_id: int, reason: str = "", refund: bool = True)
 
 
 def reject_open_withdrawals_for_user(user_id: int, reason: str) -> list[dict[str, Any]]:
-    """Отклоняет все незавершённые заявки пользователя с возвратом средств (при бане)."""
     rows = db.fetchall(
         "SELECT id FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'approved')",
         (int(user_id),),

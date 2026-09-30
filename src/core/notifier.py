@@ -1,9 +1,3 @@
-"""
-Отправка сообщений в Telegram из backend-процессов (рассылки и т.п.).
-
-Только стандартная библиотека. Токен берётся из TELEGRAM_BOT_TOKEN.
-"""
-
 from __future__ import annotations
 
 import json
@@ -16,11 +10,11 @@ from typing import Any, Optional
 
 API_BASE = "https://api.telegram.org"
 
-# Разметка из панели → Telegram HTML.
-_EMOJI_RE = re.compile(r"!\[(\d+)\]")            # ![premium_emoji_id]
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)    # **жирный**
-_MONO_RE = re.compile(r"`([^`]+?)`")              # `моно`
-_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)  # *курсив*
+# разметка панели -> telegram html
+_EMOJI_RE = re.compile(r"!\[(\d+)\]")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.S)
+_MONO_RE = re.compile(r"`([^`]+?)`")
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.S)
 
 
 def format_markup(text: str) -> str:
@@ -68,7 +62,7 @@ def call(method: str, payload: dict[str, Any], *, timeout: float = 30.0,
             body = json.loads(raw)
         except json.JSONDecodeError:
             return None
-        # 429 → подождать retry_after и повторить один раз.
+        # 429: один retry по retry_after
         if e.code == 429:
             retry_after = 1.0
             try:
@@ -232,7 +226,7 @@ def send_broadcast_message(
         res = call("sendPhoto", payload, on_throttle=on_throttle)
         if res is not None:
             return _msg_id(res)
-        # если картинка не принята Telegram — отправим хотя бы текст
+        # если фото не прошло, шлём текст
     payload = {
         "chat_id": chat_id,
         "text": html,

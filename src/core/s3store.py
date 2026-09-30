@@ -1,11 +1,3 @@
-"""
-Минимальный клиент S3 (AWS Signature V4) — для Timeweb Cloud S3 и любого
-S3-совместимого хранилища. Без внешних зависимостей (только стандартная библиотека).
-
-Настройки хранятся в БД (панель → Настройки → Хранилище S3); секретный ключ —
-в зашифрованном виде. Адресация — path-style: https://s3.twcstorage.ru/<бакет>/<ключ>.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -34,10 +26,6 @@ class S3Error(Exception):
         self.message = message
         self.status = status
 
-
-# ─────────────────────────────────────────────────────────────
-# Настройки
-# ─────────────────────────────────────────────────────────────
 
 def _crypto():
     try:
@@ -108,10 +96,6 @@ def enabled() -> bool:
     return c["enabled"] and bool(c["bucket"] and c["access_key"] and c["has_secret"])
 
 
-# ─────────────────────────────────────────────────────────────
-# Подпись AWS Signature V4
-# ─────────────────────────────────────────────────────────────
-
 def _h(key: bytes, msg: str) -> bytes:
     return hmac.new(key, msg.encode(), hashlib.sha256).digest()
 
@@ -175,10 +159,6 @@ def presign_get(key: str, expires: int = 3600, response: Optional[dict[str, str]
     sig = hmac.new(_signing_key(cfg["secret_key"], date, cfg["region"]), sts.encode(), hashlib.sha256).hexdigest()
     return f"{base}?{_canonical_query(q)}&X-Amz-Signature={sig}"
 
-
-# ─────────────────────────────────────────────────────────────
-# Операции
-# ─────────────────────────────────────────────────────────────
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *a, **k):  # noqa: D401

@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-Помощник BlinVPN на сервере (systemd: blinvpn-host.service, от root).
-
-Панель не может сама ставить контейнеры и править nginx — она работает в Docker
-без прав на сервер. Поэтому панель кладёт ЗАДАНИЕ в data/host/jobs/<id>.json,
-а этот помощник его выполняет и пишет результат в data/host/results/<id>.json.
-
-Выполняются только перечисленные ниже действия с проверенными параметрами —
-произвольные команды помощник не принимает. Сетевых портов не открывает.
-
-Действия:
-  status          — состояние XBM, nginx страницы подписки, сети Docker
-  xbm_install     — собрать и запустить XBM (параметры: remnawave_url, sub_domain, network)
-  xbm_connect     — подключить XBM к nginx страницы подписки (sub_domain, conf, container)
-  xbm_disconnect  — вернуть nginx как было (conf, container)
-  xbm_stop        — остановить XBM
-"""
 
 from __future__ import annotations
 
@@ -32,13 +15,14 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-# Файл лежит в src/core/ — корень проекта тремя уровнями выше
+# корень проекта: на 3 уровня выше src/core
 PROJECT = os.path.abspath(sys.argv[sys.argv.index("--project") + 1]) if "--project" in sys.argv else os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA = os.path.join(PROJECT, "data")
 ENV = os.path.join(PROJECT, ".env")
 
-XBM_CONTAINER = "xray-balancer-mw"
+XBM_CONTAINER = "blinvpn-xbm"
+OLD_XBM_CONTAINER = "xray-balancer-mw"  # старое имя контейнера
 ID_RE = re.compile(r"^[a-f0-9]{16}$")
 DOMAIN_RE = re.compile(r"^(?=.{4,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
 URL_RE = re.compile(r"^https?://[A-Za-z0-9.:_-]{1,200}(/[A-Za-z0-9._~/-]{0,200})?$")
@@ -46,7 +30,7 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 CONF_RE = re.compile(r"^/opt/[A-Za-z0-9._/-]{1,200}/nginx\.conf$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{4,128}$")
 MAX_JOB_BYTES = 8192
-MAX_JOBS_PER_PASS = 3   # больше за проход не выполняем — лишние задания удаляются
+MAX_JOBS_PER_PASS = 3   # лимит за проход, остальное дропаем
 MAX_RESULTS = 200
 
 
@@ -54,8 +38,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-# Каталоги открываются один раз и дальше используются только через дескрипторы:
-# data/ пишет контейнер, и подменить каталог ссылкой «на лету» не выйдет.
+# каталоги через fd (data/ пишет контейнер, без symlink-подмены)
 _FD: dict[str, int] = {}
 
 
@@ -81,8 +64,6 @@ class Job:
 class Fail(Exception):
     pass
 
-
-# ── Утилиты ─────────────────────────────────────────────────────────────────
 
 def _write_file(dir_fd: int, name: str, text: str) -> None:
     tmp = name + ".tmp"
@@ -155,7 +136,7 @@ def xbm_port() -> str:
 def http_get(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 10) -> tuple[int, dict[str, str], bytes]:
     req = urllib.request.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — адрес собран из проверенных частей
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read(4 * 1024 * 1024)
     except urllib.error.HTTPError as e:
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, b""
@@ -222,7 +203,31 @@ def nginx_tool():
     return nginx_xbm
 
 
-# ── Действия ────────────────────────────────────────────────────────────────
+def _retarget_nginx_xbm(job: Job, conf: str, ng: str) -> None:
+    """Если в nginx ещё старое имя контейнера XBM — заменить на текущее и перезагрузить."""
+    old_tgt, new_tgt = f"{OLD_XBM_CONTAINER}:4100", f"{XBM_CONTAINER}:4100"
+    try:
+        real = safe_conf(conf)
+    except Fail:
+        return
+    try:
+        with open(real, encoding="utf-8", newline="") as f:
+            text = f.read()
+    except OSError:
+        return
+    if old_tgt not in text or not nginx_tool().is_enabled(text):
+        return
+    if container_state(ng) != "running":
+        job.log(f"В nginx ещё {old_tgt}, но {ng} не запущен — поправьте при «Подключить»")
+        return
+    job.log(f"Обновляю nginx: {old_tgt} → {new_tgt}")
+    new = text.replace(old_tgt, new_tgt)
+    backup = nginx_tool()._write(real, new)
+    try:
+        _reload_or_restore(job, real, ng, backup)
+    except Fail as e:
+        job.log(f"Не удалось обновить имя в nginx: {e}")
+
 
 def act_status(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     ng = p.get("container") or "remnawave-nginx"
@@ -256,7 +261,7 @@ def act_xbm_install(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     env_set("XBM_REMNAWAVE_URL", url)
     env_set("XBM_SUB_DOMAIN", dom)
     profiles(True)
-    # data/ пишет контейнер — каталог открываем без перехода по ссылкам
+    # data/ от контейнера, без follow symlink
     os.close(_open_dir(_FD["data"], "xbm", 1000, 0o755))
     job.log("Собираю XBM (пара минут)…")
     for attempt in range(3):
@@ -266,12 +271,17 @@ def act_xbm_install(job: Job, p: dict[str, Any]) -> dict[str, Any]:
         time.sleep(15)
     else:
         raise Fail("Сборка XBM не удалась — ничего не менял")
-    # XBM, поставленный раньше отдельно, заменяем (имя контейнера то же — nginx не заметит)
-    proj = subprocess.run(["docker", "inspect", XBM_CONTAINER, "--format",
-                           '{{ index .Config.Labels "com.docker.compose.project" }}'], capture_output=True, text=True).stdout.strip()
-    if proj and proj != os.path.basename(PROJECT):
-        job.log("Заменяю XBM, установленный ранее отдельно…")
-        run(["docker", "rm", "-f", XBM_CONTAINER], job, check=False)
+    # старый/отдельный xbm заменяем
+    for old in (XBM_CONTAINER, OLD_XBM_CONTAINER):
+        proj = subprocess.run(["docker", "inspect", old, "--format",
+                               '{{ index .Config.Labels "com.docker.compose.project" }}'],
+                              capture_output=True, text=True).stdout.strip()
+        if proj and proj != os.path.basename(PROJECT):
+            job.log(f"Заменяю XBM ({old}), установленный ранее отдельно…")
+            run(["docker", "rm", "-f", old], job, check=False)
+        elif old == OLD_XBM_CONTAINER and container_state(old) != "absent":
+            job.log("Убираю контейнер со старым именем xray-balancer-mw…")
+            run(["docker", "rm", "-f", old], job, check=False)
     job.log("Запускаю XBM…")
     run(compose("up", "-d", "xbm"), job)
     for _ in range(40):
@@ -280,6 +290,9 @@ def act_xbm_install(job: Job, p: dict[str, Any]) -> dict[str, Any]:
         time.sleep(1)
     else:
         raise Fail("XBM не отвечает после запуска")
+    # поправим nginx, если смотрел на старое имя
+    _retarget_nginx_xbm(job, p.get("conf") or "/opt/remnawave/nginx/nginx.conf",
+                        p.get("container") or "remnawave-nginx")
     job.log("XBM запущен")
     return {"healthy": True}
 
@@ -420,7 +433,7 @@ def process(name: str) -> None:
         return
     try:
         os.stat(f"{jid}.json", dir_fd=_FD["results"], follow_symlinks=False)
-        return  # уже выполнялось
+        return  # уже было
     except OSError:
         pass
     job = Job(jid)
@@ -451,7 +464,7 @@ def cleanup() -> None:
         except OSError:
             pass
     items.sort(reverse=True)
-    # недописанные задания панели (.<id>.tmp), брошенные больше часа назад
+    # брошенные .<id>.tmp старше часа
     jfd = _FD["jobs"]
     for n in os.listdir(jfd):
         try:
@@ -472,7 +485,7 @@ def _open_dir(parent_fd: int, name: str, uid: int, mode: int) -> int:
     try:
         st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         if not stat.S_ISDIR(st.st_mode):
-            os.unlink(name, dir_fd=parent_fd)  # вместо каталога подсунули файл/ссылку
+            os.unlink(name, dir_fd=parent_fd)  # не каталог
             raise FileNotFoundError
     except FileNotFoundError:
         os.mkdir(name, 0o700, dir_fd=parent_fd)
@@ -486,7 +499,7 @@ def main() -> None:
     os.makedirs(DATA, exist_ok=True)
     data_fd = os.open(DATA, os.O_RDONLY | os.O_DIRECTORY)
     _FD["data"] = data_fd
-    # data/host — помощника (root); задания пишет контейнер (uid 1000), результаты — только помощник
+    # host: root; jobs: uid 1000; results: только runner
     _FD["host"] = _open_dir(data_fd, "host", 0, 0o755)
     _FD["jobs"] = _open_dir(_FD["host"], "jobs", 1000, 0o700)
     _FD["results"] = _open_dir(_FD["host"], "results", 0, 0o755)
@@ -498,7 +511,7 @@ def main() -> None:
             if i < MAX_JOBS_PER_PASS:
                 process(name)
             else:
-                try:  # заданий больше, чем панель может поставить, — не выполняем
+                try:  # сверх лимита панели не берём
                     os.unlink(name, dir_fd=_FD["jobs"])
                 except OSError:
                     pass

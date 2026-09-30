@@ -3,12 +3,7 @@ import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 
-/**
- * Мини‑приложение BlinVPN
- * Vite root перенесён в src/app, чтобы системные файлы жили внутри app.
- */
-
-// Единственный источник картинок — каталог assets в КОРНЕ репозитория (рядом с src).
+// корень vite — src/app; картинки в assets/ в корне репо
 const ASSETS_DIR = path.resolve(__dirname, "../../assets");
 const OUT_ASSETS = path.resolve(__dirname, "../../dist/miniapp/assets");
 
@@ -22,7 +17,7 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-/** Отдаёт /assets/* из корневого каталога assets в dev-сервере и копирует их в сборку. */
+// раздавать /assets/* в dev и копировать в сборку
 function rootAssets(): Plugin {
   return {
     name: "blinvpn-root-assets",
@@ -48,8 +43,7 @@ function rootAssets(): Plugin {
       });
     },
     closeBundle() {
-      // Страница-переходник для deep-link Incy/Happ (Telegram не открывает их схемы
-      // напрямую). Без неё /redirect.html отдавал бы само мини-приложение.
+      // скопировать redirect.html для deep link incy/happ (tg не открывает эти схемы)
       const redirectSrc = path.resolve(__dirname, "../site/redirect.html");
       if (fs.existsSync(redirectSrc)) {
         fs.copyFileSync(redirectSrc, path.resolve(__dirname, "../../dist/miniapp/redirect.html"));
@@ -69,7 +63,7 @@ function rootAssets(): Plugin {
 
 export default defineConfig({
   plugins: [react(), rootAssets()],
-  // Запускаем Vite из корня проекта, поэтому root задаём как путь от корня.
+  // cwd — корень репо, root относительный
   root: "src/app",
   base: "/",
   build: {

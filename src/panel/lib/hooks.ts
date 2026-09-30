@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-// small hook: close menu on outside click
+// хук: закрыть меню по клику снаружи
 export function useOutside<T extends HTMLElement>(onOutside: () => void) {
   const ref = useRef<T>(null);
   useEffect(() => {

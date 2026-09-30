@@ -1,9 +1,6 @@
 import type { CSSProperties } from "react";
 
-/**
- * BlinVPN design tokens — тёплый уголь + эмбер-оранжевый.
- * Один источник правды для inline-стилей и JS-логики.
- */
+// токены темы (тёплый уголь + оранжевый)
 export const T = {
   bg: "#14110E",
   bgOuter: "#14110E",
@@ -41,7 +38,7 @@ export const btnReset: CSSProperties = {
   fontFamily: T.font,
 };
 
-/** Обёртка страницы под макет 402px */
+// оболочка страницы под макет 402px
 export function pageFrame(extra?: CSSProperties): CSSProperties {
   return {
     position: "relative",

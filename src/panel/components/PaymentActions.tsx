@@ -4,12 +4,7 @@ import { DotsMenu, Modal, Spinner, Toggle } from './ui';
 import { apiFetch, parseErr } from '../lib/api';
 import type { PaymentRow, ToastType } from '../lib/types';
 
-/**
- * «⋯» у платежа (Финансы и карточка пользователя):
- *  • Возврат — деньги возвращаются через Platega / Telegram Stars, подписка откатывается;
- *  • Чарджбек — банк уже вернул деньги по спору: только откат последствий платежа,
- *    деньги НЕ возвращаются (правило Platega — при чарджбеке возврат делать нельзя).
- */
+// refund через platega/stars; chargeback только откат (деньги уже вернул банк)
 export const PaymentActions: React.FC<{ pm: PaymentRow; onDone: () => void; onToast: (t: string, m: string, ty?: ToastType) => void }> = ({ pm, onDone, onToast }) => {
   const [ask, setAsk] = useState<'' | 'refund' | 'chargeback'>('');
   const [busy, setBusy] = useState(false);

@@ -1,29 +1,4 @@
-"""
-Служба поддержки: чат пользователя с поддержкой внутри мини-приложения.
-
-• У пользователя ОДНА переписка (чат) на всю жизнь — в ней видна вся история.
-• Внутри переписки — обращения (тикеты): первое сообщение пользователя открывает
-  обращение №N, админ его закрывает; следующее сообщение открывает №N+1.
-• Можно ответить на конкретное сообщение (цитата).
-• Переписка обращения хранится 7 дней после его закрытия, потом удаляется
-  вместе с вложениями (cleanup()). Если хранилище заполнено на 90% — удаляются
-  самые старые вложения, пока не освободится место.
-• Вложения лежат в S3 (Timeweb Cloud, s3store.py), если оно настроено в панели,
-  иначе — на диске сервера (data/support).
-
-Вложения. Файл отправляется отдельным запросом «как есть» (тело = байты файла),
-пишется на диск по ходу загрузки (в память не копится), получает id, а потом
-прикрепляется к сообщению. Тип определяем по содержимому (сигнатуре): «как
-картинку/видео» показываем только настоящие JPEG/PNG/GIF/WebP/MP4/MOV/WebM,
-остальное — только на скачивание. Отдаются по короткоживущей подписанной ссылке.
-
-Защита хранилища:
-  • до 10 файлов в сообщении, до 50 МБ каждый;
-  • не больше 10 загруженных, но не отправленных файлов (живут 2 часа);
-  • не больше 2 загрузок одновременно;
-  • хранилище заполнено на 90% → удаляются самые старые вложения.
-"""
-
+# чат поддержки в приложении + тикеты + вложения
 from __future__ import annotations
 
 import hashlib
@@ -38,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-# Проверка прав на обращение ВНУТРИ транзакции: (ticket) → None | (сообщение, http-код)
+# guard(ticket) → None | (msg, http); проверка внутри tx
 Guard = Optional[Callable[[dict[str, Any]], Optional[tuple[str, int]]]]
 
 
@@ -65,20 +40,20 @@ def _env_num(key: str, default: float) -> float:
         return float(default)
 
 
-MAX_FILE_BYTES = 50 * MB                # лимит на файл (и для пользователя, и для поддержки)
+MAX_FILE_BYTES = 50 * MB  # лимит на файл (и для пользователя, и для поддержки)
 MAX_FILES_PER_MESSAGE = 10
 MAX_TEXT = 4000
 EDIT_WINDOW = 48 * 3600  # своё сообщение сотрудник может изменить или удалить в течение 48 часов
-FILE_URL_TTL = 6 * 3600                 # ссылка на файл живёт 6 часов
-PENDING_TTL = 2 * 3600                  # загруженные, но не отправленные файлы удаляются через 2 часа
-KEEP_AFTER_CLOSE_DAYS = 7               # переписка обращения хранится 7 дней после закрытия
-FILL_TRIGGER = 0.90                     # хранилище заполнено на 90% — чистим старые вложения…
-FILL_TARGET = 0.80                      # …до 80%
+FILE_URL_TTL = 6 * 3600  # ссылка на файл живёт 6 часов
+PENDING_TTL = 2 * 3600  # загруженные, но не отправленные файлы удаляются через 2 часа
+KEEP_AFTER_CLOSE_DAYS = 7  # переписка обращения хранится 7 дней после закрытия
+FILL_TRIGGER = 0.90  # хранилище заполнено на 90% - чистим старые вложения…
+FILL_TARGET = 0.80  # …до 80%
 USER_MAX_PENDING = 10
 MAX_PARALLEL_UPLOADS = 2
-MIN_FREE_BYTES = int(_env_num("SUPPORT_MIN_FREE_GB", 2) * 1024 * MB)   # запас на диске для временных файлов
+MIN_FREE_BYTES = int(_env_num("SUPPORT_MIN_FREE_GB", 2) * 1024 * MB)  # запас на диске для временных файлов
 CLOSE_PROMPT_TEXT = "Подскажите, могу ли я ещё чем-то помочь?"
-CLOSE_PROMPT_TTL = 60 * 60              # нет ответа на вопрос 60 минут — обращение закрывается само
+CLOSE_PROMPT_TTL = 60 * 60  # нет ответа на вопрос 60 минут - обращение закрывается само
 
 
 class SupportError(Exception):
@@ -109,10 +84,6 @@ def files_dir() -> str:
     return os.path.join(base, "support")
 
 
-# ─────────────────────────────────────────────────────────────
-# Тип файла по содержимому
-# ─────────────────────────────────────────────────────────────
-
 _INLINE_MIME = {
     "jpg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp",
     "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
@@ -120,7 +91,6 @@ _INLINE_MIME = {
 
 
 def sniff(head: bytes) -> tuple[str, Optional[str]]:
-    """(kind, ext): kind — image | video | file. Только по сигнатуре содержимого."""
     if head.startswith(b"\xff\xd8\xff"):
         return "image", "jpg"
     if head.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -134,7 +104,7 @@ def sniff(head: bytes) -> tuple[str, Optional[str]]:
         if brand == b"qt  ":
             return "video", "mov"
         if brand in (b"heic", b"heix", b"mif1", b"msf1", b"avif"):
-            return "file", None          # HEIC/AVIF браузеры показывают не везде — как файл
+            return "file", None  # heic/AVIF браузеры показывают не везде - как файл
         return "video", "mp4"
     if head.startswith(b"\x1a\x45\xdf\xa3"):
         return "video", "webm"
@@ -142,15 +112,10 @@ def sniff(head: bytes) -> tuple[str, Optional[str]]:
 
 
 def clean_name(name: str) -> str:
-    """Имя файла для показа и скачивания: без путей и управляющих символов."""
     name = os.path.basename(str(name or "").replace("\\", "/")).strip()
     name = re.sub(r"[\x00-\x1f\x7f\"<>]", "", name)[:120]
     return name or "file"
 
-
-# ─────────────────────────────────────────────────────────────
-# Переписки и обращения
-# ─────────────────────────────────────────────────────────────
 
 def get_chat(chat_id: int) -> Optional[dict[str, Any]]:
     return db.fetchone("SELECT * FROM support_chats WHERE id = ?", (int(chat_id),))
@@ -165,7 +130,6 @@ def chat_for_user(user_id: int, create: bool = True) -> Optional[dict[str, Any]]
 
 
 def open_ticket(chat: dict[str, Any], tx=None) -> Optional[dict[str, Any]]:
-    """Открытое обращение переписки. С tx — читаем внутри транзакции (свежие данные)."""
     if tx is not None:
         row = tx.execute("SELECT t.* FROM support_chats c JOIN support_tickets t ON t.id = c.open_ticket_id "
                          "WHERE c.id = ? AND t.status = 'open'", (int(chat["id"]),)).fetchone()
@@ -207,13 +171,6 @@ def ticket_info(chat: dict[str, Any]) -> Optional[dict[str, Any]]:
 
 
 def start(chat: dict[str, Any], actor: str, name: str, takeover: bool = False, guard: Guard = None) -> dict[str, Any]:
-    """
-    Сотрудник нажал «Начать»: берёт обращение на себя (если открытого нет —
-    открывает новое от имени поддержки). Пользователь видит, что подключился
-    специалист. Взять обращение, которое уже ведёт другой, можно только с
-    takeover=True (владелец или «полный доступ» к поддержке). Проверка и запись —
-    одной транзакцией: два оператора не возьмут одно обращение одновременно.
-    """
     now = _iso()
     with db.transaction() as tx:
         t = open_ticket(chat, tx)
@@ -248,7 +205,6 @@ def _close_tx(tx, chat_id: int, t: dict[str, Any], by: str, now: str, panel_text
 
 
 def _drop_prompt_tx(tx, t: dict[str, Any]) -> None:
-    """Убрать вопрос «Могу ли я ещё чем-то помочь?» (сообщение удаляется)."""
     pid = t.get("close_prompt_id")
     if pid:
         tx.execute("UPDATE support_messages SET reply_to = NULL WHERE reply_to = ?", (int(pid),))
@@ -257,13 +213,11 @@ def _drop_prompt_tx(tx, t: dict[str, Any]) -> None:
 
 
 def _internal_tx(tx, chat_id: int, ticket_id: int, name: str, text: str, now: str, panel_text: Optional[str] = None) -> None:
-    """Служебная строка только для панели — пользователь её не видит."""
     tx.execute("INSERT INTO support_messages (chat_id, ticket_id, sender, author, text, internal, panel_text, created_at) "
                "VALUES (?, ?, 'system', ?, ?, 1, ?, ?)", (int(chat_id), ticket_id, name, text, panel_text, now))
 
 
 def to_pool(chat: dict[str, Any], actor: str, name: str, only_own: bool, guard: Guard = None) -> dict[str, Any]:
-    """«В пул»: обращение снова ничьё и видно всем операторам в «Открыто»."""
     now = _iso()
     with db.transaction() as tx:
         t = open_ticket(chat, tx)
@@ -281,7 +235,6 @@ def to_pool(chat: dict[str, Any], actor: str, name: str, only_own: bool, guard: 
 
 
 def escalate(chat: dict[str, Any], actor: str, name: str, note: str) -> dict[str, Any]:
-    """«Передать админу»: из работы оператора в очередь «Админу» (кураторы и владелец)."""
     note = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(note or "")).strip()[:500]
     now = _iso()
     with db.transaction() as tx:
@@ -299,13 +252,6 @@ def escalate(chat: dict[str, Any], actor: str, name: str, note: str) -> dict[str
 
 
 def close(chat: dict[str, Any], actor: str, name: str, force: bool = False, guard: Guard = None) -> dict[str, Any]:
-    """
-    «Закрыть»: пользователю уходит вопрос «Подскажите, могу ли я ещё чем-то
-    помочь?» с кнопкой «Нет, спасибо» — обращение пока открыто. Нет ответа
-    60 минут — закрывается само (auto_close_expired).
-    force=True — закрыть сразу (владелец и кураторы), вопрос, если был, удаляется.
-    → {"state": "asked", "message": {...}} | {"state": "closed"}
-    """
     now = _iso()
     with db.transaction() as tx:
         t = open_ticket(chat, tx)
@@ -330,7 +276,6 @@ def close(chat: dict[str, Any], actor: str, name: str, force: bool = False, guar
 
 
 def auto_close_expired() -> int:
-    """Вопрос о закрытии без ответа 60 минут — обращение закрывается само."""
     cutoff = _iso(_now() - timedelta(seconds=CLOSE_PROMPT_TTL))
     n = 0
     for r in db.fetchall("SELECT t.id, t.chat_id FROM support_tickets t WHERE t.status = 'open' AND t.close_prompt_id IS NOT NULL "
@@ -340,7 +285,7 @@ def auto_close_expired() -> int:
             row = tx.execute("SELECT * FROM support_tickets WHERE id = ? AND status = 'open' AND close_prompt_id IS NOT NULL "
                              "AND prompt_at < ?", (r["id"], cutoff)).fetchone()
             if not row:
-                continue  # пользователь успел ответить
+                continue
             t = dict(row)
             tx.execute("UPDATE support_tickets SET close_prompt_id = NULL, prompt_at = NULL WHERE id = ?", (t["id"],))
             _close_tx(tx, int(t["chat_id"]), t, "auto", now)
@@ -349,7 +294,6 @@ def auto_close_expired() -> int:
 
 
 def user_close(chat: dict[str, Any], prompt_id: int) -> dict[str, Any]:
-    """Пользователь нажал «Нет, спасибо» под вопросом — обращение закрывается."""
     now = _iso()
     with db.transaction() as tx:
         t = open_ticket(chat, tx)
@@ -368,16 +312,9 @@ _CLOSE_WORD_RX = re.compile(r"^(?:нет|спасиб\w*|спс|благодар
 
 
 def is_no_thanks(text: str) -> bool:
-    """В ответе на вопрос о закрытии есть «нет» и/или «спасибо» (спс, благодарю) — закрываем."""
     words = re.findall(r"[a-zа-я]+", (text or "").lower().replace("ё", "е"))
     return any(_CLOSE_WORD_RX.match(w) for w in words)
 
-
-
-
-# ─────────────────────────────────────────────────────────────
-# Файлы: квоты и потоковая запись
-# ─────────────────────────────────────────────────────────────
 
 _active_uploads: dict[str, int] = {}
 _active_lock = threading.Lock()
@@ -389,7 +326,6 @@ def _dir_free_bytes() -> int:
 
 
 def upload_allowance(uploader: str, uploader_id: str) -> int:
-    """Сколько байт можно принять в этой загрузке (или SupportError, если нельзя совсем)."""
     _cleanup_pending()
     if _dir_free_bytes() < MIN_FREE_BYTES:
         raise SupportError("Загрузка файлов временно недоступна — напишите текстом", 507)
@@ -401,11 +337,6 @@ def upload_allowance(uploader: str, uploader_id: str) -> int:
 
 
 class Upload:
-    """
-    Потоковая загрузка: write(chunk) пишет на диск и обрывает при превышении
-    лимита, finish() определяет тип и регистрирует файл. Одновременно не больше
-    MAX_PARALLEL_UPLOADS загрузок от одного отправителя.
-    """
 
     def __init__(self, chat_id: int, uploader: str, uploader_id: str, name: str) -> None:
         self.key = f"{uploader}:{uploader_id}"
@@ -476,7 +407,7 @@ class Upload:
             mime = _INLINE_MIME.get(ext or "", "application/octet-stream")
             storage, path = "local", self.path
             if s3store.enabled():
-                # Наш сервер → S3: файл уже проверен и лежит временно на диске
+                # загрузить локальный temp → s3
                 cfg = s3store.get_config()
                 key = f"{cfg['prefix']}support/{self.chat_id}/{self.fid}"
                 inline = kind in ("image", "video")
@@ -507,7 +438,6 @@ class Upload:
 
 
 def save_upload(chat_id: int, uploader: str, uploader_id: str, name: str, chunks) -> dict[str, Any]:
-    """Синхронный вариант (тесты, сиды): chunks — итератор байтов."""
     up = Upload(chat_id, uploader, uploader_id, name)
     try:
         for c in chunks:
@@ -524,7 +454,6 @@ def _disposition(name: str, inline: bool) -> str:
 
 
 def _drop_blob(f: dict[str, Any]) -> None:
-    """Удалить сам файл (с диска или из S3). Ошибку S3 не пробрасываем — повторим при следующей чистке."""
     if (f.get("storage") or "local") == "s3":
         try:
             s3store.delete(f["path"])
@@ -543,7 +472,7 @@ def _remove_files(rows: list[dict[str, Any]]) -> None:
             try:
                 _drop_blob(f)
             except s3store.S3Error:
-                continue  # S3 сейчас недоступно — запись оставляем, удалим в следующий раз
+                continue  # leave row; retry delete later
         db.execute("DELETE FROM support_files WHERE id = ?", (f["id"],))
 
 
@@ -588,20 +517,9 @@ def s3_download_url(f: dict[str, Any]) -> str:
     })
 
 
-# ─────────────────────────────────────────────────────────────
-# Сообщения
-# ─────────────────────────────────────────────────────────────
-
 def send_message(chat: dict[str, Any], sender: str, author: Optional[str], text: str, file_ids: list[str],
                  uploader_id: str, reply_to: Optional[int] = None, actor: Optional[str] = None,
                  quote_tickets: Optional[set[int]] = None, any_ticket: bool = False, guard: Guard = None) -> dict[str, Any]:
-    """
-    sender: user | admin. Сообщение пользователя без открытого обращения открывает
-    новое. Сотрудник пишет только в обращение, которое ведёт сам (actor).
-    Файлы — только свои, этого чата и ещё не отправленные.
-    Если висит вопрос «Могу ли я ещё помочь?», ответ пользователя с «нет» и
-    «спасибо» закрывает обращение, любой другой ответ снимает вопрос.
-    """
     text = (text or "").strip()
     if len(text) > MAX_TEXT:
         raise SupportError(f"Сообщение длиннее {MAX_TEXT} символов")
@@ -622,9 +540,9 @@ def send_message(chat: dict[str, Any], sender: str, author: Optional[str], text:
         if reply_to:
             r = tx.execute("SELECT id, ticket_id FROM support_messages WHERE id = ? AND chat_id = ? AND sender != 'system'",
                            (int(reply_to), int(chat["id"]))).fetchone()
-            # оператор цитирует только то, что сам видит (quote_tickets); None — без ограничений
+            # quote_tickets фильтрует, что можно цитировать; None = всё
             if not r or (quote_tickets is not None and r["ticket_id"] not in quote_tickets):
-                reply_to = None  # цитируемое сообщение уже удалено — отправляем без цитаты
+                reply_to = None
         t = open_ticket(chat, tx)
         if not t:
             if sender != "user":
@@ -646,7 +564,7 @@ def send_message(chat: dict[str, Any], sender: str, author: Optional[str], text:
         tx.execute(f"UPDATE support_chats SET last_message_at = ?, last_preview = ?, last_sender = ?, {col} = {col} + 1 "
                    "WHERE id = ?", (now, preview, sender, int(chat["id"])))
         if sender == "admin":
-            # ответ поддержки — обращение уходит вниз списка (старые без ответа — наверху)
+            # обновить queue_at, чтобы без ответа оставались сверху
             tx.execute("UPDATE support_tickets SET queue_at = ? WHERE id = ?", (now, t["id"]))
         if sender == "user" and t.get("close_prompt_id"):
             tx.execute("UPDATE support_tickets SET close_prompt_id = NULL, prompt_at = NULL WHERE id = ?", (t["id"],))
@@ -678,9 +596,9 @@ def _serialize_rows(rows: list[dict[str, Any]], tickets: Optional[set[int]] = No
         qq = ",".join("?" * len(rids))
         for m in db.fetchall(f"SELECT id, sender, author, text, ticket_id, deleted_at FROM support_messages WHERE id IN ({qq})", tuple(rids)):
             if tickets is not None and m.get("ticket_id") not in tickets:
-                continue  # цитата из чужого обращения — оператору не показываем
+                continue
             if m.get("deleted_at"):
-                continue  # удалённое — показывается как «Сообщение удалено»
+                continue
             nf = db.fetchone("SELECT COUNT(*) AS c FROM support_files WHERE message_id = ?", (m["id"],))["c"]
             quoted[int(m["id"])] = {"id": m["id"], "sender": m["sender"], "text": (m.get("text") or "")[:160], "files": int(nf)}
     active: set[int] = set()
@@ -718,7 +636,6 @@ _LEGACY_PANEL = (
 
 
 def _panel_text(m: dict[str, Any]) -> Optional[str]:
-    """Текст служебного события для панели ('' — не показывать, None — не служебное)."""
     if m.get("kind") == "close_prompt":
         return f"{m.get('author') or 'Оператор'} закрывает обращение..."
     if m.get("sender") != "system":
@@ -736,11 +653,6 @@ def _panel_text(m: dict[str, Any]) -> Optional[str]:
 
 def messages(chat_id: int, after: int = 0, limit: int = 500, tickets: Optional[set[int]] = None,
              for_user: bool = False) -> list[dict[str, Any]]:
-    """
-    tickets — показать только эти обращения (оператору — свои и текущее), None — все.
-    for_user — для пользователя: без служебных пометок, без имён сотрудников и
-    без номеров обращений.
-    """
     extra = " AND internal = 0 AND deleted_at IS NULL" if for_user else ""
     if tickets is not None:
         if not tickets:
@@ -761,7 +673,6 @@ _NUM_RX = re.compile(r"Обращение №\d+ ")
 
 
 def public_message(m: dict[str, Any]) -> dict[str, Any]:
-    """Сообщение глазами пользователя: без автора, служебных полей и номера обращения."""
     out = {k: v for k, v in m.items() if k not in ("author", "author_actor", "internal", "ticket_id", "panel_text")}
     if m.get("sender") == "system":
         out["text"] = _NUM_RX.sub("Обращение ", m.get("text") or "")
@@ -769,10 +680,6 @@ def public_message(m: dict[str, Any]) -> dict[str, Any]:
 
 
 def changes(chat_id: int, upto: int, tickets: Optional[set[int]] = None, for_user: bool = False) -> list[dict[str, Any]]:
-    """
-    Изменённые и удалённые за последние сутки сообщения из уже загруженных (id ≤ upto) —
-    открытое окно чата подтягивает их при опросе.
-    """
     if upto <= 0:
         return []
     since = _iso(_now() - timedelta(days=1))
@@ -817,7 +724,6 @@ def edit_message(chat: dict[str, Any], mid: int, actor: str, text: str) -> dict[
 
 
 def delete_message(chat: dict[str, Any], mid: int, actor: str) -> dict[str, Any]:
-    """Удаляет своё сообщение: у пользователя оно пропадает, вложения стираются."""
     m = _own_message(chat, mid, actor)
     db.execute("UPDATE support_messages SET text = '', deleted_at = ? WHERE id = ? AND deleted_at IS NULL", (_iso(), m["id"]))
     _remove_files(db.fetchall("SELECT * FROM support_files WHERE message_id = ?", (m["id"],)))
@@ -833,10 +739,6 @@ def mark_read(chat_id: int, who: str) -> None:
     db.execute(f"UPDATE support_chats SET {col} = 0 WHERE id = ?", (int(chat_id),))
 
 
-# ─────────────────────────────────────────────────────────────
-# Хранение: 7 дней после закрытия + место в хранилище
-# ─────────────────────────────────────────────────────────────
-
 def _delete_messages(ids: list[int]) -> int:
     removed = 0
     for i in range(0, len(ids), 500):
@@ -850,7 +752,6 @@ def _delete_messages(ids: list[int]) -> int:
 
 
 def storage_usage() -> dict[str, Any]:
-    """Сколько занято и сколько всего: у S3 — размер из настроек, у диска — сам диск."""
     if s3store.enabled():
         cap = int(s3store.get_config()["size_gb"] * 1024 * MB)
         used = int(db.fetchone("SELECT COALESCE(SUM(size), 0) AS s FROM support_files WHERE storage = 's3' "
@@ -862,10 +763,6 @@ def storage_usage() -> dict[str, Any]:
 
 
 def free_space() -> int:
-    """
-    Хранилище заполнено на 90% и больше → удаляем самые старые вложения (сами
-    сообщения остаются, вместо файла — «файл удалён»), пока не станет 80%.
-    """
     u = storage_usage()
     if not u["cap"] or u["used"] < u["cap"] * FILL_TRIGGER:
         return 0
@@ -902,11 +799,6 @@ def _maybe_free_space() -> None:
 
 
 def cleanup() -> dict[str, int]:
-    """
-    • Обращения, закрытые больше 7 дней назад, удаляются вместе с перепиской и вложениями.
-    • Хранилище заполнено на 90% → удаляются самые старые вложения.
-    • «Зависшие» загрузки и файлы-сироты на диске.
-    """
     cutoff = _iso(_now() - timedelta(days=KEEP_AFTER_CLOSE_DAYS))
     old_tickets = [int(r["id"]) for r in db.fetchall(
         "SELECT id FROM support_tickets WHERE status = 'closed' AND closed_at < ? LIMIT 2000", (cutoff,))]
@@ -915,7 +807,7 @@ def cleanup() -> dict[str, int]:
         part = old_tickets[i:i + 500]
         q = ",".join("?" * len(part))
         ids += [int(r["id"]) for r in db.fetchall(f"SELECT id FROM support_messages WHERE ticket_id IN ({q})", tuple(part))]
-    # Сообщения без обращения (до появления тикетов) — через 7 дней после отправки
+    # старые сообщения без ticket_id
     ids += [int(r["id"]) for r in db.fetchall(
         "SELECT id FROM support_messages WHERE ticket_id IS NULL AND created_at < ? LIMIT 5000", (cutoff,))]
     removed_files = _delete_messages(ids)
@@ -924,11 +816,11 @@ def cleanup() -> dict[str, int]:
         db.execute(f"DELETE FROM support_tickets WHERE id IN ({q})", tuple(old_tickets))
     _cleanup_pending()
     removed_files += free_space()
-    # Переписки, где всё удалилось, — пропадают из списка
+    # убрать пустые чаты из списка
     db.execute("UPDATE support_chats SET last_message_at = NULL, last_preview = NULL, last_sender = NULL, unread_admin = 0, "
                "unread_user = 0 WHERE open_ticket_id IS NULL AND NOT EXISTS "
                "(SELECT 1 FROM support_messages m WHERE m.chat_id = support_chats.id AND m.sender != 'system')")
-    # Файлы на диске, которых нет в базе (например, оборванные загрузки после перезапуска)
+    # осиротевшие файлы на диске
     known = {r["path"] for r in db.fetchall("SELECT path FROM support_files WHERE COALESCE(storage, 'local') = 'local'")}
     base = files_dir()
     stale_before = time.time() - PENDING_TTL

@@ -19,7 +19,7 @@ import ConfirmDialog from "../components/ConfirmDialog";
 const plural = (n: number, one: string, few: string, many: string) =>
   n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many;
 
-/** «17 дней, 3 устройства» / «нет подписки». */
+// «17 дней, 3 устройства» / «нет подписки»
 export function subSummary(days: number, devices: number, hasSub = true): string {
   if (!hasSub) return "нет подписки";
   const d = Math.floor(days);
@@ -27,7 +27,6 @@ export function subSummary(days: number, devices: number, hasSub = true): string
   return `${dayPart}, ${devices} ${plural(devices, "устройство", "устройства", "устройств")}`;
 }
 
-/** Предупреждение об объединении аккаунтов простыми словами. */
 function MergeText({ m, what }: { m: MergePreview; what: "email" | "telegram" }) {
   const anySub = Boolean(m.keep?.has_sub || m.drop?.has_sub);
   const row = (label: string, value: string, strong = false) => (
@@ -74,7 +73,6 @@ function isTelegramContext(): boolean {
 
 type EmailStep = "idle" | "email" | "code";
 
-/** Круглая кнопка-иконка (карандаш «изменить», корзина «отвязать»). */
 function IconBtn({ icon, label, onClick, disabled, danger }: { icon: string; label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
   return (
     <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick} className="blin-press"
@@ -109,7 +107,7 @@ export default function Security() {
   const inTelegram = isTelegramContext();
   const [botUsername, setBotUsername] = useState("");
   const [showTgWidget, setShowTgWidget] = useState(false);
-  // Объединение аккаунтов: предупреждение перед привязкой email/Telegram, который уже занят
+  // предупреждение об объединении перед привязкой занятых email/tg
   const [emailMerge, setEmailMerge] = useState<MergePreview | null>(null);
   const [emailMergeOk, setEmailMergeOk] = useState(false);
   const [tgMerge, setTgMerge] = useState<{ m: MergePreview; payload: TelegramOAuthPayload } | null>(null);

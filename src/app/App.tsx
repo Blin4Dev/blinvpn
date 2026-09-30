@@ -23,7 +23,7 @@ import { trackRoute } from "./utils/navigation";
 import PaymentResume from "./components/PaymentResume";
 import TermsGate from "./pages/TermsGate";
 
-// Показываем онбординг-модалку не чаще одного раза за сессию приложения.
+// подсказка настройки: раз за сессию
 const SETUP_PROMPT_DISMISSED_KEY = "blinvpn_setup_prompt_dismissed";
 
 function AnimatedLayout() {
@@ -31,9 +31,8 @@ function AnimatedLayout() {
   const navigate = useNavigate();
   const navType = useNavigationType();
   const skipEnterAnimation = useRef(true);
-  // Блокировка ключа: если ключ заблокирован — держим пользователя только на главной
+  // ключ заблокирован: только главная
   const [blocked, setBlocked] = useState(false);
-  // Онбординг-модалка «Вы не завершили настройку»
   const [showSetup, setShowSetup] = useState(false);
 
   useLayoutEffect(() => {
@@ -48,8 +47,7 @@ function AnimatedLayout() {
     return () => { mounted = false; };
   }, []);
 
-  // Один раз за заход: если есть подписка, но пользователь ни разу не
-  // подключался — показываем модалку. Крестик закрывает её до конца сессии.
+  // подписка есть, но ни разу не подключался
   useEffect(() => {
     let mounted = true;
     let dismissed = false;
@@ -70,7 +68,7 @@ function AnimatedLayout() {
     navigate("/subscription?setup=1");
   };
 
-  // При заблокированном ключе любой прямой переход по URL выкидывает на главную
+  // ключ заблокирован: любой deep link → на главную
   useEffect(() => {
     if (blocked && location.pathname !== "/") {
       navigate("/", { replace: true });
@@ -119,7 +117,7 @@ export default function App() {
   const [auth, setAuth] = useState<"checking" | "authed" | "anon">("checking");
   const [gate, setGate] = useState<"checking" | "open" | "blocked">("checking");
   const [membership, setMembership] = useState<Membership | null>(null);
-  // Согласие с документами: при первом входе (и у тех, кто ещё не соглашался)
+  // оферта при первом входе
   const [terms, setTerms] = useState<"checking" | "ok" | "need">("checking");
 
   useEffect(() => {
@@ -141,11 +139,11 @@ export default function App() {
     return () => { mounted = false; };
   }, [auth]);
 
-  // Обязательная подписка на канал — только для Telegram-входа.
+  // подписка на канал только для входа через telegram
   useEffect(() => {
     if (auth !== "authed") return;
     let mounted = true;
-    // Проверяем всегда: сервер сам ответит required=false для входа по почте.
+    // всегда проверяем; для email сервер вернёт required=false
     void fetchMembership()
       .then((m) => {
         if (!mounted) return;
@@ -161,8 +159,7 @@ export default function App() {
   if (auth === "checking") return <LoadingScreen />;
   if (auth === "anon") return <Authentication onAuthed={() => setAuth("authed")} />;
 
-  // Приложение рендерим сразу, а просьбу подписаться показываем
-  // всплывающим окном поверх него.
+  // рисуем приложение; канал — оверлей
   return (
     <>
       <RoutedApp />
@@ -184,7 +181,6 @@ function RoutedApp() {
           <Route path="/" element={<Home />} />
           <Route path="/history" element={<History />} />
           <Route path="/subscription" element={<ManageSubscription />} />
-          {/* Старая страница настройки заменена окном «Добавить подписку» */}
           <Route path="/subscription/start" element={<Navigate to="/subscription?setup=1" replace />} />
           <Route path="/payment" element={<Payment />} />
           <Route path="/payment/return" element={<Navigate to="/" replace />} />

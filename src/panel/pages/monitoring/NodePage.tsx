@@ -31,7 +31,6 @@ export function useSeries(nodeId: number, metric: string, range: string, tick: n
 const RANGE_WORD: Record<string, string> = { '6h': 'за 6 часов', '24h': 'за 24 часа', '7d': 'за 7 дней' };
 const winOf = (d: SeriesData | null): ChartWindow | null => (d && d.from && d.to && d.bucket ? { from: d.from, to: d.to, bucket: d.bucket } : null);
 
-/** Агент не на связи: «текущие» значения на самом деле старые — показываем это. */
 const StaleCtx = React.createContext<string | null>(null);
 
 export const MetricCard: React.FC<{ title: string; icon: React.ElementType; now: React.ReactNode; sub?: React.ReactNode; right?: React.ReactNode; children: React.ReactNode; live?: boolean }> =
@@ -56,7 +55,7 @@ export const MetricCard: React.FC<{ title: string; icon: React.ElementType; now:
     );
   };
 
-// Полоса проверок VLESS: не больше 90 делений, деление красное, если в нём был хоть один сбой
+// полоса проверок
 export const vlessBuckets = (pts: any[][]) => {
   const size = Math.max(1, Math.ceil(pts.length / 90));
   const out: { t: number; n: number; fail: number }[] = [];
@@ -82,7 +81,7 @@ export const MonNodePage: React.FC<{ nodeId: number; onBack: () => void; onToast
     catch (e: any) { if (String(e?.message || '').includes('не найдена')) setMissing(true); }
   };
   useEffect(() => { load(); const t = setInterval(() => { load(); setTick((x) => x + 1); }, 60000); return () => clearInterval(t); }, [nodeId]);
-  // Пока идёт замер скорости или перезагрузка — обновляем чаще
+  // пока идёт замер скорости или перезагрузка - обновляем чаще
   const fast = !!(d?.speed_running || d?.rebooting || d?.status === 'connecting' || (d?.update?.requested_at && d?.agent_outdated));
   useEffect(() => { if (!fast) return; const t = setInterval(() => { load(); }, 8000); return () => clearInterval(t); }, [fast, nodeId]);
   const wasFast = React.useRef(false);
@@ -101,7 +100,7 @@ export const MonNodePage: React.FC<{ nodeId: number; onBack: () => void; onToast
   const downSpeed = useSeries(nodeId, 'down', speedRange, tick);
   const beatsD = useSeriesData(nodeId, 'beats', range, tick);
   const w = winOf(cpuD); const wSpeed = winOf(speedD);
-  // Speedtest — точки раз в 10 минут: разрыв линии, если пропущено несколько замеров подряд
+  // speedtest: точки раз в 10 минут
   const wSpeedGap = wSpeed ? { ...wSpeed, bucket: 1200 } : null;
 
   const act = async (what: string, fn: () => Promise<any>, ok?: string) => {

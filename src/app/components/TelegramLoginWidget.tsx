@@ -14,10 +14,7 @@ type Props = {
   size?: "large" | "medium" | "small";
 };
 
-/**
- * Официальный Telegram Login Widget (не кастомная кнопка).
- * Требует botUsername без @ и домен, добавленный в BotFather → Domain.
- */
+// официальный виджет входа tg (botUsername без @; домен в BotFather)
 export function TelegramLoginWidget({
   botUsername,
   onAuth,

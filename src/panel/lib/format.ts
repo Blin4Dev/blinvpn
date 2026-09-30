@@ -1,6 +1,6 @@
 
 
-// Стандартный процент реферальной программы (как в БД по умолчанию)
+// дефолтный % рефералки (как в бд)
 export const DEFAULT_REF_RATE = 25;
 
 export const fmtInt = (v: number | null | undefined) => (v ?? 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 });
@@ -50,17 +50,16 @@ export const relTime = (iso: string | null | undefined): string => {
   return fmtDateTime(iso);
 };
 
-// ── Особые действия с подпиской: обмен устройств на дни, перенос ──
 export const dayWord = (n: number) => { const a = Math.abs(Math.round(n)); return a % 10 === 1 && a % 100 !== 11 ? 'день' : a % 10 >= 2 && a % 10 <= 4 && (a % 100 < 12 || a % 100 > 14) ? 'дня' : 'дней'; };
 
 export const devWord = (n: number) => { const a = Math.abs(n); return a % 10 === 1 && a % 100 !== 11 ? 'устройство' : a % 10 >= 2 && a % 10 <= 4 && (a % 100 < 12 || a % 100 > 14) ? 'устройства' : 'устройств'; };
 
 export const fmtDays = (d: number) => `${Number.isInteger(d) ? d : d.toFixed(1).replace('.', ',')} ${dayWord(d)}`;
 
-// Дата для <input type="date"> (ожидает YYYY-MM-DD)
+// для <input type="date"> (yyyy-mm-dd)
 export const toDateInput = (iso: string): string => (iso ? String(iso).slice(0, 10) : '');
 
-// В ISO-конец дня UTC, чтобы промокод действовал весь указанный день
+// конец дня utc, чтобы промокод жил весь выбранный день
 export const dateInputToIso = (d: string): string | null => (d ? `${d}T23:59:59+00:00` : null);
 
 export const fmtDateRu = (iso: string): string => {
@@ -72,7 +71,7 @@ export const fmtDateRu = (iso: string): string => {
 };
 
 const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-/** «только что», «5 минут назад», «сегодня в 14:05», «вчера в 09:30», «3 сентября в 18:00». */
+// относительное время по-русски
 export const whenRu = (iso: string | null | undefined): string => {
   if (!iso) return '—';
   const d = new Date(iso); if (isNaN(d.getTime())) return '—';

@@ -1,22 +1,3 @@
-"""
-Общий чёрный список Telegram ID (нарушители правил).
-
-Источник — текстовый файл (по умолчанию GitHub Blin4ickUSE/ban-vpn), по одной
-записи на строку:  «<telegram_id> # <причина>». Пустые строки и строки без
-числа в начале игнорируются.
-
-• refresh() — скачивает список и кладёт в таблицу blacklist (раз в час из бота).
-  Если скачать не удалось — остаётся последний сохранённый список.
-• enforce(user) — если пользователь в списке и ещё не заблокирован — блокирует
-  аккаунт (как «Заблокировать» в панели). Вызывается при каждом входе: /start
-  в боте, открытие мини-приложения, вход через Telegram на сайте.
-• Уже существующие пользователи из списка блокируются при обновлении списка.
-• Если админ разблокировал такого пользователя в панели — ставится отметка
-  blacklist_ignored, и список его больше не трогает.
-
-Env: BLACKLIST_URL (пусто или «off» — выключить), BLACKLIST_REFRESH_SEC (3600).
-"""
-
 from __future__ import annotations
 
 import os
@@ -74,14 +55,14 @@ def refresh(log=print) -> Optional[int]:
         return None
     try:
         req = urllib.request.Request(src, headers={"User-Agent": "BlinVPN-blacklist/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 — адрес из настроек
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
             text = resp.read(5 * 1024 * 1024).decode("utf-8", errors="replace")
     except Exception as exc:  # noqa: BLE001
         log(f"[blacklist] не удалось скачать список: {type(exc).__name__}: {exc}")
         return None
     entries = parse(text)
     if not entries:
-        # Пустой/битый ответ не должен стереть сохранённый список.
+        # пустой ответ не затирает старый список
         log("[blacklist] список пуст или не распознан — оставляем прежний")
         return None
     now = db.utcnow_iso()

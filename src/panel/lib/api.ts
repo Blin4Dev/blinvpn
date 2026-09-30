@@ -21,8 +21,7 @@ export function clearPanelToken(): void {
   if (typeof window !== 'undefined') localStorage.removeItem('panel_token');
 }
 
-// «Только просмотр»: изменяющие запросы с текущей страницы не отправляем (сервер
-// всё равно их отклонит — это только понятное сообщение вместо «403»).
+// read-only: мутации с этой страницы не шлём (сервер и так откажет, тут яснее чем 403)
 let writeGuard: string | null = null;
 export function setWriteGuard(msg: string | null): void { writeGuard = msg; }
 
@@ -42,7 +41,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
   if (!res.ok) {
     if (res.status === 401) {
       clearPanelToken();
-      // сессия кончилась — это устройство больше не должно получать push чужого аккаунта
+      // сессия кончилась: снять push чужого аккаунта
       const done = () => window.location.reload();
       try {
         if ('serviceWorker' in navigator) {
@@ -83,7 +82,7 @@ export const parseErr = (e: unknown): string => {
   } catch { return msg; }
 };
 
-/** Данные предупреждения об объединении аккаунтов из ответа 409 (или null). */
+// merge-предупреждение из 409, иначе null
 export const mergeInfo = (e: unknown): { message: string; merge: any } | null => {
   const msg = e instanceof Error ? e.message : String(e);
   try {

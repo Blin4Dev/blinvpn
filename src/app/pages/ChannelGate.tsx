@@ -2,10 +2,7 @@ import React, { useState } from "react";
 import { fetchMembership, tgWebApp, type Membership } from "../utils/api";
 import { Btn, MSIcon, T } from "../components/ui";
 
-/**
- * Всплывающее окно «Подпишитесь на канал» поверх приложения.
- * Закрыть его нельзя — подписка обязательна, окно исчезает после проверки.
- */
+// оверлей подписки на канал; закрыть только после успешной проверки
 export default function ChannelGate({
   membership,
   onPassed,

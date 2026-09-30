@@ -1,13 +1,3 @@
-"""
-График работы, зарплата, штрафы и выплаты сотрудников поддержки.
-
-• Время — московское (UTC+3, без перехода на летнее время).
-• День графика: интервалы работы (перерыв делит день на части) и оплата за день.
-  Нет строки в staff_days — выходной.
-• Зарплата посуточная: день начисляется, когда закончился последний интервал
-  этого дня. Баланс = начислено − штрафы − выплаты.
-"""
-
 from __future__ import annotations
 
 import json
@@ -23,7 +13,7 @@ except ImportError:  # pragma: no cover
 MSK = timezone(timedelta(hours=3))
 MAX_INTERVALS = 8
 MAX_PAY = 1_000_000
-MAX_RANGE_DAYS = 400          # «на год вперёд» с запасом
+MAX_RANGE_DAYS = 400          # ~год вперёд
 _HM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$|^24:00$")
 
 
@@ -59,7 +49,7 @@ def _minutes(hm: str) -> int:
 
 
 def validate_intervals(raw: Any) -> list[list[str]]:
-    """[["10:00","14:00"],["15:00","19:00"]] — по порядку, без пересечений, внутри суток."""
+    """интервалы [["10:00","14:00"],...]: по порядку, без пересечений, внутри суток."""
     if not isinstance(raw, list) or not raw:
         raise PayError("Укажите часы работы")
     if len(raw) > MAX_INTERVALS:
@@ -98,10 +88,6 @@ def _clean_text(s: Any, n: int) -> str:
     return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(s or "")).strip()[:n]
 
 
-# ─────────────────────────────────────────────────────────────
-# График
-# ─────────────────────────────────────────────────────────────
-
 def _row(r: dict[str, Any]) -> dict[str, Any]:
     try:
         iv = json.loads(r["intervals"])
@@ -119,7 +105,7 @@ def schedule(staff_id: int, d_from: date, d_to: date) -> list[dict[str, Any]]:
 
 
 def day_bounds(day: date) -> tuple[date, date]:
-    """Менять график можно на месяц назад (поправки) и на год вперёд."""
+    """правка графика: месяц назад … год вперёд."""
     t = today_msk()
     return t - timedelta(days=31), t + timedelta(days=366)
 
@@ -131,7 +117,7 @@ def _check_day(day: date) -> None:
 
 
 def set_day(staff_id: int, day: date, intervals: Optional[list], pay: Any) -> Optional[dict[str, Any]]:
-    """intervals=None — выходной (строка удаляется)."""
+    """intervals=None: выходной (строка удаляется)."""
     _check_day(day)
     if intervals is None:
         db.execute("DELETE FROM staff_days WHERE staff_id = ? AND day = ?", (int(staff_id), day.isoformat()))
@@ -146,11 +132,7 @@ def set_day(staff_id: int, day: date, intervals: Optional[list], pay: Any) -> Op
 
 def bulk_fill(staff_id: int, d_from: date, d_to: date, weekdays: list[int], intervals: list, pay: Any,
               overwrite: bool, clear_other: bool = False) -> int:
-    """
-    Заполнить период: в выбранные дни недели (0 — пн … 6 — вс) — эти часы и
-    оплата. overwrite — перезаписать уже заданные дни; clear_other — остальные
-    дни периода сделать выходными.
-    """
+    """заполнить период по дням недели (0=пн…6=вс); overwrite / clear_other."""
     if d_to < d_from:
         raise PayError("Конец периода раньше начала")
     if (d_to - d_from).days > MAX_RANGE_DAYS:
@@ -184,7 +166,7 @@ def bulk_fill(staff_id: int, d_from: date, d_to: date, weekdays: list[int], inte
 
 
 def shift_now(staff_id: int) -> dict[str, Any]:
-    """Сегодня: рабочий ли день, часы и идёт ли сейчас смена."""
+    """сегодня: рабочий ли день и идёт ли смена."""
     n = now_msk()
     r = db.fetchone("SELECT * FROM staff_days WHERE staff_id = ? AND day = ?", (int(staff_id), n.date().isoformat()))
     if not r:
@@ -195,12 +177,8 @@ def shift_now(staff_id: int) -> dict[str, Any]:
     return {"working_today": True, "on_shift": on, "intervals": d["intervals"], "pay": d["pay"]}
 
 
-# ─────────────────────────────────────────────────────────────
-# Деньги
-# ─────────────────────────────────────────────────────────────
-
 def _earned_rows(staff_id: int) -> list[dict[str, Any]]:
-    """Отработанные дни: прошедшие, а сегодняшний — после конца последней части."""
+    """отработанные дни: прошедшие; сегодня после конца последней части."""
     n = now_msk()
     today = n.date().isoformat()
     rows = [_row(r) for r in db.fetchall("SELECT * FROM staff_days WHERE staff_id = ? AND day <= ? ORDER BY day",
@@ -224,7 +202,7 @@ def ledger(staff_id: int) -> dict[str, Any]:
     total_fines = round(sum(float(f["amount"]) for f in fines if not f.get("cancelled_at")), 2)
     total_bonuses = round(sum(float(b["amount"]) for b in bonuses if not b.get("cancelled_at")), 2)
     total_paid = round(sum(float(p["amount"]) for p in payouts), 2)
-    # за текущую неделю (пн–вс по Москве)
+    # неделя пн-вс мск
     t = today_msk()
     week_start = (t - timedelta(days=t.weekday())).isoformat()
     week = round(sum(r["pay"] for r in earned if r["day"] >= week_start), 2)
@@ -293,7 +271,7 @@ def add_payout(staff_id: int, amount: Any, note: Any, paid_on: Any) -> dict[str,
     d = parse_day(paid_on) if paid_on else today_msk()
     if abs((d - today_msk()).days) > 366:
         raise PayError("Неверная дата выплаты")
-    # защита от двойного нажатия: та же сумма тому же сотруднику за последние 30 секунд
+    # антидаблклик: та же сумма за 30с
     recent = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
     if db.fetchone("SELECT 1 FROM staff_payouts WHERE staff_id = ? AND amount = ? AND created_at > ?", (int(staff_id), a, recent)):
         raise PayError("Такая выплата уже записана только что", 409)

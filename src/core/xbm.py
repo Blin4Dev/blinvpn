@@ -1,24 +1,4 @@
-"""
-Балансировщик подписки XBM (Xray Balancer Middleware, автор — Haxonate) —
-панель → «Балансировщик».
-
-XBM стоит между клиентами и Remnawave: забирает подписку из панели Remnawave и
-собирает из неё то, что видит пользователь. Через XBM идёт только подписка, не трафик.
-
-Модель:
-  • хосты Remnawave (de1, de2, …) — «сырьё» для XBM, пользователю напрямую не видны;
-  • по умолчанию в подписке ОДНА строка — «Авто-выбор» из всех хостов Remnawave;
-  • «хосты панели» — строки подписки, которые видит пользователь (например,
-    «🇩🇪 Германия» из de1…de4): клиент держит хост с меньшим пингом;
-  • хост панели «белые списки»: в авто-выборе (и внутри себя) его хосты — резерв,
-    подключаются, только если ни один обычный не отвечает;
-  • описание (meta.serverDescription) и шаблон Xray JSON из Remnawave — по желанию,
-    иначе у каждого хоста Remnawave остаются его собственные настройки.
-
-Хосты выбираются по UUID, а в panel.json попадают их ТЕКУЩИЕ названия —
-после переименования хоста в Remnawave файл пересобирается (сверка раз в минуту).
-"""
-
+# настройки балансировщика xbm → panel.json
 from __future__ import annotations
 
 import json
@@ -39,18 +19,16 @@ except ImportError:  # pragma: no cover
 SETTINGS_KEY = "xbm_settings"
 DEFAULT_AUTO_NAME = "🇪🇺 Автоматический выбор"
 MAX_NAME = 64
-MAX_DESCRIPTION = 30       # Happ показывает описание до 30 символов
+MAX_DESCRIPTION = 30  # happ показывает описание до 30 символов
 MAX_GROUPS = 100
 MAX_TEMPLATE_BYTES = 256 * 1024
 UUID_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 _state_lock = threading.Lock()
-# Сохранение из панели и фоновая сверка не должны перемешиваться: иначе сверка могла бы
-# записать в panel.json настройки, которые сохранение тут же откатит.
+# сохранение и фоновый sync не должны пересекаться
 save_lock = threading.RLock()
-# Последние удачно скачанные шаблоны: если Remnawave временно не отдаёт шаблоны,
-# хосты всё равно пересобираются, а выбранные шаблоны берутся отсюда.
+# последние удачные шаблоны, если remnawave кратко недоступен
 _tpl_cache: dict[str, dict[str, Any]] = {}
 _last_sync: dict[str, Any] = {"at": None, "ok": None, "error": None, "warnings": []}
 
@@ -63,7 +41,6 @@ class XbmError(Exception):
 
 
 def xbm_url() -> str:
-    """Адрес XBM изнутри сервера (контейнеры BlinVPN — в сети хоста)."""
     port = (os.getenv("XBM_PORT") or "4100").strip()
     if not port.isdigit():
         port = "4100"
@@ -109,10 +86,6 @@ def _save_tpl_cache(tpls: dict[str, dict[str, Any]]) -> None:
     except OSError:
         pass
 
-
-# ─────────────────────────────────────────────────────────────
-# Настройки
-# ─────────────────────────────────────────────────────────────
 
 def _clean(v: Any, max_len: int) -> str:
     return _CTRL_RE.sub("", str(v or "")).strip()[:max_len]
@@ -163,11 +136,6 @@ def configured() -> bool:
 
 def validate(body: dict[str, Any], hosts: list[dict[str, Any]],
              templates: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:
-    """
-    Проверить настройки из панели против текущих хостов Remnawave.
-    templates — шаблоны XRAY_JSON из Remnawave (None — не удалось получить:
-    тогда выбрать шаблон нельзя, а уже выбранные сохраняются как были).
-    """
     if not isinstance(body, dict):
         raise XbmError("Неверный формат настроек")
     by_uuid = {h["uuid"]: h for h in hosts}
@@ -184,7 +152,7 @@ def validate(body: dict[str, Any], hosts: list[dict[str, Any]],
             raise XbmError(f"Неверный шаблон ({where})")
         if tpl_ids is None:
             if u in prev_tpls:
-                return u  # Remnawave сейчас не отдаёт шаблоны — оставляем, что было
+                return u  # keep previous if templates unavailable
             raise XbmError("Не удалось получить шаблоны из Remnawave — выбрать шаблон сейчас нельзя")
         if u not in tpl_ids:
             raise XbmError(f"Шаблон ({where}) не найден в Remnawave или это не Xray JSON")
@@ -260,16 +228,11 @@ def used_template_uuids(settings: dict[str, Any]) -> list[str]:
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-# Хосты и шаблоны Remnawave → panel.json
-# ─────────────────────────────────────────────────────────────
-
 def _unwrap(raw: Any) -> Any:
     return raw.get("response") if isinstance(raw, dict) and "response" in raw else raw
 
 
 def normalize_hosts(raw: Any) -> list[dict[str, Any]]:
-    """Хосты из ответа Remnawave в порядке панели."""
     items = _unwrap(raw)
     if isinstance(items, dict):
         items = items.get("hosts") or items.get("items") or []
@@ -293,7 +256,6 @@ def normalize_hosts(raw: Any) -> list[dict[str, Any]]:
 
 
 def normalize_templates(raw: Any) -> list[dict[str, Any]]:
-    """Шаблоны подписки из Remnawave: только Xray JSON (другие форматы XBM не применяет)."""
     data = _unwrap(raw)
     items = data.get("templates") if isinstance(data, dict) else data
     out = []
@@ -311,7 +273,6 @@ def normalize_templates(raw: Any) -> list[dict[str, Any]]:
 
 def resolve_templates(uuids: list[str], listing: list[dict[str, Any]],
                       fetch_one: Callable[[str], Any]) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """uuid → Xray JSON шаблона. Второе значение — uuid, которых в Remnawave больше нет."""
     by = {t["uuid"]: t for t in listing}
     out: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
@@ -346,7 +307,6 @@ def duplicate_remarks(hosts: list[dict[str, Any]]) -> list[str]:
 
 def render(settings: dict[str, Any], hosts: list[dict[str, Any]],
            templates: Optional[dict[str, dict[str, Any]]] = None) -> dict[str, Any]:
-    """Настройки (по UUID) → panel.json для XBM (по текущим названиям хостов)."""
     templates = templates or {}
     remark = {h["uuid"]: h["remark"] for h in hosts if not h["disabled"] and h["remark"]}
     groups = []
@@ -354,7 +314,7 @@ def render(settings: dict[str, Any], hosts: list[dict[str, Any]],
     for g in settings.get("groups") or []:
         tags = [remark[u] for u in g.get("hosts") or [] if u in remark]
         if not tags:
-            continue  # все хосты выключены/удалены в Remnawave — строки в подписке не будет
+            continue  # no live remnawave hosts for this group
         item: dict[str, Any] = {"name": g["name"], "tags": tags}
         if g.get("description"):
             item["description"] = g["description"]
@@ -376,7 +336,6 @@ def render(settings: dict[str, Any], hosts: list[dict[str, Any]],
 
 
 def write_panel_json(doc: dict[str, Any]) -> bool:
-    """Атомарно записать panel.json. True — если содержимое изменилось."""
     body = json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True)
     path = panel_json_path()
     with _state_lock:
@@ -393,7 +352,7 @@ def write_panel_json(doc: dict[str, Any]) -> bool:
                 f.write(body)
                 f.flush()
                 os.fsync(f.fileno())
-            os.chmod(tmp, 0o644)  # XBM в своём контейнере читает под другим пользователем
+            os.chmod(tmp, 0o644)  # readable by xbm container user
             os.replace(tmp, path)
         finally:
             if os.path.exists(tmp):
@@ -405,11 +364,6 @@ def sync(fetch_hosts: Callable[[], Any],
          fetch_templates: Optional[Callable[[], Any]] = None,
          fetch_template: Optional[Callable[[str], Any]] = None,
          hosts: Optional[list[dict[str, Any]]] = None, strict: bool = False) -> dict[str, Any]:
-    """
-    Забрать хосты (и нужные шаблоны) из Remnawave и пересобрать panel.json.
-    Если Remnawave не отдала хосты — файл не трогаем (XBM работает по-прежнему).
-    strict (сохранение из панели) — выбранный шаблон обязан скачаться, иначе ошибка.
-    """
     try:
         with save_lock:
             settings = get_settings()
@@ -429,7 +383,7 @@ def sync(fetch_hosts: Callable[[], Any],
                     if missing:
                         warnings.append("Выбранный шаблон удалён в Remnawave или это не Xray JSON — "
                                         "используются настройки хостов из Remnawave")
-                except Exception:  # noqa: BLE001 — Remnawave не отдала шаблоны: берём последние удачные
+                except Exception:  # noqa: BLE001
                     cache = _load_tpl_cache()
                     tpls = {u: cache[u] for u in need if u in cache}
                     if strict and len(tpls) != len(need):
@@ -446,10 +400,6 @@ def sync(fetch_hosts: Callable[[], Any],
 
 
 def ensure_default_file() -> None:
-    """
-    panel.json ещё нет (Remnawave не настроена или не ответила) — пишем настройки без
-    хостов: пользователи видят только авто-выбор, а не все хосты Remnawave подряд.
-    """
     if os.path.exists(panel_json_path()):
         return
     with save_lock:
@@ -462,14 +412,10 @@ def last_sync() -> dict[str, Any]:
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-# XBM: статус и предпросмотр
-# ─────────────────────────────────────────────────────────────
-
 def _get(url: str, headers: Optional[dict[str, str]] = None, timeout: float = 8.0) -> tuple[int, str]:
     req = urllib.request.Request(url, headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — адрес задаёт только .env
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
             return r.status, r.read(4 * 1024 * 1024).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, (e.read(4096) or b"").decode("utf-8", "replace")
@@ -484,7 +430,6 @@ def health() -> dict[str, Any]:
 
 
 def _is_placeholder(cfgs: list[Any]) -> bool:
-    """Заглушка Remnawave: все прокси-выходы — 0.0.0.0:1."""
     total = fake = 0
     for c in cfgs:
         for o in (c.get("outbounds") or []) if isinstance(c, dict) else []:
@@ -499,12 +444,6 @@ def _is_placeholder(cfgs: list[Any]) -> bool:
 
 
 def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -> list[dict[str, Any]]:
-    """
-    Как подписку увидит клиент (по умолчанию — Happ): локации и их сервера.
-    hwid — ID уже привязанного устройства пользователя (если есть): при лимите устройств
-    Remnawave без него отдала бы заглушку. Новый HWID не придумываем — иначе
-    предпросмотр засчитался бы пользователю как новое устройство.
-    """
     if not re.fullmatch(r"[A-Za-z0-9_-]{4,128}", short_uuid or ""):
         raise XbmError("Неверная ссылка подписки")
     headers = {"User-Agent": ua}
@@ -546,10 +485,7 @@ def preview(short_uuid: str, ua: str = "Happ/1.0", hwid: Optional[str] = None) -
     return out
 
 
-# ─────────────────────────────────────────────────────────────
-# Помощник на сервере (src/core/host_runner.py, systemd blinvpn-host):
-# панель кладёт задание в data/host/jobs, помощник пишет результат в data/host/results
-# ─────────────────────────────────────────────────────────────
+# очередь заданий host_runner (data/host/jobs → results)
 
 HOST_ACTIONS = ("status", "xbm_install", "xbm_connect", "xbm_disconnect", "xbm_stop")
 

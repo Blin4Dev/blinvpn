@@ -340,7 +340,7 @@ class RemnawaveAPI:
     def get_users_tags(self) -> Any:
         return self.get("/api/users/tags")
 
-    # bulk users
+    # массовые пользователи
     def bulk_update_users(self, body: dict[str, Any]) -> Any:
         return self.post("/api/users/bulk/update", json_body=body)
 

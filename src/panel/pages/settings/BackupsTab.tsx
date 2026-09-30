@@ -31,7 +31,7 @@ export const BackupSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
       const res = await fetch(`/api/panel/backups/download?name=${encodeURIComponent(name)}`, { headers: { Authorization: `Bearer ${getPanelToken()}` } });
       if (!res.ok) throw new Error(String(res.status));
       if ((res.headers.get('content-type') || '').includes('application/json')) {
-        // Копия только в S3 — временная ссылка на сжатый файл
+        // временная ссылка на сжатый файл
         const { url } = await res.json();
         setDownloading(null);
         window.location.assign(url);

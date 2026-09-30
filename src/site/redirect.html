@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="robots" content="noindex,nofollow" />
-  <title>BlinVPN — открываем приложение…</title>
+  <title>Открываем приложение…</title>
   <style>
     :root { color-scheme: dark; }
     html, body { margin: 0; height: 100%; }
@@ -39,16 +39,16 @@
   </div>
   <script>
     (function () {
-      // Ссылка вида incy://... или happ://... передаётся в ?url= (URL-encoded).
+      // deep link в ?url= (incy:// или happ://)
       var raw = new URLSearchParams(location.search).get('url') || '';
       var target = '';
       try { target = decodeURIComponent(raw); } catch (e) { target = raw; }
 
       var go = document.getElementById('go');
-      // Разрешаем только кастомные схемы приложений — защита от open-redirect.
+      // только схемы приложений (без open-redirect)
       if (/^(incy|happ):\/\//i.test(target)) {
         go.setAttribute('href', target);
-        // Пытаемся открыть сразу; кнопка остаётся как запасной вариант.
+        // сразу пробуем открыть; кнопка — запасной вариант
         try { window.location.href = target; } catch (e) {}
         setTimeout(function () {
           var sp = document.getElementById('sp');

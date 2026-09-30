@@ -8,8 +8,7 @@ export function trackRoute(pathWithSearch: string, replace = false): void {
     const raw = sessionStorage.getItem(STACK_KEY);
     const stack = raw ? (JSON.parse(raw) as string[]) : [];
     const safeStack = Array.isArray(stack) ? stack : [];
-    // navigate(..., { replace: true }) заменяет текущую запись, а не добавляет новую:
-    // иначе «Назад» вернёт на заменённый адрес (например, /subscription?setup=1).
+    // заменить текущую запись, чтобы «назад» не вёл на заменённый url
     if (replace && safeStack.length) {
       const next = [...safeStack.slice(0, -1), pathWithSearch];
       const deduped = next.filter((v, i) => i === 0 || v !== next[i - 1]);
@@ -18,7 +17,7 @@ export function trackRoute(pathWithSearch: string, replace = false): void {
     }
     const currentIndex = safeStack.lastIndexOf(pathWithSearch);
 
-    // Если пользователь вернулся через POP, выравниваем стек под текущий маршрут.
+    // pop: обрезать стек до текущего маршрута
     if (currentIndex >= 0 && currentIndex < safeStack.length - 1) {
       const trimmed = safeStack.slice(0, currentIndex + 1);
       sessionStorage.setItem(STACK_KEY, JSON.stringify(trimmed));
@@ -30,7 +29,7 @@ export function trackRoute(pathWithSearch: string, replace = false): void {
       sessionStorage.setItem(STACK_KEY, JSON.stringify(next));
     }
   } catch {
-    // Игнорируем ошибки хранилища, чтобы не ломать навигацию.
+    // ошибки storage не должны ломать навигацию
   }
 }
 
@@ -43,8 +42,7 @@ function getPreviousRoute(current: string): string | null {
     }
     const idx = stack.lastIndexOf(current);
     const from = idx <= 0 ? stack.length - 1 : idx;
-    // Пропускаем ту же страницу с другими параметрами (например, /subscription?setup=1
-    // перед /subscription) — «Назад» должен уводить на предыдущую страницу.
+    // пропустить тот же path с другим query (?setup=1 vs без)
     const pathOf = (v: string) => v.split("?")[0];
     for (let i = from - 1; i >= 0; i--) {
       if (pathOf(stack[i]) !== pathOf(current)) return stack[i];

@@ -76,7 +76,7 @@ export const SquadsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastTyp
 
 type Grace = { enabled: boolean; squads: string[]; traffic_gb: number; trial: boolean; days: number };
 
-/** Grace-доступ: после окончания подписки, пока она не удалена, работает резервный сквад. */
+// grace: после окончания подписки, пока не удалена, резервный сквад
 const GraceCard: React.FC<{ squads: SquadConfig[]; onToast: (t: string, m: string, ty: ToastType) => void }> = ({ squads, onToast }) => {
   const [g, setG] = useState<Grace | null>(null);
   const [saved, setSaved] = useState('');

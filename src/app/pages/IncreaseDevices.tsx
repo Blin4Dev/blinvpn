@@ -22,8 +22,7 @@ export default function IncreaseDevices() {
 
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState(1);
-  // Сколько устройств БУДЕТ в подписке. Меньше текущего выбрать нельзя
-  // (уменьшить лимит может только администратор в панели).
+  // целевое число устройств; ниже текущего нельзя (уменьшение только админ)
   const [target, setTarget] = useState(2);
   const [pricePerDevice, setPricePerDevice] = useState(40);
   const [subId, setSubId] = useState<number | null>(null);

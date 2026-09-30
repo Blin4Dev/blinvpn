@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 
-/** Пошаговый мастер: номер шага, заголовок; открыт только текущий шаг. */
+// мастер: открыт только текущий шаг
 export const Steps: React.FC<{ current: number; steps: { title: string; done?: boolean; body: React.ReactNode }[] }> = ({ current, steps }) => (
   <div className="card" style={{ padding: 6 }}>
     {steps.map((s, i) => {
@@ -23,14 +23,12 @@ export const Steps: React.FC<{ current: number; steps: { title: string; done?: b
   </div>
 );
 
-/** Нумерованная инструкция. */
 export const HowTo: React.FC<{ items: React.ReactNode[] }> = ({ items }) => (
   <ol style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, lineHeight: 1.5 }}>
     {items.map((x, i) => <li key={i}>{x}</li>)}
   </ol>
 );
 
-/** Кнопка «Скопировать» с отметкой. */
 export const CopyBtn: React.FC<{ text: string; label?: string }> = ({ text, label = 'Скопировать' }) => {
   const [ok, setOk] = useState(false);
   return (
@@ -40,7 +38,7 @@ export const CopyBtn: React.FC<{ text: string; label?: string }> = ({ text, labe
   );
 };
 
-/** Лог выполнения задания на сервере. */
+// лог задания на сервере
 export const JobLog: React.FC<{ lines: string[] }> = ({ lines }) => lines.length ? (
   <pre className="inset mono" style={{ margin: 0, padding: 10, fontSize: 12, lineHeight: 1.5, maxHeight: 200, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
     {lines.join('\n')}

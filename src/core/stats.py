@@ -1,10 +1,3 @@
-"""
-Статистика для панели: «Главная» (что важно прямо сейчас) и «Статистика» (всё подробно).
-
-Все суммы — по таблице payments (успешные платежи), как в «Финансах»,
-чтобы цифры в разных разделах не расходились. Дни считаются по Москве.
-"""
-
 from __future__ import annotations
 
 import statistics as st
@@ -30,7 +23,6 @@ MONTHS_FULL = ["январь", "февраль", "март", "апрель", "м
 MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
 def _dt(v: Any) -> Optional[datetime]:
     if not v:
         return None
@@ -158,7 +150,7 @@ def _trial_grants() -> dict[int, datetime]:
         t = _dt(r.get("t"))
         if t:
             out[int(r["user_id"])] = t
-    # Пробные, выданные до появления trial_checks, видны по самой подписке
+    # старые trial без trial_checks
     for r in db.fetchall("SELECT user_id, MIN(created_at) AS t FROM subscriptions WHERE type = 'trial' GROUP BY user_id"):
         t = _dt(r.get("t"))
         if t and int(r["user_id"]) not in out:
@@ -170,14 +162,13 @@ def _in(t: Optional[datetime], a: Optional[datetime], b: datetime) -> bool:
     return t is not None and (a is None or t >= a) and t < b
 
 
-# ── Статистика ───────────────────────────────────────────────────────────────
 def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: Optional[date] = None) -> dict[str, Any]:
     now = _now()
     today = _msk_day(now)
     end_day = today
     end = now
     if date_from and date_to:
-        # Свой период: с date_from по date_to включительно (московские сутки)
+        # свой период, сутки мск включительно
         date_to = min(date_to, today)
         date_from = min(date_from, date_to)
         period = "custom"
@@ -188,7 +179,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
         if period not in PERIODS:
             period = "30d"
         days = PERIODS[period]
-        # Границы периода — по московским суткам
+        # границы по мск
         start_day = (today - timedelta(days=days - 1)) if days else None
     start = datetime.combine(start_day, datetime.min.time(), MSK).astimezone(timezone.utc) if start_day else None
     prev_start = (start - timedelta(days=days)) if (start and days) else None
@@ -208,7 +199,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     prev = [p for p in ok_all if prev_start and _in(p["t"], prev_start, start)]
     refunded = [p for p in pays_all if p.get("refunded_at") and _in(_dt(p["refunded_at"]), start, end)]
 
-    # Неуспешные платежи за период — доля отказов у платёжки
+    # доля отказов за период
     attempts = db.fetchall(
         "SELECT status, method, provider, created_at FROM payments WHERE status IN ('paid','completed','refunded','failed','expired','canceled','cancelled')"
     )
@@ -226,7 +217,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     payers = {int(p["user_id"]) for p in cur}
     payers_prev = {int(p["user_id"]) for p in prev}
 
-    # ── ряды по времени
     keys = _bucket_range(start_day, end_day, bucket)
     series = {k: {"revenue": 0.0, "payments": 0, "new_users": 0, "trials": 0, "first": 0} for k in keys}
 
@@ -251,7 +241,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     timeline = [{"t": k.isoformat(), "label": _bucket_label(k, bucket), **{kk: (round(vv, 2) if isinstance(vv, float) else vv) for kk, vv in v.items()}}
                 for k, v in series.items()]
 
-    # ── структура выручки
     by_kind: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
     by_method: dict[str, list[float]] = defaultdict(lambda: [0, 0.0])
     by_plan: Counter = Counter()
@@ -275,7 +264,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     amounts = [p["amount"] for p in cur if p["amount"] > 0]
     stars_cnt = sum(int(p.get("stars") or 0) for p in cur)
 
-    # ── пользователи
     new_cur = [u for u in users if _in(u["t"], start, end)]
     new_prev = [u for u in users if prev_start and _in(u["t"], prev_start, start)]
     blacklisted = int((db.fetchone("SELECT COUNT(*) AS c FROM users WHERE ban_reason LIKE 'blacklist%' OR ban_reason LIKE '%черн%'") or {}).get("c") or 0)
@@ -296,7 +284,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
         elif u.get("email"):
             login["Только почта (сайт)"] += 1
 
-    # ── воронка по пользователям, пришедшим в период
+    # воронка по юзерам периода
     first_pay: dict[int, datetime] = {}
     for p in ok_all:
         uid = int(p["user_id"])
@@ -306,7 +294,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     f_trial = sum(1 for i in cohort_ids if i in trials)
     f_paid = sum(1 for i in cohort_ids if i in first_pay)
     f_trial_paid = sum(1 for i in cohort_ids if i in trials and i in first_pay and first_pay[i] >= trials[i])
-    # общая конверсия пробного в оплату (за всё время) и время до первой оплаты
+    # trial->pay за всё время + время до оплаты
     trial_total = len(trials)
     trial_conv = sum(1 for i, t in trials.items() if i in first_pay and first_pay[i] >= t)
     hours_to_pay = []
@@ -316,7 +304,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
         if c and t >= c and _in(t, start, end):
             hours_to_pay.append((t - c).total_seconds() / 3600)
 
-    # ── подписки
     nowiso = now.isoformat()
     subs = db.fetchall("SELECT id, user_id, type, status, expires_at, devices_limit, traffic_used, no_renew, frozen_at, created_at FROM subscriptions WHERE status != 'Deleted'")
     act_paid = [s for s in subs if s["status"] == "Active" and s["type"] != "trial" and (not s["expires_at"] or s["expires_at"] > nowiso)]
@@ -335,7 +322,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     repeat_users = sum(1 for c in pay_counts.values() if c >= 2)
     ltv = sum(p["amount"] for p in ok_all) / len(paying_all) if paying_all else 0
 
-    # ── рефералы
     ref_tx = db.fetchall("SELECT user_id, amount, created_at FROM transactions WHERE payment_method = 'referral' AND status = 'completed'")
     ref_cur = [r for r in ref_tx if _in(_dt(r.get("created_at")), start, end)]
     invited_cur = [u for u in new_cur if u.get("referred_by")]
@@ -357,7 +343,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     top_ref = sorted(invited_by.keys(), key=lambda i: (earned_by.get(i, 0), invited_by[i]), reverse=True)[:10]
     partner_owed = sum(float(u.get("partner_balance") or 0) for u in users)
 
-    # ── промокоды и ссылки
     promo_rows = db.fetchall(
         "SELECT p.code, p.name, a.created_at FROM promocode_activations a JOIN promocodes p ON p.id = a.promocode_id"
     )
@@ -367,7 +352,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
         "SELECT name, code, clicks, new_users, paid_users, total_revenue FROM tracking_links ORDER BY total_revenue DESC, new_users DESC LIMIT 8"
     )
 
-    # ── когорты по месяцу регистрации (последние 6 месяцев)
+    # когорты: 6 мес
     cohorts = []
     rev_by_user: dict[int, float] = defaultdict(float)
     for p in ok_all:
@@ -425,7 +410,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
             "banned": sum(1 for u in users if u.get("is_banned")), "blacklisted": blacklisted,
             "sources": [{"name": k, "value": v} for k, v in src.most_common()],
             "login": [{"name": k, "value": v} for k, v in login.most_common()],
-            # только реферальный баланс — другого баланса у сервиса нет
+            # только реф. баланс
             "with_balance": sum(1 for u in users if float(u.get("partner_balance") or 0) > 0),
             "balance_total": _money(sum(float(u.get("partner_balance") or 0) for u in users)),
         },
@@ -444,7 +429,7 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
             "frozen": sum(1 for s in act_paid if s.get("frozen_at")),
             "traffic_total": traffic_total,
             "devices_dist": [{"name": f"{k} устр.", "value": v} for k, v in sorted(dev_dist.items())],
-            "state_dist": [],  # заполняется в core (user_states_map)
+            "state_dist": [],  # из core.user_states_map
             "repeat_rate": _pct(repeat_users, len(paying_all)), "paying_all": len(paying_all),
         },
         "referrals": {
@@ -467,7 +452,6 @@ def statistics(period: str = "30d", date_from: Optional[date] = None, date_to: O
     }
 
 
-# ── Главная ──────────────────────────────────────────────────────────────────
 def dashboard() -> dict[str, Any]:
     now = _now()
     today = _msk_day(now)
@@ -481,13 +465,13 @@ def dashboard() -> dict[str, Any]:
 
     r_today, n_today = rev_between(day0, now)
     r_yday, n_yday = rev_between(day0 - timedelta(days=1), day0)
-    # вчера к этому же часу — честное сравнение незаконченного дня
+    # вчера к этому часу (неполный день)
     r_yday_same, _ = rev_between(day0 - timedelta(days=1), now - timedelta(days=1))
     r_7, _ = rev_between(day0 - timedelta(days=6), now)
     r_prev7, _ = rev_between(day0 - timedelta(days=13), day0 - timedelta(days=6))
     r_30, _ = rev_between(day0 - timedelta(days=29), now)
 
-    # Доход за календарный месяц (МСК) и прошлый месяц к этому же дню
+    # месяц мск + прошлый к этому дню
     m0_day = today.replace(day=1)
     m0 = datetime.combine(m0_day, datetime.min.time(), MSK).astimezone(timezone.utc)
     pm_day = (m0_day - timedelta(days=1)).replace(day=1)
@@ -516,7 +500,7 @@ def dashboard() -> dict[str, Any]:
         s, n = rev_between(a, a + timedelta(days=1))
         series.append({"label": f"{d.day:02d}.{d.month:02d}", "value": _money(s), "count": n})
 
-    # ── что требует внимания
+    # внимание
     todo: list[dict[str, Any]] = []
     wd = db.fetchone("SELECT COUNT(*) AS c, COALESCE(SUM(amount),0) AS s FROM withdrawals WHERE status = 'pending'") or {}
     if int(wd.get("c") or 0):
@@ -591,7 +575,7 @@ def dashboard() -> dict[str, Any]:
         "subs": {"active_paid": act_paid, "active_trial": act_trial},
         "series": series,
         "todo": todo,
-        # Блок «Пользователи» с «Статистики» за последние 30 дней
+        # пользователи за 30 дней
         "users_block": _users_block(),
         "recent": [{
             "user_id": r["user_id"],

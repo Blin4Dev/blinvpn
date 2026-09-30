@@ -6,10 +6,7 @@ import { RichText } from "../components/RichText";
 type Doc = "offer" | "privacy";
 const DOC_TITLE: Record<Doc, string> = { offer: "Договор оферты", privacy: "Политика конфиденциальности" };
 
-/**
- * Обязательное согласие с офертой и политикой конфиденциальности при первом входе
- * (и в мини-приложении, и на сайте). Закрыть нельзя — только прочитать и принять.
- */
+// обязательное принятие оферты и политики при первом входе
 export default function TermsGate({ onAccepted }: { onAccepted: () => void }) {
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);

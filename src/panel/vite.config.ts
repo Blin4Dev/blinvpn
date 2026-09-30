@@ -3,8 +3,7 @@ import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
 import path from 'node:path'
 
-// Каталог assets в корне репозитория (рядом с src). Локально это ../../assets,
-// в Docker-сборке — ../assets (см. Dockerfile.panel). Берём тот, что существует.
+// assets в корне репо: локально ../../assets, в docker ../assets
 function findAssetsDir(): string | null {
   for (const rel of ['../../assets', '../assets']) {
     const p = path.resolve(__dirname, rel)
@@ -18,7 +17,7 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml', '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',
 }
 
-/** Отдаёт /assets/* из корневого каталога assets в dev и копирует их в сборку. */
+// /assets/* в dev + копирование в сборку
 function rootAssets(): Plugin {
   return {
     name: 'blinvpn-panel-root-assets',

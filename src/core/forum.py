@@ -1,19 +1,3 @@
-"""
-Единая точка отправки уведомлений в форум-группу Telegram (топики) и админу.
-
-Топики (message_thread_id) настраиваются в панели и/или через .env:
-  • Выводы   (withdrawals) — уведомления о новых заявках на вывод (обработка — в панели)
-  • Коды     (codes)       — коды входа в панель
-  • Бэкапы   (backups)     — файлы резервных копий БД
-  • Покупки  (purchases)   — уведомления об оплатах
-  • Ошибки   (errors)      — только серверные ошибки
-  • Инциденты (incidents)  — мониторинг серверов: падения, нагрузка, VLESS, оплата
-
-Настройки берутся из таблицы settings (ключи forum_*), с откатом на .env.
-Если форум не настроен, коды/уведомления уходят администратору в ЛС
-(TELEGRAM_ADMIN_ID).
-"""
-
 from __future__ import annotations
 
 import os
@@ -31,7 +15,7 @@ except ImportError:
 
 TOPICS = ("withdrawals", "codes", "backups", "purchases", "errors", "incidents", "support")
 
-# Откаты на .env (совместимость со старыми установками).
+# fallback на .env
 _ENV_TOPIC_FALLBACK = {
     "withdrawals": "NOTIFY_THREAD_WITHDRAWALS",
     "purchases": "NOTIFY_THREAD_DEPOSITS",
@@ -54,12 +38,7 @@ def admin_chat_id() -> str:
 
 
 def admin_ids() -> set[int]:
-    """
-    Множество Telegram-id, которым разрешены админ-действия из бота/форума
-    (одобрение выводов, приём ссылки на транзакцию). Источник — TELEGRAM_ADMIN_ID
-    (можно перечислить через запятую/пробел) и настройка forum_admin_ids из панели.
-    Членство в форум-группе НЕ даёт прав — только явный список.
-    """
+    """telegram-id админов: TELEGRAM_ADMIN_ID + forum_admin_ids (не членство в группе)."""
     raw = f"{_env('TELEGRAM_ADMIN_ID')} {db.get_setting('forum_admin_ids', '')}"
     out: set[int] = set()
     for part in raw.replace(",", " ").split():
@@ -78,14 +57,10 @@ def is_admin(telegram_id: Any) -> bool:
 
 
 def withdrawals_chat_ok(chat: Any, thread: Any) -> bool:
-    """
-    Действие по выводу должно приходить из настроенной форум-группы (а если топик
-    «Выводы» задан — то из него). Защищает от нажатий в посторонних чатах.
-    """
+    """вывод только из форум-группы (и топика «выводы», если задан)."""
     cid = chat_id()
     if not cid:
-        # Форум не настроен — заявки уходят админу в ЛС; проверять чат не по чему,
-        # достаточно проверки is_admin вызывающим кодом.
+        # форум не настроен: заявки в лс админу (is_admin у вызывающего)
         return True
     if str(_as_chat(cid)) != str(chat):
         return False
@@ -110,7 +85,7 @@ def topic_id(topic: str) -> Optional[int]:
 
 
 def get_config() -> dict[str, Any]:
-    """Конфиг форума для панели."""
+    """конфиг форума для панели."""
     return {
         "forum_chat_id": db.get_setting("forum_chat_id", "") or "",
         "panel_url": db.get_setting("panel_url", "") or "",
@@ -129,15 +104,13 @@ def save_config(forum_chat_id: str, topics: dict[str, Any], panel_url_value: Opt
 
 
 def user_link(user_id: int) -> str:
-    """Кликабельная ссылка «id<N>» на страницу пользователя в панели."""
+    """ссылка «id<N>» на пользователя в панели."""
     base = panel_url()
     label = f"id{user_id}"
     if base:
         return f'<a href="{base}/users/{user_id}">{label}</a>'
     return f"<b>{label}</b>"
 
-
-# ── Отправка ─────────────────────────────────────────────────
 
 _PUSH_TOPICS = {"purchases": ("💰 Покупка", "/finance"), "withdrawals": ("💸 Запрос на вывод", "/withdrawals"),
                 "incidents": ("⚠️ Мониторинг", "/monitoring")}
@@ -159,11 +132,7 @@ def _push_owner(topic: str, text: str) -> None:
 
 
 def send(topic: str, text: str, *, reply_markup: Optional[dict] = None) -> Optional[dict[str, Any]]:
-    """
-    Шлёт сообщение в топик форума (или админу в ЛС, если форум не настроен).
-    Возвращает результат Telegram (для message_id) либо None.
-    Покупки, выводы и инциденты дополнительно приходят владельцу push-уведомлением.
-    """
+    """в топик форума (или лс админу); purchases/withdrawals/incidents ещё push владельцу."""
     if topic in _PUSH_TOPICS:
         _push_owner(topic, text)
     cid = chat_id()
@@ -206,7 +175,7 @@ def delete_message(chat: Any, message_id: int) -> bool:
 
 
 def _as_chat(value: Any) -> Any:
-    """Chat id может быть числом (-100…) или @username."""
+    """chat id: число или @username."""
     s = str(value).strip()
     if s.startswith("@"):
         return s
@@ -215,8 +184,6 @@ def _as_chat(value: Any) -> Any:
     except ValueError:
         return s
 
-
-# ── Готовые уведомления ──────────────────────────────────────
 
 def notify_purchase(user: dict[str, Any], amount: Any, method: str, currency: str = "₽") -> None:
     method_label = {
@@ -235,10 +202,7 @@ def send_code(code: str, ip: str = "", user_agent: str = "") -> bool:
 
 
 def notify_withdrawal(withdrawal: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """
-    Уведомление о новой заявке на вывод в топик «Выводы». Только информирует —
-    сама обработка (одобрить / завершить / отклонить) делается в панели.
-    """
+    """новая заявка на вывод в топик; обработка в панели."""
     wid = int(withdrawal["id"])
     text = (
         f"💰 <b>Новый запрос на вывод #{wid}</b>\n\n"
@@ -266,16 +230,14 @@ def _esc(s: str) -> str:
 
 
 def report_error(context: str, detail: str = "") -> None:
-    """Серверная ошибка → топик «Ошибки». Вызывать только для НАШИХ сбоев."""
+    """ошибка → топик «ошибки» (только наши сбои)."""
     body = f"❗️ <b>Ошибка</b>: {context}"
     if detail:
         body += f"\n<code>{_esc(detail[:900])}</code>"
     send("errors", body)
 
 
-# ── Финализация вывода ───────────────────────────────────────
-
-EMOJI_APPROVED = "5206607081334906820"  # ✔️ (премиум)
+EMOJI_APPROVED = "5206607081334906820"
 
 
 def _utf16_len(s: str) -> int:
@@ -301,7 +263,7 @@ def _send_entities(telegram_id: int, segments: list[tuple[str, Optional[dict]]])
 
 
 def dm_withdrawal_completed(telegram_id: int, amount: Any, tx_hash: str) -> bool:
-    """ЛС пользователю: «✔️ Вывод выполнен» + сумма + hash транзакции."""
+    """лс: вывод выполнен + сумма + hash."""
     if not telegram_id:
         return False
     return _send_entities(int(telegram_id), [
@@ -314,7 +276,7 @@ def dm_withdrawal_completed(telegram_id: int, amount: Any, tx_hash: str) -> bool
 
 
 def dm_withdrawal_rejected(telegram_id: int, amount: Any, reason: str, refunded: bool) -> bool:
-    """ЛС пользователю об отказе: причина и вернулись ли деньги на баланс."""
+    """лс об отказе: причина и возврат на баланс."""
     if not telegram_id:
         return False
     tail = (f"\n\n{_fmt_amount(amount)}₽ возвращены на реферальный баланс." if refunded

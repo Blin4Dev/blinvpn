@@ -19,14 +19,13 @@ on_error() {
 }
 trap 'on_error $LINENO' ERR
 
-# UTF-8-локаль: иначе Backspace в терминале стирает русскую букву не целиком (по байту),
-# и в .env попадает «половина» символа — docker-compose потом падает с UnicodeDecodeError.
+# utf-8 локаль: иначе backspace ломает русские буквы в .env
 if locale -a 2>/dev/null | grep -qiE '^(C|en_US)\.utf-?8$'; then
     export LC_ALL="$(locale -a 2>/dev/null | grep -iE '^C\.utf-?8$' | head -n1)"
     [[ -z "$LC_ALL" ]] && export LC_ALL="$(locale -a 2>/dev/null | grep -iE '^en_US\.utf-?8$' | head -n1)"
 fi
 
-# Убирает битые байты (неполные UTF-8 символы), \r и пробелы по краям.
+# битые utf-8, \r и пробелы по краям
 clean_input() {
     local v="$1"
     if command -v iconv >/dev/null 2>&1; then
@@ -47,8 +46,7 @@ prompt() {
     printf -v "$__var" '%s' "$value"
 }
 
-# prompt с проверкой: повторяет вопрос, пока ответ не подойдёт под регулярку.
-# Пустой ответ допустим, только если allow_empty=1 (тогда подставится значение по умолчанию).
+# prompt с проверкой по regex; пустой ок при allow_empty=1
 prompt_valid() {
     local message="$1" __var="$2" regex="$3" hint_text="$4" allow_empty="${5:-0}"
     local value
@@ -62,8 +60,7 @@ prompt_valid() {
     printf -v "$__var" '%s' "$value"
 }
 
-# .env должен быть в чистом UTF-8, иначе docker-compose не запустится.
-# Битые байты вырезаем (копия исходника сохраняется), строки с ними показываем.
+# .env в utf-8; битые байты вырезаем (бэкап сохраняем)
 ensure_env_utf8() {
     local f="${1:-.env}"
     [[ -f "$f" ]] || return 0
@@ -79,7 +76,7 @@ ensure_env_utf8() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         n=$((n + 1))
         if ! printf '%s' "$line" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
-            # значение не печатаем — там могут быть секреты
+            # значение не печатаем: там могут быть секреты
             printf '     строка %s: %s\n' "$n" "$(printf '%s' "${line%%=*}" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)"
         fi
     done < "$f"
@@ -181,8 +178,7 @@ ensure_packages() {
     fi
 }
 
-# Docker Compose: предпочитаем v2 (`docker compose`). Старый docker-compose 1.29 (python)
-# несовместим с новыми версиями Docker и сыпет ошибками вроде «KeyError: 'id'».
+# docker compose v2; старый 1.29 несовместим с новым docker
 ensure_compose() {
     if sudo docker compose version >/dev/null 2>&1; then
         log_success "✔ Docker Compose v2 установлен."
@@ -195,7 +191,7 @@ ensure_compose() {
         || sudo apt-get install -y --no-install-recommends docker-compose-plugin 2>/dev/null || true
     unset DEBIAN_FRONTEND
     if ! sudo docker compose version >/dev/null 2>&1; then
-        # Последний вариант — официальный бинарник плагина
+        # fallback: официальный бинарник плагина
         local arch; arch="$(uname -m)"; [[ "$arch" == "aarch64" ]] && arch="aarch64" || arch="x86_64"
         sudo mkdir -p /usr/local/lib/docker/cli-plugins
         sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
@@ -211,7 +207,7 @@ ensure_compose() {
     fi
 }
 
-# Обёртка: v2, если есть, иначе старый docker-compose.
+# v2 если есть, иначе docker-compose
 dc() {
     if sudo docker compose version >/dev/null 2>&1; then
         sudo docker compose "$@"
@@ -220,9 +216,7 @@ dc() {
     fi
 }
 
-# Сборка образов с повторами. Чаще всего сборка падает не из-за кода, а из-за
-# обрыва связи с pypi.org / npm — тогда просто пробуем ещё раз. Сборка идёт ДО
-# остановки контейнеров: если не собралось, работающий бот не выключается.
+# сборка с повторами (сеть/pypi); до остановки контейнеров
 dc_build() {
     local i
     for i in 1 2 3; do
@@ -304,7 +298,7 @@ ensure_certbot_nginx() {
     exit 1
 }
 
-# Общий блок проксирования webhook → сервис webhook:5000
+# прокси webhook → 127.0.0.1:5000
 _webhook_location() {
     local path="$1"
     cat <<EOF
@@ -328,7 +322,7 @@ configure_nginx() {
     sudo rm -f /etc/nginx/sites-enabled/default
 
     sudo tee "$nginx_conf" >/dev/null <<EOF
-# HTTP → HTTPS
+# редирект http → https
 server {
     listen 80;
     listen [::]:80;
@@ -341,7 +335,7 @@ server {
     }
 }
 
-# Мини-приложение + API + payment webhooks
+# мини-приложение + api + webhooks
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -350,10 +344,10 @@ server {
     ssl_certificate /etc/letsencrypt/live/${miniapp_domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${miniapp_domain}/privkey.pem;
 
-    # Вложения в чат поддержки: до 50 МБ на файл
+    # вложения поддержки: до 50 мб
     client_max_body_size 55m;
 
-    # Заголовки безопасности (мини-апп должен открываться внутри Telegram, поэтому без X-Frame-Options)
+    # security headers (без x-frame-options: telegram webview)
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
@@ -368,17 +362,17 @@ server {
         proxy_connect_timeout 15s;
     }
 
-    # Внутренние service-to-service ручки недоступны снаружи.
+    # /api/internal недоступен снаружи
     location /api/internal {
         return 404;
     }
 
-    # API панели доступен только на домене панели.
+    # /api/panel только на домене панели
     location /api/panel {
         return 404;
     }
 
-    # Переходник deep-link: в адресе зашифрованная ссылка на подписку — не пишем в лог.
+    # deep-link redirect: не пишем в access_log
     location = /redirect.html {
         access_log off;
         proxy_pass http://127.0.0.1:9741;
@@ -396,7 +390,7 @@ server {
 $(_webhook_location /platega)
 }
 
-# Панель управления
+# панель
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -405,10 +399,10 @@ server {
     ssl_certificate /etc/letsencrypt/live/${panel_domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${panel_domain}/privkey.pem;
 
-    # Вложения в чат поддержки: до 50 МБ на файл
+    # вложения поддержки: до 50 мб
     client_max_body_size 55m;
 
-    # Заголовки безопасности панели (кликджекинг, sniffing, HSTS)
+    # security headers панели
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -483,8 +477,7 @@ create_env_file() {
     BOT_USERNAME="${BOT_USERNAME_INPUT:-blinvpn_bot}"
     BOT_USERNAME="${BOT_USERNAME#@}"
 
-    # Форум-группа для служебных уведомлений настраивается в ПАНЕЛИ
-    # (Настройки → Форум), а не здесь.
+    # форум-группа уведомлений: в панели (настройки → форум)
 
     section "Remnawave · панель VPN"
     prompt_valid "  ${BOLD}Panel URL${NC}  (по умолч. http://localhost:3000): " REMWAVE_PANEL_URL_INPUT \
@@ -499,82 +492,78 @@ create_env_file() {
     INTERNAL_API_SECRET="$(gen_secret_hex)"
     MONITOR_SECRET_KEY="$(gen_secret_hex)"
 
-    # .env с секретами создаётся сразу с правами 600 (не читается другими пользователями)
+    # .env с секретами: chmod 600
     ( umask 077; : > .env )
     chmod 600 .env
     cat > .env <<EOF
-# ===== Telegram =====
+# бот telegram
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_ADMIN_ID=${TELEGRAM_ADMIN_ID}
 BOT_USERNAME=${BOT_USERNAME}
 VITE_BOT_USERNAME=${BOT_USERNAME}
 
-# Форум-группа уведомлений настраивается в панели (Настройки → Форум).
+# форум-группа: в панели (настройки → форум)
 
-# ===== Remnawave =====
+# панель remnawave
 REMWAVE_PANEL_URL=${REMWAVE_PANEL_URL}
 REMWAVE_API_KEY=${REMWAVE_API_KEY}
 
-# ===== Платежи: Platega / Telegram Stars =====
-# Ключи можно дописать позже в .env или в панели.
+# платежи: platega / telegram stars (ключи позже в .env или панели)
 
-# Platega
+# мерчант platega
 PLATEGA_API_URL=https://app.platega.io
 PLATEGA_MERCHANT_ID=
 PLATEGA_SECRET_KEY=
-# Возврат после оплаты — туда, откуда платили (сайт или мини-приложение), задавать не нужно
+# return url после оплаты задавать не нужно
 
-# Telegram Stars: bot = polling (рекомендуется), webhook = /api/telegram/webhook
+# telegram stars: bot = polling, webhook = /api/telegram/webhook
 TELEGRAM_STARS_DELIVERY=bot
 
-# ===== Почта (коды входа на сайт и рассылки) =====
-# Почта (коды входа на сайт, рассылки) настраивается в панели → Настройки → Почта
+# почта: в панели → настройки → почта
 MAIL_ENABLED=0
 
-# ===== URLs =====
+# публичные url
 MINIAPP_URL=https://${domain}
 PANEL_URL=https://${panel_domain}
 WEBHOOK_URL=https://${domain}
 API_URL=https://${domain}/api
 
-# Внутренние порты сервисов
+# порты сервисов
 API_PORT=8000
 WEBHOOK_PORT=5000
 MINIAPP_PORT=9741
 PANEL_PORT=9742
 
-# Database
+# путь к базе
 DB_PATH=data/data.db
 
-# ===== Security =====
+# безопасность
 ENV=production
 CORS_ORIGINS=https://${domain},https://${panel_domain},https://web.telegram.org
-# (сайта нет — лендинг в CORS не добавляется)
+# лендинг в cors не добавляем
 TELEGRAM_INITDATA_MAX_AGE=86400
 TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET}
 PANEL_SETUP_TOKEN=${PANEL_SETUP_TOKEN}
 INTERNAL_API_SECRET=${INTERNAL_API_SECRET}
-# Ключ шифрования секретов нод мониторинга в базе (не менять — иначе ключи нод придётся перевыпустить)
+# шифрование ключей нод мониторинга (не менять после выдачи)
 MONITOR_SECRET_KEY=${MONITOR_SECRET_KEY}
 MINIAPP_ALLOW_UNAUTH=0
 
-# SSL / домены
+# ssl / домены
 SSL_EMAIL=${email}
 MINIAPP_DOMAIN=${domain}
 PANEL_DOMAIN=${panel_domain}
 WEBHOOK_DOMAIN=${domain}
 EOF
 
-    # .env содержит все секреты (токены, ключи Platega, INTERNAL_API_SECRET) —
-    # доступ только владельцу.
+    # .env с секретами: chmod 600
     chmod 600 .env 2>/dev/null || true
     log_success "✔ Файл .env создан (права 600)."
     log_warn "\n⚠️  Логин и пароль панели будут показаны ниже, после запуска (один раз)."
     log_warn "⚠️  Платежи (Platega, Telegram Stars) — ключи в .env или в панели."
 }
 
-# ─────────────────────────────────────────────────────────────
-# Stars по умолчанию через bot polling. Webhook на API — только если TELEGRAM_STARS_DELIVERY=webhook.
+# stars: bot polling; webhook только при TELEGRAM_STARS_DELIVERY=webhook
 register_telegram_webhook() {
     local bot_token="$1"
     local domain="$2"
@@ -690,11 +679,9 @@ build_cors_origins_from_env() {
 
 fix_container_data_permissions() {
     mkdir -p data src/monitoring/logs
-    # Даём контейнеру (gid 1000) доступ, но НЕ ослабляем секреты: DKIM-ключ и БД
-    # с хэшами/сессиями не должны становиться доступны кому-то ещё на хосте.
+    # контейнер (gid 1000) пишет data; секреты не ослабляем
     chmod 750 data 2>/dev/null || true
-    # Контейнеры теперь работают под uid/gid 1000 — отдаём им владение data.
-    # data/host — каталог помощника (root): его не отдаём контейнеру
+    # uid/gid 1000; data/host остаётся root
     local as_root=""
     [ "$(id -u)" -ne 0 ] && as_root="sudo"
     $as_root find data src/monitoring/logs -path data/host -prune -o -exec chown -h 1000:1000 {} + 2>/dev/null || true
@@ -703,8 +690,7 @@ fix_container_data_permissions() {
         $as_root chown -h 0:0 data/host 2>/dev/null || true
         $as_root chmod 755 data/host 2>/dev/null || true
     fi
-    # Ужесточаем секреты обратно после рекурсивного chmod.
-    # (ссылки не трогаем: data пишет контейнер, chmod по ссылке ушёл бы в чужой файл)
+    # секреты после рекурсивного chmod (ссылки не трогаем)
     [ -d data/dkim ] && [ ! -L data/dkim ] && chmod 700 data/dkim 2>/dev/null || true
     find data/dkim -type f -name '*.private' -exec chmod 600 {} \; 2>/dev/null || true
     [ -f data/data.db ] && [ ! -L data/data.db ] && chmod 640 data/data.db 2>/dev/null || true
@@ -770,7 +756,7 @@ migrate_security_update() {
         log_warn "  ! MINIAPP_ALLOW_UNAUTH отключён (нельзя в production)"
     fi
 
-    # Убрать устаревшие ключи из прошлых проектов (не критично, если их нет)
+    # устаревшие ключи из прошлых проектов
     for stale in \
         HELEKET_API_URL HELEKET_MERCHANT HELEKET_API_KEY \
         PAYPEAR_RETURN_URL PAYPEAR_WEBHOOK_URL PAYPEAR_API_KEY PAYPEAR_MERCHANT \
@@ -983,11 +969,7 @@ replace_domains_flow() {
     fi
 }
 
-# ── Балансировщик подписки XBM (Xray Balancer Middleware, автор — Haxonate) ──
-# ── Помощник на сервере (для мастеров панели: XBM и т. п.) ──
-# Панель работает в Docker без прав на сервер; нужные действия (поставить XBM,
-# подключить его к nginx подписки) выполняет src/core/host_runner.py от root по
-# заданиям из data/host/jobs. Сетевых портов помощник не открывает.
+# host helper: задания панели (xbm и т.п.) через host_runner.py, без сетевых портов
 install_host_runner() {
     local unit=/etc/systemd/system/blinvpn-host.service
     command -v python3 >/dev/null 2>&1 || sudo apt-get install -y --no-install-recommends python3 >/dev/null
@@ -1021,7 +1003,7 @@ NGINX_LINK="/etc/nginx/sites-enabled/${PROJECT_DIR}.conf"
 
 log_success "--- Установка / обновление BlinVPN ---"
 
-# Режим обновления существующей установки
+# обновление существующей установки
 if [[ -f "$NGINX_CONF" ]]; then
     log_info "\nОбнаружена существующая конфигурация BlinVPN."
     if [[ ! -d "$PROJECT_DIR" ]]; then
@@ -1100,7 +1082,7 @@ if [[ -f "$NGINX_CONF" ]]; then
     esac
 fi
 
-# ── Новая установка ──────────────────────────────────────────
+# новая установка
 log_info "\nСуществующая конфигурация не найдена. Новая установка."
 
 ensure_packages
@@ -1151,8 +1133,7 @@ if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q 'Status: active';
     log_warn "UFW активен — открываю порты 80 и 443, закрываю внутренние."
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
-    # Внутренние сервисы (api/webhook) слушают только 127.0.0.1, но на всякий
-    # случай явно запрещаем их снаружи (defence-in-depth).
+    # api/webhook только на 127.0.0.1; ufw deny снаружи на всякий случай
     sudo ufw deny "${API_PORT:-8000}/tcp" 2>/dev/null || true
     sudo ufw deny "${WEBHOOK_PORT:-5000}/tcp" 2>/dev/null || true
 fi
@@ -1225,8 +1206,7 @@ TELEGRAM_STARS_DELIVERY="$(get_env_var TELEGRAM_STARS_DELIVERY || true)"
 TELEGRAM_STARS_DELIVERY="${TELEGRAM_STARS_DELIVERY:-bot}"
 register_telegram_webhook "${TELEGRAM_BOT_TOKEN:-}" "$DOMAIN"
 
-# Логин/пароль панели генерируются приложением при первом запуске и
-# записываются в data/first_run_credentials.txt. Показываем один раз и удаляем.
+# логин/пароль панели: data/first_run_credentials.txt, показать один раз и удалить
 log_info "\nШаг 8: Доступ в панель"
 PANEL_CREDS_FILE="data/first_run_credentials.txt"
 for _i in $(seq 1 30); do

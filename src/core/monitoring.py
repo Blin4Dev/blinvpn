@@ -1,22 +1,4 @@
-"""
-Мониторинг серверов BlinVPN.
-
-Схема работы
-────────────
-• На сервере ставится агент (node.sh в корне проекта). Он сам снимает показания
-  и хранит их в памяти; панель раз в минуту забирает новые точки по HTTP.
-• Каждый запрос к агенту подписывается секретным ключом ноды (HMAC-SHA256
-  метода, пути, времени и одноразового nonce), агент подписывает ответ — так ни
-  подделать запрос, ни подменить данные, ни повторить перехваченный запрос нельзя.
-  Сам ключ по сети не передаётся.
-• Агент ничего не выполняет по командам панели: только отдаёт показания и
-  запускает замер скорости. Даже с ключом нельзя получить доступ к серверу.
-• Ключи нод и VLESS-ключи хранятся в базе зашифрованными (MONITOR_SECRET_KEY),
-  поэтому бэкап базы, отправленный в Telegram, их не раскрывает.
-
-Этот модуль — общий для API панели (core.py) и фонового сервиса (monitor.py).
-"""
-
+# ноды blinmon: опрос агента, инциденты, проверка vless
 from __future__ import annotations
 
 import base64
@@ -48,14 +30,14 @@ except ImportError:
     import forum  # type: ignore
 
 DEFAULT_PORT = 5055
-POLL_EVERY = 60                 # сек — опрос агента и TCP-пинг
-REBOOT_GRACE = 6 * 60           # сек — после перезагрузки из панели простой не считаем аварией
-REBOOT_MIN_VERSION = "1.1.0"    # с этой версии агент умеет перезагружать сервер
-UPDATE_MIN_VERSION = "1.2.0"    # с этой версии агент обновляется сам по команде панели
-UPDATE_RETRY = 3600             # сек — повторить автообновление, если не получилось
+POLL_EVERY = 60  # сек - опрос агента и TCP-пинг
+REBOOT_GRACE = 6 * 60  # сек - после перезагрузки из панели простой не считаем аварией
+REBOOT_MIN_VERSION = "1.1.0"  # с этой версии агент умеет перезагружать сервер
+UPDATE_MIN_VERSION = "1.2.0"  # с этой версии агент обновляется сам по команде панели
+UPDATE_RETRY = 3600  # сек - повторить автообновление, если не получилось
 
 
-# node.sh, который отдаёт эта панель: из него берём актуальную версию агента и его SHA-256.
+# вшитый node.sh → версия агента + sha
 _NODE_SH_CANDIDATES = (
     os.getenv("BLINMON_NODE_SH") or "",
     "/app/node.sh",
@@ -65,7 +47,6 @@ _bundled_cache: dict[str, Any] = {}
 
 
 def bundled_agent() -> dict[str, Any]:
-    """{"version": "1.2.0", "sha": "..."} текущего node.sh или {} если файла нет."""
     for path in _NODE_SH_CANDIDATES:
         if not path or not os.path.isfile(path):
             continue
@@ -81,10 +62,10 @@ def bundled_agent() -> dict[str, Any]:
         except OSError:
             continue
     return {}
-VLESS_EVERY = 300               # сек — проверка VLESS
+VLESS_EVERY = 300  # сек - проверка VLESS
 RETENTION_DAYS = 7
-AGENT_TIMEOUT = 8               # сек — ожидание ответа агента
-AGENT_DOWN_AFTER = 3            # столько неудачных опросов подряд → «агент недоступен»
+AGENT_TIMEOUT = 8  # сек - ожидание ответа агента
+AGENT_DOWN_AFTER = 3  # столько неудачных опросов подряд → «агент недоступен»
 PING_PROBES = 5
 PING_TIMEOUT = 2.0
 HISTORY_TABLES = ("mon_metrics", "mon_pings", "mon_speed", "mon_vless")
@@ -108,10 +89,6 @@ def _parse(v: Any) -> Optional[datetime]:
         return None
 
 
-# ─────────────────────────────────────────────────────────────
-# Шифрование секретов (Fernet: AES-128-CBC + HMAC-SHA256)
-# ─────────────────────────────────────────────────────────────
-
 def _fernet():
     from cryptography.fernet import Fernet, MultiFernet
 
@@ -122,7 +99,7 @@ def _fernet():
             k = hashlib.sha256(label + b":" + raw.encode()).digest()
             keys.append(Fernet(base64.urlsafe_b64encode(k)))
     if not keys:
-        # Только для разработки: без ключей в .env шифруем ключом из базы.
+        # dev fallback: ключ в настройках
         dev = db.get_setting("monitor_dev_key", "")
         if not dev:
             dev = secrets.token_hex(32)
@@ -145,12 +122,8 @@ def decrypt(token: Optional[str]) -> Optional[str]:
 
 
 def new_secret() -> str:
-    return secrets.token_urlsafe(48)  # 64 символа, 384 бита
+    return secrets.token_urlsafe(48)
 
-
-# ─────────────────────────────────────────────────────────────
-# Проверка вводимых данных
-# ─────────────────────────────────────────────────────────────
 
 _HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.I)
 
@@ -170,7 +143,7 @@ def clean_host(value: Any) -> str:
         if _HOST_RE.match(v):
             return v.lower()
         raise MonitorError("Укажите IP-адрес или домен сервера")
-    if ip.is_loopback and os.getenv("MONITOR_ALLOW_LOOPBACK") == "1":  # только для тестов
+    if ip.is_loopback and os.getenv("MONITOR_ALLOW_LOOPBACK") == "1":  # tests only
         return str(ip)
     if ip.is_loopback or ip.is_multicast or ip.is_unspecified or ip.is_link_local:
         raise MonitorError("Этот адрес нельзя использовать")
@@ -204,10 +177,6 @@ def clean_url(value: Any) -> Optional[str]:
     return v
 
 
-# ─────────────────────────────────────────────────────────────
-# Клиент агента (подписанные запросы)
-# ─────────────────────────────────────────────────────────────
-
 class AgentError(Exception):
     def __init__(self, msg: str, status: Optional[int] = None) -> None:
         super().__init__(msg)
@@ -222,7 +191,7 @@ MAX_AGENT_BODY = 4 * 1024 * 1024
 
 
 def _ip_allowed(ip: "ipaddress._BaseAddress") -> bool:
-    if ip.is_loopback and os.getenv("MONITOR_ALLOW_LOOPBACK") == "1":  # только для тестов
+    if ip.is_loopback and os.getenv("MONITOR_ALLOW_LOOPBACK") == "1":  # tests only
         return True
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
@@ -230,12 +199,6 @@ def _ip_allowed(ip: "ipaddress._BaseAddress") -> bool:
 
 
 def resolve_host(host: str, port: int) -> tuple[int, str]:
-    """
-    Адрес ноды → IP для подключения. Домен резолвим сами и проверяем результат
-    теми же правилами, что и IP в настройках: домен, указывающий на 127.0.0.1 или
-    169.254.169.254, не пройдёт. Подключаемся именно к проверенному IP — подмена
-    DNS между проверкой и подключением (DNS rebinding) ничего не даст.
-    """
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror:
@@ -252,10 +215,6 @@ def resolve_host(host: str, port: int) -> tuple[int, str]:
 
 def _http(host: str, port: int, method: str, target: str, headers: dict[str, str],
           timeout: float) -> tuple[int, dict[str, str], bytes]:
-    """
-    Минимальный HTTP/1.0-клиент с ОБЩИМ лимитом времени на весь запрос: сервер,
-    который отдаёт ответ по байту в минуту, не подвесит опрос остальных нод.
-    """
     deadline = time.monotonic() + timeout
     family, ip = resolve_host(host, port)
 
@@ -280,7 +239,7 @@ def _http(host: str, port: int, method: str, target: str, headers: dict[str, str
             try:
                 chunk = sock.recv(65536)
             except socket.timeout:
-                left()  # общий лимит ещё не вышел — ждём дальше
+                left()
                 continue
             if not chunk:
                 break
@@ -349,15 +308,7 @@ def agent_request(node: dict[str, Any], method: str, target: str, timeout: float
     return data
 
 
-# ─────────────────────────────────────────────────────────────
-# TCP-«пинг»: доступность и потери без root/ICMP
-# ─────────────────────────────────────────────────────────────
-
 def tcp_ping(host: str, port: int, probes: int = PING_PROBES) -> dict[str, Any]:
-    """
-    Несколько попыток TCP-соединения с портом агента. Отказ в соединении (RST)
-    тоже считается ответом сервера — он жив. Таймаут = потерянный пакет.
-    """
     rtts: list[float] = []
     lost = 0
     try:
@@ -379,10 +330,6 @@ def tcp_ping(host: str, port: int, probes: int = PING_PROBES) -> dict[str, Any]:
             time.sleep(0.2)
     return {"sent": probes, "lost": lost, "rtt_ms": round(sum(rtts) / len(rtts), 1) if rtts else None}
 
-
-# ─────────────────────────────────────────────────────────────
-# VLESS: разбор ссылки и проверка через Xray
-# ─────────────────────────────────────────────────────────────
 
 def parse_vless(uri: str) -> dict[str, Any]:
     uri = (uri or "").strip()
@@ -467,7 +414,6 @@ def _free_port() -> int:
 
 
 def _get_via_proxy(proxy_port: int, url: str, timeout: float) -> int:
-    """GET через HTTP-прокси Xray явно (CONNECT для https) — без переменных окружения *_proxy."""
     import http.client
     import ssl
 
@@ -489,7 +435,6 @@ def _get_via_proxy(proxy_port: int, url: str, timeout: float) -> int:
 
 
 def check_vless(uri: str, target: str = "https://www.gstatic.com/generate_204", timeout: float = 12.0) -> dict[str, Any]:
-    """Поднимает Xray с этим VLESS-ключом и делает через него HTTPS-запрос."""
     try:
         v = parse_vless(uri)
     except MonitorError as e:
@@ -535,10 +480,6 @@ def _short_err(e: Exception) -> str:
     reason = getattr(e, "reason", None)
     return str(reason or e or type(e).__name__)[:160]
 
-
-# ─────────────────────────────────────────────────────────────
-# Ноды
-# ─────────────────────────────────────────────────────────────
 
 def get_node(node_id: int) -> Optional[dict[str, Any]]:
     return db.fetchone("SELECT * FROM mon_nodes WHERE id = ?", (int(node_id),))
@@ -609,11 +550,6 @@ def delete_node(node_id: int) -> None:
 
 
 def start_node(node_id: int) -> dict[str, Any]:
-    """
-    «Запустить»: включаем мониторинг сразу, даже если агент пока недоступен —
-    нода в статусе «Подключение…», сервис мониторинга стучится к ней каждую
-    минуту, пока не достучится. Первую попытку делаем тут же, в фоне.
-    """
     node = get_node(node_id)
     if not node:
         raise MonitorError("Нода не найдена", 404)
@@ -666,7 +602,6 @@ def _ver(v: Any) -> tuple:
 
 
 def agent_outdated(node: dict[str, Any]) -> bool:
-    """Версия агента ниже, чем в node.sh этой панели."""
     latest = bundled_agent().get("version")
     return bool(node.get("agent_version") and latest) and _ver(node.get("agent_version")) < _ver(latest)
 
@@ -681,7 +616,6 @@ def can_reboot(node: dict[str, Any]) -> bool:
 
 
 def request_update(node_id: int, manual: bool = True) -> dict[str, Any]:
-    """Попросить агента обновиться до версии node.sh этой панели (сверка по SHA-256)."""
     node = get_node(node_id)
     if not node:
         raise MonitorError("Нода не найдена", 404)
@@ -702,7 +636,6 @@ def request_update(node_id: int, manual: bool = True) -> dict[str, Any]:
 
 
 def maybe_auto_update(node: dict[str, Any]) -> None:
-    """Автообновление: агент умеет обновляться, версия ниже панельной и давно не просили."""
     if db.get_setting("mon_auto_update", "1") == "0":
         return
     if not (node.get("enabled") and agent_outdated(node) and can_self_update(node)):
@@ -715,7 +648,6 @@ def maybe_auto_update(node: dict[str, Any]) -> None:
 
 
 def reboot_node(node_id: int) -> dict[str, Any]:
-    """Перезагрузка сервера через агента (подписанный запрос, агент без root — см. node.sh)."""
     node = get_node(node_id)
     if not node:
         raise MonitorError("Нода не найдена", 404)
@@ -737,12 +669,7 @@ def reboot_node(node_id: int) -> dict[str, Any]:
     return {"ok": True}
 
 
-# ─────────────────────────────────────────────────────────────
-# Приём данных агента
-# ─────────────────────────────────────────────────────────────
-
 def _int(v: Any) -> Optional[int]:
-    """Целое из данных агента: мусор, бесконечность и гигантские числа → None."""
     try:
         if v is None or isinstance(v, bool):
             return None
@@ -815,14 +742,13 @@ def ingest(node: dict[str, Any], data: dict[str, Any]) -> None:
 
 
 def poll_node(node: dict[str, Any]) -> bool:
-    """Один опрос: данные агента + TCP-пинг. True — агент ответил."""
     nid = int(node["id"])
     cursor, sp_cursor = int(node.get("cursor") or 0), int(node.get("speed_cursor") or 0)
     ok = False
     try:
         data = agent_request(node, "GET", f"/v1/status?since={cursor}&speed_since={sp_cursor}")
         if node.get("boot_id") and data.get("boot_id") != node.get("boot_id"):
-            # Агент перезапускался — нумерация точек началась заново: забираем весь буфер.
+            # boot_id сменился → заново взять весь буфер
             data = agent_request(node, "GET", "/v1/status?since=0&speed_since=0")
         ingest(node, data)
         ok = True
@@ -845,7 +771,7 @@ def vless_node(node: dict[str, Any]) -> None:
         return
     res = check_vless(uri)
     nid = int(node["id"])
-    if res.get("ok") is None:  # Xray не установлен — это не проблема ноды
+    if res.get("ok") is None:  # xray missing on panel host
         db.execute("UPDATE mon_nodes SET vless_ok = NULL, vless_error = ?, vless_checked_at = ? WHERE id = ?",
                    (res.get("error"), _iso(), nid))
         return
@@ -859,10 +785,6 @@ def vless_node(node: dict[str, Any]) -> None:
     )
 
 
-# ─────────────────────────────────────────────────────────────
-# Статус ноды (цвет)
-# ─────────────────────────────────────────────────────────────
-
 def agent_ok(node: dict[str, Any]) -> bool:
     seen = _parse(node.get("last_seen"))
     return (bool(node.get("enabled")) and seen is not None
@@ -871,13 +793,6 @@ def agent_ok(node: dict[str, Any]) -> bool:
 
 
 def status_of(node: dict[str, Any]) -> str:
-    """
-    idle   — мониторинг не запущен (серый);
-    green  — агент на связи и VLESS работает (или не задан);
-    yellow — агент на связи, VLESS не работает;
-    orange — агент не отвечает, VLESS работает;
-    red    — не работает ни агент, ни VLESS (или VLESS не задан).
-    """
     if not node.get("enabled"):
         return "idle"
     if is_connecting(node):
@@ -891,7 +806,6 @@ def status_of(node: dict[str, Any]) -> str:
 
 
 def is_connecting(node: dict[str, Any]) -> bool:
-    """После «Запустить» агент ещё ни разу не ответил."""
     if not node.get("enabled"):
         return False
     since = _parse(node.get("connect_since"))
@@ -903,16 +817,10 @@ STATUS_LABEL = {"idle": "Не запущена", "connecting": "Подключе
                 "orange": "Агент не отвечает", "red": "Недоступна"}
 
 
-# ─────────────────────────────────────────────────────────────
-# Инциденты
-# ─────────────────────────────────────────────────────────────
-
 _OPEN_KINDS = ("outage", "agent_down", "host_down", "packet_loss", "vless_down", "cpu_high", "ram_high",
                "disk_high", "speed_drop", "speed_fail")
 
-# Проблемы связи — это одна авария: потери пакетов, агент не отвечает, сервер
-# не отвечает и VLESS не работает объединяются в ОДИН инцидент «outage».
-# Ранг: чем выше, тем серьёзнее — заголовок инцидента = самое серьёзное из текущих.
+# проблемы связи — один инцидент outage; rank выбирает заголовок
 OUTAGE_KINDS: dict[str, tuple[int, str]] = {
     "packet_loss": (0, "warning"),
     "vless_down": (1, "critical"),
@@ -992,12 +900,6 @@ def _load_json(v: Any, default: Any) -> Any:
 
 
 def set_condition(node: dict[str, Any], kind: str, active: bool, title: str = "", details: str = "") -> None:
-    """
-    Условие аварии (kind из OUTAGE_KINDS) началось или закончилось. Все такие
-    условия одной ноды живут в одном открытом инциденте «outage»: у него
-    хронология («00:33 Потери пакетов 20%», «00:35 Сервер не отвечает», …)
-    и заголовок по самому серьёзному из текущих условий.
-    """
     nid = int(node["id"])
     row = db.fetchone("SELECT * FROM mon_incidents WHERE node_id = ? AND kind = 'outage' AND resolved_at IS NULL", (nid,))
     now = _iso()
@@ -1041,7 +943,7 @@ def set_condition(node: dict[str, Any], kind: str, active: bool, title: str = ""
     timeline = _load_json(row.get("timeline"), [])
     old_sev = row["severity"]
     if kind in conds:
-        conds[kind].update(title=title, details=details[:300])  # например, потери 20% → 35%
+        conds[kind].update(title=title, details=details[:300])
     else:
         conds[kind] = cond
     state["conds"] = conds
@@ -1051,7 +953,6 @@ def set_condition(node: dict[str, Any], kind: str, active: bool, title: str = ""
 
 
 def _save_outage(inc_id: int, state: dict[str, Any], timeline: list) -> str:
-    """Пересчитывает заголовок по самому серьёзному условию и сохраняет. Возвращает severity."""
     conds = state.get("conds") or {}
     worst_kind = max(conds, key=lambda k: conds[k]["rank"])
     worst = conds[worst_kind]
@@ -1067,7 +968,6 @@ def _save_outage(inc_id: int, state: dict[str, Any], timeline: list) -> str:
 
 
 def log_event(node: dict[str, Any], kind: str, title: str, details: str = "") -> None:
-    """Событие без длительности (напоминание об оплате) — сразу закрытое."""
     now = _iso()
     db.execute("INSERT INTO mon_incidents (node_id, kind, severity, title, details, started_at, resolved_at) "
                "VALUES (?,?,?,?,?,?,?)", (int(node["id"]), kind, "info", title, details[:500], now, now))
@@ -1081,18 +981,17 @@ def _gb(v: Any) -> str:
 
 
 def evaluate(node: dict[str, Any]) -> None:
-    """Правила инцидентов для одной ноды (после очередного опроса)."""
     node = get_node(int(node["id"])) or node
     if not node.get("enabled") or is_connecting(node):
-        return  # пока не подключились — аварий не открываем
+        return
     nid = int(node["id"])
     now = int(time.time())
 
-    # Старые раздельные инциденты связи (до объединения) закрываем молча.
+    # закрыть старые outage по видам
     db.execute(f"UPDATE mon_incidents SET resolved_at = ? WHERE node_id = ? AND resolved_at IS NULL "
                f"AND kind IN ({','.join('?' * len(LEGACY_OUTAGE))})", (_iso(), nid, *LEGACY_OUTAGE))
 
-    # Перезагрузка из панели: несколько минут простоя — ожидаемо, аварию не открываем.
+    # окно после reboot: ожидаемый простой
     rb = _parse(node.get("reboot_at"))
     in_reboot = bool(rb and (_now() - rb).total_seconds() < REBOOT_GRACE)
 
@@ -1100,12 +999,12 @@ def evaluate(node: dict[str, Any]) -> None:
 
     def cond(kind: str, active: Optional[bool], title: str = "", details: str = "") -> None:
         if active is None:
-            return  # состояние не изменилось (гистерезис)
+            return
         if active and in_reboot:
             return
         pending.append((kind, active, title, details))
 
-    # Сервер не отвечает совсем (TCP-пинг)
+    # хост недоступен по tcp-проверкам
     pings = db.fetchall("SELECT ts, sent, lost FROM mon_pings WHERE node_id = ? ORDER BY ts DESC LIMIT 5", (nid,))
     host_down: Optional[bool] = None
     if len(pings) >= 3 and all(p["lost"] >= p["sent"] for p in pings[:3]):
@@ -1114,12 +1013,12 @@ def evaluate(node: dict[str, Any]) -> None:
         host_down = False
     cond("host_down", host_down, "Сервер не отвечает", "3 минуты подряд сервер не отвечает на проверки")
 
-    # Агент не отвечает (сервер при этом может пинговаться)
+    # агент недоступен
     fails = int(node.get("fail_count") or 0)
     cond("agent_down", True if fails >= AGENT_DOWN_AFTER else False if fails == 0 else None,
          "Агент не отвечает", _agent_err_human(node.get("last_error")))
 
-    # Потери считаем без минут плановой перезагрузки
+    # не считать packet-loss в окне reboot
     if rb:
         rb_ts = int(rb.timestamp())
         pings = [p for p in pings if not (rb_ts - 60 <= int(p["ts"]) <= rb_ts + REBOOT_GRACE)]
@@ -1129,20 +1028,18 @@ def evaluate(node: dict[str, Any]) -> None:
         cond("packet_loss", True if 20 <= loss < 100 else False if loss < 5 else None,
              f"Потери пакетов {loss:.0f}%", "за последние 5 минут")
 
-    # VLESS
+    # проверка vless
     if node.get("vless_enc") and node.get("vless_ok") is not None:
         vok = node.get("vless_ok")
         cond("vless_down", True if (not vok and int(node.get("vless_fail_count") or 0) >= 2) else False if vok else None,
              "VLESS не отвечает", str(node.get("vless_error") or ""))
 
-    # Сначала то, что прошло, потом новое — чтобы в хронологии не мелькали
-    # промежуточные состояния, когда всё восстановилось за одну проверку.
-    # Прошедшие — от лёгких к тяжёлым, новые — от тяжёлых к лёгким.
+    # сначала закрыть, потом открыть (стабильный timeline за проход)
     for kind, active, title, details in sorted(
             pending, key=lambda x: (x[1], -OUTAGE_KINDS[x[0]][0] if x[1] else OUTAGE_KINDS[x[0]][0])):
         set_condition(node, kind, active, title, details)
 
-    # CPU / RAM — держатся высоко 30 минут
+    # cpu/ram высокий ~30 мин
     m = db.fetchall("SELECT cpu, ram_used, ram_total, disk_used, disk_total FROM mon_metrics WHERE node_id = ? AND ts >= ? "
                     "ORDER BY ts DESC LIMIT 6", (nid, now - 40 * 60))
     if len(m) >= 6:
@@ -1166,7 +1063,7 @@ def evaluate(node: dict[str, Any]) -> None:
         elif d < 75:
             resolve_incident(node, "disk_high")
 
-    # Скорость
+    # скорость
     sp = db.fetchall("SELECT ok, down FROM mon_speed WHERE node_id = ? ORDER BY ts DESC LIMIT 2", (nid,))
     if len(sp) == 2 and not sp[0]["ok"] and not sp[1]["ok"]:
         open_incident(node, "speed_fail", "warning", "Не удаётся замерить скорость интернета", "2 замера подряд с ошибкой")
@@ -1186,13 +1083,11 @@ def evaluate(node: dict[str, Any]) -> None:
 
 
 def _agent_err_human(err: Any) -> str:
-    """«Нет связи с агентом: превышено время…» → короткое пояснение для инцидента."""
     t = str(err or "")
     return t.split(": ", 1)[1] if t.startswith("Нет связи с агентом: ") else t
 
 
 def check_payments() -> None:
-    """Напоминания об оплате сервера: за 24 ч, за 8 ч и в момент оплаты."""
     now = _now()
     for node in db.fetchall("SELECT * FROM mon_nodes WHERE pay_date IS NOT NULL"):
         pay = _parse(node.get("pay_date"))
@@ -1233,10 +1128,6 @@ def cleanup() -> None:
                (_iso(_now() - timedelta(days=90)),))
 
 
-# ─────────────────────────────────────────────────────────────
-# Данные для панели
-# ─────────────────────────────────────────────────────────────
-
 def _live(node: dict[str, Any]) -> dict[str, Any]:
     try:
         return json.loads(node.get("live_json") or "{}") or {}
@@ -1253,7 +1144,7 @@ def node_brief(node: dict[str, Any], open_titles: Optional[list[str]] = None) ->
             "can_self_update": can_self_update(node), "dot": dot, "dot_reason": reason}
 
 
-OVERLOAD_PCT = 90   # CPU / RAM / диск выше этого прямо сейчас — перегрузка (жёлтый)
+OVERLOAD_PCT = 90  # cpu / RAM / диск выше этого прямо сейчас - перегрузка (жёлтый)
 
 
 def _load_now(node: dict[str, Any]) -> dict[str, Optional[float]]:
@@ -1263,14 +1154,6 @@ def _load_now(node: dict[str, Any]) -> dict[str, Optional[float]]:
 
 
 def dot_of(node: dict[str, Any], open_titles: Optional[list[str]] = None) -> tuple[str, str]:
-    """
-    Цвет кружка ноды и пояснение (для подсказки):
-      grey   — мониторинг выключен;
-      red    — агент и/или VLESS недоступен;
-      yellow — подключение к агенту, сбой (открытый инцидент) или перегрузка прямо сейчас;
-      blue   — всё работает, но доступно обновление агента;
-      green  — всё работает: агент отвечает, VLESS тоже.
-    """
     if not node.get("enabled"):
         return "grey", "Мониторинг выключен"
     if is_connecting(node):
@@ -1385,7 +1268,6 @@ _RANGES = {"6h": (6 * 3600, 60), "24h": (86400, 300), "7d": (7 * 86400, 1800)}
 
 
 def _beat_rows(where: str, params: tuple, since: int, bucket: int) -> dict[int, dict[int, dict[str, int]]]:
-    """Минутные проверки → деления полосы: всего / недоступен / с проблемами."""
     rows = db.fetchall(
         f"SELECT node_id, (ts - ?) / ? AS b, COUNT(*) AS n, "
         f"SUM(CASE WHEN lost >= sent THEN 1 ELSE 0 END) AS down, "
@@ -1398,12 +1280,8 @@ def _beat_rows(where: str, params: tuple, since: int, bucket: int) -> dict[int, 
 
 
 def _beats_from(buckets: dict[int, dict[str, int]], since: int, bucket: int, count: int) -> dict[str, Any]:
-    """
-    Полоса как в Uptime Kuma: [начало, статус, минут недоступно, минут всего].
-    Статус: 0 — нет данных, 1 — работал, 2 — были проблемы (потери, агент), 3 — был недоступен.
-    """
     buckets = dict(buckets)
-    for k in [k for k in buckets if k >= count]:  # текущая минута на границе — в последнее деление
+    for k in [k for k in buckets if k >= count]:  # текущая минута на границе - в последнее деление
         extra = buckets.pop(k)
         last = buckets.setdefault(count - 1, {"n": 0, "down": 0, "warn": 0})
         for f in ("n", "down", "warn"):
@@ -1434,7 +1312,6 @@ def _node_beats(nid: int, span: int, count: int) -> list:
 
 
 def downtime_intervals(nid: int, since: int) -> list[list[int]]:
-    """Промежутки, когда агент был недоступен: [[начало, конец, 1 — сервер не отвечал совсем / 0 — только агент]]."""
     rows = db.fetchall("SELECT ts, lost, sent FROM mon_pings WHERE node_id = ? AND ts >= ? AND agent_ok = 0 ORDER BY ts",
                        (nid, since))
     out: list[list[int]] = []

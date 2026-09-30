@@ -1,4 +1,4 @@
-/** Разбивка числа устройств на базовый тариф + доп. слоты. */
+// базовый размер тарифа + доп. слоты
 export function splitDevices(
   total: number,
   planSizes: number[],

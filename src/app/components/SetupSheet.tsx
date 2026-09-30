@@ -4,7 +4,7 @@ import SubLinkBox from "./SubLinkBox";
 import { fetchAppLink, openDeepLink } from "../utils/api";
 import { APP_META, DEVICE_TITLE, detectDeviceKind, installUrl, type AppKind, type DeviceKind } from "../utils/apps";
 
-// pick → install (шаг 1: скачать) → add (шаг 2: добавить) → done;  «другое» → link
+// pick → install → add → done; «другое» → link
 type Step = "pick" | "device" | "install" | "add" | "link" | "done";
 
 const DEVICES: DeviceKind[] = ["ios", "android", "windows", "macos", "linux", "android_tv"];
@@ -18,7 +18,6 @@ const DEVICE_ICON: Record<DeviceKind, string> = {
   android_tv: "tv",
 };
 
-/** Небольшая кнопка-текст (как «Отмена»). */
 function TextButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
     <button
@@ -32,7 +31,6 @@ function TextButton({ children, onClick }: { children: React.ReactNode; onClick:
   );
 }
 
-/** Иконка приложения — как на прежней странице настройки. */
 export function AppIcon({ app, size = 40 }: { app: AppKind; size?: number }) {
   const m = APP_META[app];
   return (
@@ -58,12 +56,7 @@ export function AppIcon({ app, size = 40 }: { app: AppKind; size?: number }) {
   );
 }
 
-/**
- * Нижнее окно «Добавить подписку» — вся настройка без отдельной страницы:
- *   1. устройство → 2. приложение → 3. установка → 4. добавление подписки кнопкой;
- *   Android TV: 1. устройство → 2. установка Happ и ввод ссылки вручную;
- *   «Другое приложение»: 1. устройство → 2. приложение → 3. ссылка на подписку.
- */
+// нижний лист: устройство → приложение → установка → добавить (tv/другое короче)
 export default function SetupSheet({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>("device");
   const [app, setApp] = useState<AppKind | null>(null);
@@ -117,7 +110,7 @@ export default function SetupSheet({ onClose }: { onClose: () => void }) {
     : step === "link" ? "Ссылка на подписку"
     : step === "done" ? "" : step === "install" && device === "android_tv" ? "Happ" : APP_META[app || "incy"].title;
 
-  // Android TV: без кнопок — только инструкция (Happ + ввод ссылки вручную)
+  // android tv: только инструкция (happ + вставка ссылки)
   const tvGuide = step === "install" && device === "android_tv";
 
   const isTv = device === "android_tv";
@@ -129,7 +122,7 @@ export default function SetupSheet({ onClose }: { onClose: () => void }) {
     else if (step === "link") setStep("pick");
     else setStep("device");
   };
-  // Номер шага и сколько всего: обычно 4, для Android TV — 2, для «другого приложения» — 3
+  // шаг n из total (обычно 4, tv 2, другое 3)
   const stepTotal = isTv ? 2 : app === "other" && (step === "link" || step === "pick") ? 3 : 4;
   const stepNo = step === "device" ? 1
     : step === "pick" ? 2
@@ -273,8 +266,8 @@ export default function SetupSheet({ onClose }: { onClose: () => void }) {
 
         {step === "install" && (app || isTv) && (
           <>
-            {/* Выбранное устройство — можно сменить */}
-              <button
+            {/* tap to change device */}
+            <button
                 type="button"
                 className="blin-press"
                 onClick={() => setStep("device")}

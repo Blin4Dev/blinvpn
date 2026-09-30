@@ -1,7 +1,7 @@
 import React from "react";
 import { Btn, T, btnReset } from "./ui";
 
-/** Окно подтверждения по центру экрана (в стиле окна ошибки). */
+// диалог подтверждения по центру (как модалка ошибки)
 export default function ConfirmDialog({
   title,
   children,

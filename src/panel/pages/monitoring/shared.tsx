@@ -7,7 +7,7 @@ export type MonNodeBrief = { id: number; name: string; ip: string; port: number;
 
 export type MonIncident = { id: number; kind: string; severity: 'critical' | 'warning' | 'info'; title: string; details?: string | null; started_at: string; resolved_at?: string | null; timeline?: { at: string; text: string }[] };
 
-/** Деление полосы доступности: [начало, статус 0..3, минут недоступен, минут всего]. */
+// деление полосы доступности
 export type Beat = [number, number, number, number];
 
 export type MonDetail = MonNodeBrief & {
@@ -33,10 +33,7 @@ const beatTime = (t: number, withDate: boolean) => {
   return `${withDate ? `${p(d.getDate())}.${p(d.getMonth() + 1)} ` : ''}${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
-/**
- * Полоса доступности как в Uptime Kuma: деления слева (давно) направо (сейчас).
- * Зелёное — работал, жёлтое — были потери/агент молчал, красное — был недоступен.
- */
+// полоса доступности как в Uptime Kuma
 export const UptimeBar: React.FC<{ beats: Beat[]; height?: number; gap?: number; showAxis?: boolean; leftLabel?: string }> =
   ({ beats, height = 26, gap = 2, showAxis = false, leftLabel }) => {
     if (!beats.length || beats.every((b) => b[1] === 0)) return <span className="faint" style={{ fontSize: 12 }}>нет данных</span>;
@@ -72,7 +69,7 @@ if (typeof document !== 'undefined' && !document.getElementById('mon-pulse-css')
   document.head.appendChild(st);
 }
 
-/** Команда установки/обновления агента на сервере (адрес панели — запасной источник обновлений). */
+// команда установки/обновления агента на сервере
 export const agentCmd = (mode: 'install' | 'update') =>
   `curl -fsSL ${window.location.origin}/node.sh -o node.sh && sudo bash node.sh ${mode} --panel ${window.location.origin}`;
 
@@ -84,7 +81,7 @@ export const DOT_LEGEND: [MonDot, string][] = [
   ['blue', 'есть обновление агента'], ['grey', 'выключено'],
 ];
 
-/** Кружок статуса ноды; причина — во всплывающей подсказке. */
+// кружок статуса ноды; причина в подсказке
 export const NodeDot: React.FC<{ dot: MonDot; reason?: string; size?: number }> = ({ dot, reason, size = 10 }) => (
   <span title={reason} style={{
     width: size, height: size, borderRadius: '50%', background: DOT_COLORS[dot], flex: 'none', display: 'inline-block',

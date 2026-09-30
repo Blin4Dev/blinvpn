@@ -1,13 +1,3 @@
-"""
-Фоновый сервис мониторинга (docker-compose: monitor).
-
-Раз в минуту опрашивает агентов всех запущенных нод и пингует их, раз в 5 минут
-проверяет VLESS, после каждого прохода пересчитывает инциденты, отправляет
-напоминания об оплате и раз в час удаляет историю старше 7 дней.
-
-Запуск: python /app/src/core/monitor.py
-"""
-
 from __future__ import annotations
 
 import fcntl
@@ -51,7 +41,7 @@ def vless_all(pool: ThreadPoolExecutor) -> None:
 
 def main() -> None:
     db.init_db()
-    # Только один экземпляр сервиса на базу
+    # один экземпляр на базу
     lock_path = os.path.join(os.path.dirname(os.path.abspath(db.get_db_path())), ".monitor.lock")
     lock = open(lock_path, "w")
     try:

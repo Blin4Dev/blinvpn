@@ -15,7 +15,7 @@ import { XbmSettingsTab } from './XbmTab';
 
 export type Tab = 'prices' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'xbm' | 'mail' | 'backups' | 'forum' | 'storage';
 
-/** Разделы настроек — показываются подменю «Настройки» в боковом меню. */
+// разделы настроек (подменю в сайдбаре)
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
   { id: 'prices', icon: DollarSign, label: 'Цены' },
   { id: 'antiabuse', icon: ShieldAlert, label: 'Анти-абуз' },
