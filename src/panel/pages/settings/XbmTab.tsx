@@ -116,12 +116,12 @@ export const XbmSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: Toas
           done: !!st?.xbm_healthy && step > 0,
           body: <>
             <HowTo items={[
-              <>Проверьте адрес панели Remnawave. Если Remnawave стоит на этом же сервере — оставьте как есть.</>,
+              <>Адрес Remnawave подставляется из .env (REMWAVE_PANEL_URL) — тот же, что при установке. Поправьте, если XBM ходит к панели иначе.</>,
               <>Укажите домен страницы подписки — тот, что в ссылке подписки у пользователей.</>,
               <>Нажмите «Установить». Сборка занимает пару минут.</>,
             ]} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {field('remnawave_url', 'Адрес Remnawave', 'http://remnawave:3000')}
+              {field('remnawave_url', 'Адрес Remnawave', 'https://panel.example.com:8443')}
               {field('sub_domain', 'Домен страницы подписки', 'sub.example.com')}
               <div><label className="field-label">Сеть Docker Remnawave</label>
                 <select className="input" value={f.network} onChange={(e) => setF({ ...f, network: e.target.value })}>

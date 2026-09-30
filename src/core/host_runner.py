@@ -164,14 +164,6 @@ def _nginx_reaches_xbm(ng: str, xbm_target: str) -> bool:
     return False
 
 
-def _container_ips(name: str) -> list[str]:
-    p = subprocess.run(
-        ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", name],
-        capture_output=True, text=True,
-    )
-    return [ip for ip in (p.stdout or "").split() if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", ip)]
-
-
 def _parse_curl_headers(stdout: str) -> tuple[int, dict[str, str]]:
     code, hdr = 0, {}
     for line in (stdout or "").splitlines():
@@ -186,33 +178,6 @@ def _parse_curl_headers(stdout: str) -> tuple[int, dict[str, str]]:
             k, _, v = line.partition(":")
             hdr[k.strip().lower()] = v.strip()
     return code, hdr
-
-
-def _probe_via_python(dom: str, tok: str, ip: str, port: int = 443) -> tuple[int, dict[str, str]]:
-    """get на ip контейнера nginx с sni=доменом подписки."""
-    import socket
-    import ssl
-
-    req = (
-        f"GET /{tok} HTTP/1.1\r\n"
-        f"Host: {dom}\r\n"
-        f"User-Agent: Happ/1.0\r\n"
-        f"Connection: close\r\n\r\n"
-    ).encode()
-    ctx = ssl._create_unverified_context()
-    with socket.create_connection((ip, port), timeout=15) as sock:
-        with ctx.wrap_socket(sock, server_hostname=dom) as ssock:
-            ssock.sendall(req)
-            chunks: list[bytes] = []
-            while True:
-                buf = ssock.recv(65536)
-                if not buf:
-                    break
-                chunks.append(buf)
-                if len(b"".join(chunks)) > 256 * 1024:
-                    break
-    raw = b"".join(chunks).decode("latin-1", "replace")
-    return _parse_curl_headers(raw.split("\r\n\r\n", 1)[0])
 
 
 def _run_probe(job: Job, label: str, args: list[str]) -> tuple[int, dict[str, str]]:
@@ -231,68 +196,24 @@ def _run_probe(job: Job, label: str, args: list[str]) -> tuple[int, dict[str, st
     return 0, {}
 
 
-def _probe_sub_headers(job: Job, ng: str, dom: str, tok: str, xbm_target: str) -> tuple[int, dict[str, str]]:
+def _verify_xbm_reachable(job: Job, ng: str, tok: str, xbm_target: str) -> bool:
     """
-    проверка только через контейнер remnawave-nginx.
-    127.0.0.1:443 на хосте часто другой nginx (мини-приложение) — туда не ходим,
-    кроме случая network_mode=host у remnawave-nginx.
+    проверка после правки nginx: из контейнера nginx ходим в xbm.
+    не трогаем host:443 — там часто другой сервис (бот/мини-приложение).
     """
-    job.log(f"проверка через контейнер {ng}, Host={dom}, xbm={xbm_target}")
-    url = f"https://{dom}/{tok}"
-    netmode = subprocess.run(
-        ["docker", "inspect", "-f", "{{.HostConfig.NetworkMode}}", ng],
-        capture_output=True, text=True,
-    ).stdout.strip()
-
-    # диагностика: виден ли x-xbm при прямом запросе в xbm из nginx
-    direct, dhdr = _run_probe(job, "напрямую xbm", [
-        "docker", "exec", ng, "curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "10",
-        "-A", "Happ/1.0", f"http://{xbm_target}/{tok}",
-    ])
-    if direct and "x-xbm" not in dhdr:
-        job.log("прямо в xbm тоже нет x-xbm — странно, проверьте контейнер xbm")
-
-    # 1) изнутри remnawave-nginx
-    code, hdr = _run_probe(job, "внутри nginx https", [
-        "docker", "exec", ng, "curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-        "--resolve", f"{dom}:443:127.0.0.1", "-A", "Happ/1.0", url,
-    ])
-    if code:
-        return code, hdr
-
-    code, hdr = _run_probe(job, "внутри nginx http", [
-        "docker", "exec", ng, "curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-        "-H", f"Host: {dom}", "-A", "Happ/1.0", f"http://127.0.0.1/{tok}",
-    ])
-    if code:
-        return code, hdr
-
-    # 2) с хоста на docker-ip remnawave-nginx
-    for ip in _container_ips(ng):
-        code, hdr = _run_probe(job, f"docker-ip {ip}", [
-            "curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-            "--resolve", f"{dom}:443:{ip}", "-A", "Happ/1.0", url,
-        ])
-        if code:
-            return code, hdr
-        try:
-            code, hdr = _probe_via_python(dom, tok, ip, 443)
-            if code:
-                job.log(f"python {ip}: {code}, x-xbm={'да' if 'x-xbm' in hdr else 'нет'}")
-                return code, hdr
-        except Exception as exc:  # noqa: BLE001
-            job.log(f"python {ip}: {type(exc).__name__}: {exc}")
-
-    # 3) только если nginx в host-сети — 127.0.0.1:443 это он
-    if netmode == "host":
-        code, hdr = _run_probe(job, "host:443", [
-            "curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
-            "--resolve", f"{dom}:443:127.0.0.1", "-A", "Happ/1.0", url,
-        ])
-        if code:
-            return code, hdr
-
-    return 0, {}
+    job.log(f"проверка xbm из {ng} → {xbm_target}")
+    for args in (
+        ["docker", "exec", ng, "curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "10",
+         "-A", "Happ/1.0", f"http://{xbm_target}/{tok}"],
+        ["docker", "exec", ng, "wget", "-qSO-", "--timeout=10",
+         "--header=User-Agent: Happ/1.0", f"http://{xbm_target}/{tok}"],
+    ):
+        code, hdr = _run_probe(job, "xbm", args)
+        if code == 429:
+            return True
+        if code == 200 and "x-xbm" in hdr:
+            return True
+    return False
 
 
 def xbm_healthy() -> bool:
@@ -498,20 +419,12 @@ def act_xbm_connect(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     _reload_or_restore(job, conf, ng, backup)
     tok = p.get("token") or ""
     if tok:
-        time.sleep(2)
-        job.log("Проверяю подписку через nginx…")
-        code, hdr = _probe_sub_headers(job, ng, dom, tok, target)
-        if code == 429:
-            job.log("XBM ограничил частоту запросов — значит, nginx до него достучался")
-        elif code != 200 or "x-xbm" not in hdr:
+        time.sleep(1)
+        job.log("Проверяю доступность XBM из nginx…")
+        if not _verify_xbm_reachable(job, ng, tok, target):
             shutil.copy2(backup, conf)
             run(["docker", "exec", ng, "nginx", "-s", "reload"], job, check=False)
-            if code == 200:
-                raise Fail(
-                    "Запрос дошёл до nginx, но не до XBM (нет заголовка X-XBM). "
-                    "Правку откатил. Смотрите строки «напрямую xbm» / «внутри nginx» в логе выше"
-                )
-            raise Fail(f"Подписка ответила {code or 'без ответа'} — правку nginx откатил")
+            raise Fail("После правки nginx не достучался до XBM с заголовком X-XBM — конфиг откатил")
     job.log("XBM подключён к подписке")
     return {"connected": True, "checked": bool(tok)}
 

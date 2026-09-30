@@ -7371,9 +7371,10 @@ def panel_mail_send_test(body: dict[str, Any] = Body(...), _: dict = Depends(req
 def panel_xbm_setup_info(_: dict = Depends(require_owner)) -> dict[str, Any]:
     """мастер xbm: жив ли помощник, подсказки полей."""
     from urllib.parse import urlsplit
-    sub_host = urlsplit(_env("REMWAVE_SUB_PUBLIC_URL") or "").hostname or ""
+    sub = urlsplit(_env("REMWAVE_SUB_PUBLIC_URL") or "")
+    panel = (_env("REMWAVE_PANEL_URL") or "").rstrip("/") or "http://remnawave:3000"
     return {"runner": xbm.runner_alive(), "xbm": xbm.health(),
-            "defaults": {"remnawave_url": "http://remnawave:3000", "sub_domain": sub_host,
+            "defaults": {"remnawave_url": panel, "sub_domain": sub.hostname or "",
                          "conf": "/opt/remnawave/nginx/nginx.conf", "container": "remnawave-nginx",
                          "network": "remnawave-network"}}
 
