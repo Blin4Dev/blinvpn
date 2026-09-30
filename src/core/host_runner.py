@@ -152,38 +152,54 @@ def http_get(
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, b""
 
 
-def _probe_sub_headers(job: Job, ng: str, dom: str, tok: str) -> tuple[int, dict[str, str]]:
-    """убедиться что подписка идёт через xbm (заголовок x-xbm). сертификат не важен."""
-    try:
-        code, hdr, _ = http_get(f"https://{dom}/{tok}", {"User-Agent": "Happ/1.0"}, timeout=20, insecure=True)
-        if code:
-            return code, hdr
-    except Exception as exc:  # noqa: BLE001
-        job.log(f"публичный https: {type(exc).__name__}: {exc}")
-    # запасной путь: спросить nginx изнутри контейнера
+def _nginx_reaches_xbm(ng: str, xbm_target: str) -> bool:
+    health = f"http://{xbm_target}/health"
     for args in (
-        ["curl", "-skI", "--max-time", "15", "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
-        ["curl", "-sI", "--max-time", "15", "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"http://127.0.0.1/{tok}"],
+        ["wget", "-q", "-O", "-", "--timeout=5", health],
+        ["curl", "-sf", "--max-time", "5", health],
     ):
+        p = subprocess.run(["docker", "exec", ng, *args], capture_output=True, text=True, timeout=15)
+        if p.returncode == 0 and '"ok"' in (p.stdout or ""):
+            return True
+    return False
+
+
+def _parse_curl_headers(stdout: str) -> tuple[int, dict[str, str]]:
+    code, hdr = 0, {}
+    for line in (stdout or "").splitlines():
+        if not code:
+            m = re.match(r"HTTP/\S+\s+(\d+)", line.strip())
+            if m:
+                code = int(m.group(1))
+            continue
+        if ":" in line:
+            k, _, v = line.partition(":")
+            hdr[k.strip().lower()] = v.strip()
+    return code, hdr
+
+
+def _probe_sub_headers(job: Job, ng: str, dom: str, tok: str, xbm_target: str) -> tuple[int, dict[str, str]]:
+    """проверка через сам remnawave-nginx (не публичный dns/ssl — там часто чужой vhost)."""
+    job.log(f"проверка через {ng}, Host={dom}, xbm={xbm_target}")
+    probes = (
+        ["curl", "-sk", "-o", "/dev/null", "-D", "-", "--max-time", "15",
+         "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
+        ["curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "15",
+         "-H", f"Host: {dom}", "-H", "User-Agent: Happ/1.0", f"http://127.0.0.1/{tok}"],
+        ["wget", "-qSO-", "--timeout=15", "--no-check-certificate",
+         f"--header=Host: {dom}", "--header=User-Agent: Happ/1.0", f"https://127.0.0.1/{tok}"],
+    )
+    for args in probes:
         try:
             p = subprocess.run(["docker", "exec", ng, *args], capture_output=True, text=True, timeout=25)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            job.log(f"probe nginx: {type(exc).__name__}: {exc}")
+            job.log(f"probe: {type(exc).__name__}: {exc}")
             continue
-        if p.returncode != 0 and not p.stdout:
+        code, hdr = _parse_curl_headers((p.stdout or "") + "\n" + (p.stderr or ""))
+        if not code:
             continue
-        code, hdr = 0, {}
-        for line in (p.stdout or "").splitlines():
-            if not code:
-                m = re.match(r"HTTP/\S+\s+(\d+)", line.strip())
-                if m:
-                    code = int(m.group(1))
-                continue
-            if ":" in line:
-                k, _, v = line.partition(":")
-                hdr[k.strip().lower()] = v.strip()
-        if code:
-            return code, hdr
+        job.log(f"ответ nginx: {code}, x-xbm={'да' if 'x-xbm' in hdr else 'нет'}")
+        return code, hdr
     return 0, {}
 
 
@@ -375,6 +391,11 @@ def act_xbm_connect(job: Job, p: dict[str, Any]) -> dict[str, Any]:
         return {"already": True}
     netmode = subprocess.run(["docker", "inspect", "-f", "{{.HostConfig.NetworkMode}}", ng], capture_output=True, text=True).stdout.strip()
     target = f"127.0.0.1:{xbm_port()}" if netmode == "host" else f"{XBM_CONTAINER}:4100"
+    if not _nginx_reaches_xbm(ng, target):
+        raise Fail(
+            f"Контейнер {ng} не видит XBM ({target}). "
+            f"XBM должен быть в той же сети Docker, что и nginx (сейчас сеть: {env_get('XBM_DOCKER_NETWORK') or 'remnawave-network'})"
+        )
     job.log("Правлю nginx страницы подписки (с резервной копией)…")
     try:
         new = nx.enable(text, dom, target)
@@ -387,7 +408,7 @@ def act_xbm_connect(job: Job, p: dict[str, Any]) -> dict[str, Any]:
     if tok:
         time.sleep(2)
         job.log("Проверяю подписку через nginx…")
-        code, hdr = _probe_sub_headers(job, ng, dom, tok)
+        code, hdr = _probe_sub_headers(job, ng, dom, tok, target)
         if code == 429:
             job.log("XBM ограничил частоту запросов — значит, nginx до него достучался")
         elif code != 200 or "x-xbm" not in hdr:
