@@ -7870,11 +7870,16 @@ def panel_support_close(chat_id: int, body: Optional[SupportCloseBody2] = None, 
     return res
 
 
+class PoolBody(BaseModel):
+    note: str = Field("", max_length=500)
+
+
 @app.post("/api/panel/support/chats/{chat_id}/pool")
-def panel_support_pool(chat_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
-    """вернуть в пул."""
+def panel_support_pool(chat_id: int, body: Optional[PoolBody] = None, p: dict = Depends(require_panel)) -> dict[str, Any]:
+    """вернуть в пул; оператор обязан указать причину."""
     chat = _panel_chat(chat_id, p)
-    return _sup(support.to_pool, chat, p["actor"], p["name"], not is_full(p), _guard(p, "pool"))
+    return _sup(support.to_pool, chat, p["actor"], p["name"], not is_full(p), _guard(p, "pool"),
+                (body.note if body else ""))
 
 
 class EscalateBody(BaseModel):

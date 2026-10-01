@@ -386,6 +386,8 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
     const [busy, setBusy] = useState('');
     const [viewer, setViewer] = useState<string | null>(null);
     const [infoOpen, setInfoOpen] = useState(false);
+    const [poolOpen, setPoolOpen] = useState(false);
+    const [poolNote, setPoolNote] = useState('');
     const listRef = useRef<HTMLDivElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
     const lastId = useRef(0);
@@ -473,16 +475,24 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
       } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось начать'), 'error'); } finally { setBusy(''); }
     };
 
-    const act = async (what: 'close' | 'force' | 'pool' | 'escalate') => {
+    const act = async (what: 'close' | 'force' | 'pool' | 'escalate', poolReason?: string) => {
       if (sid == null || !data?.chat.ticket) return;
       const num = data.chat.ticket.number;
       if (what === 'force' && !window.confirm(`Закрыть обращение №${num} сразу, без вопроса пользователю?`)) return;
       if (what === 'escalate' && !window.confirm(`Передать обращение №${num} админу?`)) return;
+      if (what === 'pool' && !data.me.full) {
+        const note = (poolReason ?? poolNote).trim();
+        if (note.length < 3) { onToast('Ошибка', 'Укажите причину возврата в пул', 'error'); return; }
+      }
       setBusy(what);
       try {
         let r: any = null;
         if (what === 'close' || what === 'force') r = await apiFetch(`/panel/support/chats/${sid}/close`, { method: 'POST', body: JSON.stringify({ force: what === 'force' }) });
-        if (what === 'pool') await apiFetch(`/panel/support/chats/${sid}/pool`, { method: 'POST' });
+        if (what === 'pool') {
+          const note = data.me.full ? '' : (poolReason ?? poolNote).trim();
+          await apiFetch(`/panel/support/chats/${sid}/pool`, { method: 'POST', body: JSON.stringify({ note }) });
+          setPoolOpen(false); setPoolNote('');
+        }
         if (what === 'escalate') await apiFetch(`/panel/support/chats/${sid}/escalate`, { method: 'POST', body: JSON.stringify({}) });
         setReply(null); loadChats(); pingUnread();
         if (what === 'pool' || what === 'escalate') {
@@ -709,7 +719,10 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
                 {busy && busy !== 'send' && busy !== 'start' && <Spinner size={16} />}
                 <DotsMenu items={[
                   full && takenByOther && { label: `Забрать себе (ведёт ${t.assigned_name})`, icon: Play, onClick: () => void start(true) },
-                  (mine || (full && (t.assigned_name || t.escalated))) && { label: 'В пул', icon: Undo2, onClick: () => void act('pool') },
+                  (mine || (full && (t.assigned_name || t.escalated))) && {
+                    label: 'В пул', icon: Undo2,
+                    onClick: () => { if (full) void act('pool'); else { setPoolNote(''); setPoolOpen(true); } },
+                  },
                   mine && !full && { label: 'Передать админу', icon: ShieldAlert, onClick: () => void act('escalate') },
                   (mine || full) && { label: 'Закрыть (спросить пользователя)', icon: CheckCircle, onClick: () => void act('close'),
                     disabled: !!t.close_prompt, hint: 'Вопрос уже задан — ждём ответа' },
@@ -886,6 +899,22 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
         {infoOpen && chat && (
           <Modal onClose={() => setInfoOpen(false)} title="О пользователе" icon={Info} width={420}>
             <div style={{ margin: -16 }}>{data && <UserInfo userId={chat.user_id} onOpenUser={(id) => { setInfoOpen(false); onOpenUser(id); }} reloadKey={String(chat.started_by_me)} row={chat} canManage={data.me.can_manage_user} role={data.me.role} onToast={onToast} />}</div>
+          </Modal>
+        )}
+        {poolOpen && (
+          <Modal onClose={() => { setPoolOpen(false); setPoolNote(''); }} title="Вернуть в пул" icon={Undo2} width={440}
+            footer={<><button className="btn" onClick={() => { setPoolOpen(false); setPoolNote(''); }}>Отмена</button>
+              <button className="btn solid" disabled={!!busy || poolNote.trim().length < 3} onClick={() => void act('pool', poolNote)}>
+                {busy === 'pool' ? <Spinner size={15} /> : <Undo2 size={15} />} В пул
+              </button></>}>
+            <div className="flex flex-col gap-3">
+              <div className="sub" style={{ fontSize: 13 }}>Обращение снова смогут взять другие операторы. Укажите, почему не продолжаете.</div>
+              <div>
+                <label className="field-label">Причина</label>
+                <textarea className="input" rows={3} maxLength={500} value={poolNote} onChange={(e) => setPoolNote(e.target.value)}
+                  placeholder="Например: нужна помощь админа по возврату / не успеваю сегодня" style={{ resize: 'vertical' }} />
+              </div>
+            </div>
           </Modal>
         )}
         {viewer && (

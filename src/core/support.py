@@ -217,7 +217,11 @@ def _internal_tx(tx, chat_id: int, ticket_id: int, name: str, text: str, now: st
                "VALUES (?, ?, 'system', ?, ?, 1, ?, ?)", (int(chat_id), ticket_id, name, text, panel_text, now))
 
 
-def to_pool(chat: dict[str, Any], actor: str, name: str, only_own: bool, guard: Guard = None) -> dict[str, Any]:
+def to_pool(chat: dict[str, Any], actor: str, name: str, only_own: bool, guard: Guard = None,
+            note: str = "") -> dict[str, Any]:
+    note = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", str(note or "")).strip()[:500]
+    if only_own and len(note) < 3:
+        raise SupportError("Укажите причину возврата в пул")
     now = _iso()
     with db.transaction() as tx:
         t = open_ticket(chat, tx)
@@ -230,7 +234,9 @@ def to_pool(chat: dict[str, Any], actor: str, name: str, only_own: bool, guard: 
             raise SupportError("Обращение и так в пуле", 409)
         tx.execute("UPDATE support_tickets SET assigned_admin = NULL, assigned_name = NULL, escalated = 0 WHERE id = ?", (t["id"],))
         tx.execute("UPDATE support_chats SET assigned_admin = NULL, assigned_name = NULL WHERE id = ?", (int(chat["id"]),))
-        _internal_tx(tx, int(chat["id"]), t["id"], name, "Обращение возвращено в пул", now, f"{name} отправил в пул")
+        msg = "Обращение возвращено в пул" + (f": {note}" if note else "")
+        _internal_tx(tx, int(chat["id"]), t["id"], name, msg, now,
+                     f"{name} отправил в пул" + (f": {note}" if note else ""))
     return {"ok": True}
 
 
