@@ -121,6 +121,13 @@ def lookup_country(ip: str) -> str:
     ip = (ip or "").strip()
     if not ip or ip in ("127.0.0.1", "::1", "unknown"):
         return ""
+    try:
+        import ipaddress
+        obj = ipaddress.ip_address(ip)
+        if obj.is_private or obj.is_loopback or obj.is_link_local or obj.is_reserved:
+            return ""
+    except ValueError:
+        return ""
     now = time.time()
     hit = _geo_cache.get(ip)
     if hit and hit[0] > now:
@@ -129,7 +136,7 @@ def lookup_country(ip: str) -> str:
     try:
         url = f"http://ip-api.com/json/{urllib.parse.quote(ip)}?fields=status,countryCode"
         req = urllib.request.Request(url, headers={"User-Agent": "blinvpn/1.0"})
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
         if data.get("status") == "success":
             code = str(data.get("countryCode") or "").strip().upper()
@@ -141,6 +148,16 @@ def lookup_country(ip: str) -> str:
         for k in dead[:1000]:
             _geo_cache.pop(k, None)
     return code
+
+
+def _accept_lang_ru(headers: Any) -> bool:
+    get = headers.get if hasattr(headers, "get") else (lambda *_: None)
+    al = str(get("accept-language") or get("Accept-Language") or "").lower()
+    if not al:
+        return False
+    # ru, ru-RU, ru-ru;q=0.9 …
+    primary = al.split(",")[0].split(";")[0].strip()
+    return primary == "ru" or primary.startswith("ru-")
 
 
 def resolve_provider(headers: Any, ip: str = "") -> Optional[str]:
@@ -157,15 +174,21 @@ def resolve_provider(headers: Any, ip: str = "") -> Optional[str]:
     if mode == "turnstile":
         return "turnstile" if turnstile_ok else None
 
-    # auto: рф → яндекс, иначе turnstile
+    # auto: рф → яндекс, остальные → turnstile; без гео — по языку браузера
     country = country_from_headers(headers) or lookup_country(ip)
-    if country == "RU":
+    if country == "RU" or (not country and _accept_lang_ru(headers)):
         if yandex_ok:
             return "yandex"
+        # turnstile в рф часто не грузится — только если яндекса нет
         return "turnstile" if turnstile_ok else None
-    if turnstile_ok:
-        return "turnstile"
-    return "yandex" if yandex_ok else None
+    if country and country != "RU":
+        if turnstile_ok:
+            return "turnstile"
+        return "yandex" if yandex_ok else None
+    # страна неизвестна и язык не ru: предпочитаем яндекс (turnstile в рф часто пустой)
+    if yandex_ok:
+        return "yandex"
+    return "turnstile" if turnstile_ok else None
 
 
 def public_config(headers: Any, ip: str = "") -> dict[str, Any]:

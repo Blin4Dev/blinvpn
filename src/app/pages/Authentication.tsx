@@ -60,10 +60,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
 
   const finishOauth = useCallback(
     async (payload: TelegramOAuthPayload) => {
-      if (needCaptcha && !captchaToken) {
-        setError("Пройдите проверку «я не робот»");
-        return;
-      }
+      // Telegram Login Widget уже подписан — капча не нужна
       setOauthBusy(true);
       setError("");
       try {
@@ -73,7 +70,6 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
         if (payload.username) clean.username = payload.username;
         if (payload.photo_url) clean.photo_url = payload.photo_url;
         if (payload.auth_date != null && payload.auth_date !== "") clean.auth_date = payload.auth_date;
-        if (captchaToken) clean.captcha_token = captchaToken;
 
         const ref = getWebRef();
         const b = await appFetch<{ user?: AppUser; token?: string }>("/auth/oauth", {
@@ -84,11 +80,10 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
         onAuthed();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось войти через Telegram");
-        bumpCaptcha();
         setOauthBusy(false);
       }
     },
-    [onAuthed, needCaptcha, captchaToken],
+    [onAuthed],
   );
 
   useEffect(() => {
@@ -268,11 +263,6 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                 botUsername={botUsername}
                 onAuth={(u) => void finishOauth(u)}
               />
-              {needCaptcha && !captchaOk ? (
-                <div style={{ marginTop: 10, color: T.textDim, fontSize: 12, textAlign: "center" }}>
-                  Сначала пройдите проверку выше
-                </div>
-              ) : null}
             </>
           ) : null}
         </div>

@@ -2239,16 +2239,36 @@ def panel_auth_init(
     }
 
 
+def _is_public_ip(ip: str) -> bool:
+    try:
+        import ipaddress
+        obj = ipaddress.ip_address((ip or "").strip())
+        return not (obj.is_private or obj.is_loopback or obj.is_link_local or obj.is_reserved or obj.is_multicast)
+    except ValueError:
+        return False
+
+
 def _client_ip(request: Optional[Request]) -> str:
+    """реальный ip клиента: CF / X-Real-IP / первый публичный в XFF."""
     if not request:
         return ""
-    # nginx кладёт реальный ip в конец x-forwarded-for
-    # берём последний элемент (клиентский xff левее)
-    fwd = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
-    if fwd:
-        parts = [p.strip() for p in fwd.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
+    h = request.headers
+    for key in ("cf-connecting-ip", "CF-Connecting-IP", "true-client-ip", "True-Client-IP",
+                "x-real-ip", "X-Real-IP"):
+        raw = (h.get(key) or "").strip()
+        if not raw:
+            continue
+        cand = raw.split(",")[0].strip()
+        if cand:
+            return cand
+    fwd = h.get("x-forwarded-for") or h.get("X-Forwarded-For") or ""
+    parts = [p.strip() for p in fwd.split(",") if p.strip()]
+    for p in parts:
+        if _is_public_ip(p):
+            return p
+    # за прокси во внутренней сети — берём первый (клиент), не последний (сам прокси)
+    if parts:
+        return parts[0]
     return request.client.host if request.client else ""
 
 
@@ -5762,7 +5782,7 @@ def _apply_web_referral(user_id: int, code: Optional[str]) -> None:
 
 
 def _require_captcha(token: Optional[str], request: Optional[Request]) -> None:
-    """капча на веб-входе (почта / telegram widget); в mini app не вызывается."""
+    """капча только для входа по почте; oauth/mini app — без капчи."""
     if not captcha_mod.enabled():
         return
     try:
@@ -5773,7 +5793,7 @@ def _require_captcha(token: Optional[str], request: Optional[Request]) -> None:
 
 @app.post("/api/app/auth/oauth")
 def app_auth_oauth(body: OauthLoginBody, request: Request = None) -> dict[str, Any]:  # type: ignore[assignment]
-    _require_captcha(body.captcha_token, request)
+    # вход через Telegram Login Widget — без капчи (подпись уже от Telegram)
     payload = body.model_dump(exclude={"ref", "captcha_token"})
     validated = validate_oauth_login(payload)
     was_new = find_user_by_tg(int(validated.get("id") or 0)) is None

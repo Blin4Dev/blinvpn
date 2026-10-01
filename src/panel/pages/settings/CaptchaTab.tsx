@@ -18,7 +18,7 @@ const F: React.FC<{ label: string; hint?: string; children: React.ReactNode }> =
 );
 
 const MODES: { id: Cfg['mode']; label: string; hint: string }[] = [
-  { id: 'auto', label: 'Авто', hint: 'Россия → Яндекс SmartCaptcha, остальные → Cloudflare Turnstile' },
+  { id: 'auto', label: 'Авто', hint: 'РФ → Яндекс SmartCaptcha; другие страны → Turnstile; без гео — Яндекс (если настроен)' },
   { id: 'yandex', label: 'Только Яндекс', hint: 'SmartCaptcha для всех' },
   { id: 'turnstile', label: 'Только Cloudflare', hint: 'Turnstile для всех' },
 ];
@@ -72,8 +72,8 @@ export const CaptchaSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: 
           </div>
         </div>
         <div className="sub" style={{ fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
-          Показывается на веб-входе мини-приложения перед «Получить код» / «Войти» и при входе через Telegram.
-          В самом Telegram Mini App капча не нужна. Можно оставить выключенной.
+          Только для входа по почте на веб-странице мини-приложения. Вход через Telegram Login Widget
+          и открытие из самого Telegram Mini App — без капчи. Можно оставить выключенной.
         </div>
 
         <div style={{ marginBottom: 16 }}>
