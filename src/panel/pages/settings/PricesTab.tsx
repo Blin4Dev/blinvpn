@@ -78,11 +78,13 @@ export const PricesSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: T
               <div style={{ fontWeight: 500 }}>Пробный период включён</div>
               <Toggle on={trialEnabled} onChange={() => setTrialEnabled(!trialEnabled)} />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4" style={{ opacity: trialEnabled ? 1 : 0.5 }}>
-              <div><label className="field-label">Срок, дней</label><input className="input" type="number" min={1} max={365} value={f.trialDays} onChange={set('trialDays')} /></div>
-              <div><label className="field-label">Трафик, ГБ (0 = без лимита)</label><input className="input" type="number" min={0} value={f.trialGb} onChange={set('trialGb')} /></div>
-              <div><label className="field-label">Устройств</label><input className="input" type="number" min={1} max={20} value={f.trialDevices} onChange={set('trialDevices')} /></div>
-            </div>
+            {trialEnabled && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div><label className="field-label">Срок, дней</label><input className="input" type="number" min={1} max={365} value={f.trialDays} onChange={set('trialDays')} /></div>
+                <div><label className="field-label">Трафик, ГБ (0 = без лимита)</label><input className="input" type="number" min={0} value={f.trialGb} onChange={set('trialGb')} /></div>
+                <div><label className="field-label">Устройств</label><input className="input" type="number" min={1} max={20} value={f.trialDevices} onChange={set('trialDevices')} /></div>
+              </div>
+            )}
           </Section>
 
           <div><button className="btn solid" onClick={save} disabled={saving}>{saving ? <Spinner size={16} /> : <Save size={16} />} Сохранить</button></div>

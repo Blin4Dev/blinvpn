@@ -71,7 +71,8 @@ def withdrawals_chat_ok(chat: Any, thread: Any) -> bool:
 
 
 def panel_url() -> str:
-    return (db.get_setting("panel_url", "") or _env("PANEL_URL")).rstrip("/")
+    """URL админ-панели для ссылок в уведомлениях: setting → PANEL_URL → SITE_URL."""
+    return (db.get_setting("panel_url", "") or _env("PANEL_URL") or _env("SITE_URL")).rstrip("/")
 
 
 def topic_id(topic: str) -> Optional[int]:

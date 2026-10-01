@@ -18,7 +18,6 @@ export const FORUM_TOPICS: { id: string; label: string; hint: string }[] = [
 
 export const ForumSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void }> = ({ onToast }) => {
   const [chatId, setChatId] = useState('');
-  const [panelUrl, setPanelUrl] = useState('');
   const [topics, setTopics] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,7 +27,6 @@ export const ForumSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: To
     try {
       const d = await apiFetch('/panel/forum');
       setChatId(d?.forum_chat_id || '');
-      setPanelUrl(d?.panel_url || '');
       setTopics(d?.topics || {});
     } catch { onToast('Ошибка', 'Не удалось загрузить настройки форума', 'error'); }
     finally { setLoading(false); }
@@ -38,7 +36,7 @@ export const ForumSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: To
   const save = async () => {
     setSaving(true);
     try {
-      await apiFetch('/panel/forum', { method: 'PUT', body: JSON.stringify({ forum_chat_id: chatId.trim(), panel_url: panelUrl.trim(), topics }) });
+      await apiFetch('/panel/forum', { method: 'PUT', body: JSON.stringify({ forum_chat_id: chatId.trim(), topics }) });
       onToast('Готово', 'Настройки форума сохранены', 'success');
     } catch { onToast('Ошибка', 'Не удалось сохранить', 'error'); }
     finally { setSaving(false); }
@@ -55,7 +53,6 @@ export const ForumSettingsTab: React.FC<{ onToast: (t: string, m: string, ty: To
           <div className="sub" style={{ fontSize: 13 }}>Создайте группу с топиками (форум), добавьте бота админом. Укажите ID группы (например <span className="mono">-1001234567890</span>) и ID каждого топика. Если не задать — коды/уведомления придут администратору в ЛС.</div>
         </div>
         <div><label className="field-label">ID группы-форума</label><input className="input mono" value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="-1001234567890" /></div>
-        <div><label className="field-label">URL панели (для кликабельных id в уведомлениях)</label><input className="input mono" value={panelUrl} onChange={(e) => setPanelUrl(e.target.value)} placeholder="https://panel.blinvpn.cc" /></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {FORUM_TOPICS.map((t) => (
             <div key={t.id}>
