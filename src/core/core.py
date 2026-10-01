@@ -7666,7 +7666,14 @@ def _panel_chat_row(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> dic
         t = support.ticket_info(c)
     tt = dict(t) if t else None
     if tt:
-        tt["assigned_to_me"] = tt.get("assigned_admin") == p["actor"]
+        assigned = tt.get("assigned_admin")
+        tt["assigned_to_me"] = assigned == p["actor"]
+        tt["holder_role"] = _holder_role(assigned) if assigned else None
+        # куратор может забрать только у оператора; админ — у всех
+        tt["can_takeover"] = bool(
+            assigned and assigned != p["actor"] and tt.get("status") == "open"
+            and _can_manage_assigned(p, assigned)
+        )
         tt.pop("assigned_admin", None)
     return {
         "id": c["id"], "user_id": c["user_id"], "user_label": _user_label(u),
@@ -7865,6 +7872,11 @@ def panel_support_start(chat_id: int, body: Optional[SupportStartBody] = None, p
     if not full and not support.open_ticket(chat):
         raise HTTPException(403, detail={"message": "Обращение закрыто. Оно откроется, когда пользователь напишет снова"})
     takeover = bool(body and body.takeover) and full
+    t = support.open_ticket(chat)
+    if takeover and t and t.get("assigned_admin") and t.get("assigned_admin") != p["actor"]:
+        if not _can_manage_assigned(p, t.get("assigned_admin")):
+            who = {"owner": "администратор", "curator": "другой куратор"}.get(_holder_role(t.get("assigned_admin")) or "", "другой сотрудник")
+            raise HTTPException(403, detail={"message": f"Нельзя забрать обращение — его ведёт {who}"})
     return _sup(support.start, chat, p["actor"], p["name"], takeover, _guard(p, "start"))
 
 
@@ -7944,19 +7956,38 @@ def panel_support_escalate(chat_id: int, body: Optional[EscalateBody] = None, p:
     return {"ok": True}
 
 
-def _holder_is_senior(assigned: Optional[str], p: dict[str, Any]) -> bool:
-    """обращение ведёт тот, кого нельзя перебить."""
-    if not assigned or assigned == p["actor"] or p["role"] == "owner":
-        return False
+def _holder_role(assigned: Optional[str]) -> Optional[str]:
+    """роль текущего ведущего: owner | curator | operator."""
+    if not assigned:
+        return None
     if assigned == "owner":
-        return True
-    if p["role"] == "curator" and assigned.startswith("staff:"):
+        return "owner"
+    if assigned.startswith("staff:"):
         try:
             st = staffmod.get(int(assigned.split(":", 1)[1]))
         except ValueError:
-            return False
-        return bool(st) and staffmod.role_of(st) == "curator"
+            return "operator"
+        return staffmod.role_of(st) if st else "operator"
+    return "operator"
+
+
+def _can_manage_assigned(p: dict[str, Any], assigned: Optional[str]) -> bool:
+    """можно ли действовать поверх чужого назначения (забрать / пул / писать / закрыть).
+    владелец — всех; куратор — только операторов; оператор — никого чужого."""
+    if not assigned or assigned == p["actor"]:
+        return True
+    if p.get("kind") == "owner" or p.get("role") == "owner":
+        return True
+    if p.get("role") == "curator":
+        return _holder_role(assigned) == "operator"
     return False
+
+
+def _holder_is_senior(assigned: Optional[str], p: dict[str, Any]) -> bool:
+    """обращение ведёт тот, кого нельзя перебить."""
+    if not assigned or assigned == p["actor"]:
+        return False
+    return not _can_manage_assigned(p, assigned)
 
 
 def _guard(p: dict[str, Any], op: str):
@@ -7965,8 +7996,9 @@ def _guard(p: dict[str, Any], op: str):
 
     def g(t: dict[str, Any]):
         assigned = t.get("assigned_admin")
-        if _holder_is_senior(assigned, p):
-            return ("Обращение ведёт " + ("администратор" if assigned == "owner" else "другой куратор"), 403)
+        if assigned and assigned != p["actor"] and not _can_manage_assigned(p, assigned):
+            who = {"owner": "администратор", "curator": "другой куратор"}.get(_holder_role(assigned) or "", "другой сотрудник")
+            return (f"Обращение ведёт {who}", 403)
         if full:
             return None
         if op == "start" and (t.get("escalated") or (assigned and assigned != p["actor"])):
@@ -7978,15 +8010,17 @@ def _guard(p: dict[str, Any], op: str):
 
 
 def _require_writer(chat: dict[str, Any], p: dict[str, Any]) -> None:
-    """писать может ведущий; куратор/владелец в любое открытое."""
+    """писать может ведущий; куратор/владелец — в чужие только если можно перебить ведущего."""
     if _started_by(chat, p):
         return
     if is_full(p):
         t = support.open_ticket(chat)
         if not t:
             raise HTTPException(409, detail={"message": "Обращение закрыто — нажмите «Начать», чтобы открыть новое"})
-        if _holder_is_senior(t.get("assigned_admin"), p):
-            raise HTTPException(403, detail={"message": "Обращение ведёт " + ("администратор" if t.get("assigned_admin") == "owner" else "другой куратор")})
+        assigned = t.get("assigned_admin")
+        if assigned and assigned != p["actor"] and not _can_manage_assigned(p, assigned):
+            who = {"owner": "администратор", "curator": "другой куратор"}.get(_holder_role(assigned) or "", "другой сотрудник")
+            raise HTTPException(403, detail={"message": f"Обращение ведёт {who}"})
         return
     raise HTTPException(409, detail={"message": "Сначала нажмите «Начать»"})
 

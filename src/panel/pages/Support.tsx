@@ -21,6 +21,7 @@ type Ticket = {
   id: number; number: number; status: 'open' | 'closed'; opened_at?: string; closed_at?: string | null; closed_by?: string | null;
   assigned_name?: string | null; assigned_to_me?: boolean; close_prompt?: boolean; prompt_at?: string | null;
   escalated?: boolean; escalate_note?: string | null;
+  holder_role?: 'owner' | 'curator' | 'operator' | null; can_takeover?: boolean;
 };
 type Tab = 'open' | 'mine' | 'work' | 'archive';
 const TAB_RU: Record<Tab, string> = { open: 'Открытые', mine: 'Мои', work: 'В работе', archive: 'Архив' };
@@ -714,12 +715,15 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
               const full = data.me.full;
               const deadline = t.prompt_at ? new Date(new Date(t.prompt_at).getTime() + data.me.prompt_ttl_min * 60000) : null;
               const takenByOther = !!t.assigned_name && !mine;
+              const canTake = !!t.can_takeover;
+              // своё; эскалация без ведущего; чужое — только если можно перебить (куратор → оператор)
+              const canPool = mine || (full && (canTake || (!t.assigned_name && !!t.escalated)));
               return (<>
                 {t.close_prompt && <span className="badge" title="Пользователь может ответить «нет»/«спасибо» или нажать кнопку">Ждём ответа{deadline ? ` до ${hm(deadline.toISOString())}` : ''}</span>}
                 {busy && busy !== 'send' && busy !== 'start' && <Spinner size={16} />}
                 <DotsMenu items={[
-                  full && takenByOther && { label: `Забрать себе (ведёт ${t.assigned_name})`, icon: Play, onClick: () => void start(true) },
-                  (mine || (full && (t.assigned_name || t.escalated))) && {
+                  full && takenByOther && canTake && { label: `Забрать себе (ведёт ${t.assigned_name})`, icon: Play, onClick: () => void start(true) },
+                  canPool && {
                     label: 'В пул', icon: Undo2,
                     onClick: () => { if (full) void act('pool'); else { setPoolNote(''); setPoolOpen(true); } },
                   },
@@ -755,7 +759,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
             // писать пользователю — только после «Начать» (и у админа тоже)
             const canWriteUser = !!chat.started_by_me;
             const taken = chat.ticket?.status === 'open' && !!chat.ticket.assigned_name && !chat.ticket.assigned_to_me;
-            const canStart = !chat.started_by_me && chat.ticket?.status === 'open' && (!taken || data.me.full);
+            const canStart = !chat.started_by_me && chat.ticket?.status === 'open' && (!taken || !!chat.ticket?.can_takeover);
             const asNote = !!editing?.internal || noteMode;
             const canNoteSend = !busy && text.trim().length > 0;
             const pickMode = (note: boolean) => {
