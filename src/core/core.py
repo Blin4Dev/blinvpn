@@ -1337,6 +1337,112 @@ def _esc_html(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_SAFE_TG_URL = re.compile(r"^(https?://|mailto:|tg://)", re.I)
+_MD_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_MD_CODE = re.compile(r"`([^`\n]+)`")
+_MD_BOLD = re.compile(r"\*\*([^*\n]+?)\*\*")
+_MD_BOLD2 = re.compile(r"(?<![\w*])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?![\w*])")
+_MD_ITALIC = re.compile(r"(?<![\w_])_([^_\s](?:[^_\n]*[^_\s])?)_(?![\w_])")
+_MD_UNDER = re.compile(r"__([^_\n]+?)__")
+_MD_STRIKE = re.compile(r"~~([^~\n]+?)~~")
+_HTML_A = re.compile(r'<a\s+href\s*=\s*(?:"([^"]*)"|\'([^\']*)\')[^>]*>([\s\S]*?)</a\s*>', re.I)
+_HTML_TAG = re.compile(
+    r"<(b|strong|i|em|u|s|del|strike|code)\s*>([\s\S]*?)</\1\s*>|"
+    r"<(br|hr)\s*/?>",
+    re.I,
+)
+
+
+def _md_html_to_tg(text: str, limit: int = 700) -> str:
+    """markdown/html поддержки → безопасный HTML Telegram (b/i/u/s/code/a)."""
+    s = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not s.strip():
+        return ""
+    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.I)
+    s = re.sub(r"</p\s*>", "\n\n", s, flags=re.I)
+    s = re.sub(r"<p\s*>", "", s, flags=re.I)
+    s = re.sub(r"</?(?:ul|ol)\s*>", "\n", s, flags=re.I)
+    s = re.sub(r"<li\s*>", "• ", s, flags=re.I)
+    s = re.sub(r"</li\s*>", "\n", s, flags=re.I)
+    s = re.sub(r"</?blockquote\s*>", "\n", s, flags=re.I)
+    s = re.sub(r"<h([1-3])\s*>([\s\S]*?)</h\1\s*>", lambda m: f"\n<b>{m.group(2).strip()}</b>\n", s, flags=re.I)
+    s = re.sub(r"<hr\s*/?>", "\n—\n", s, flags=re.I)
+
+    held: list[str] = []
+
+    def hold(html: str) -> str:
+        held.append(html)
+        return f"\x00{len(held) - 1}\x00"
+
+    def wrap_inner(tag: str, inner: str) -> str:
+        return hold(f"<{tag}>{_md_html_to_tg_inline(inner, held)}</{tag}>")
+
+    # html-ссылки и теги (до экранирования)
+    def repl_a(m: re.Match) -> str:
+        href = (m.group(1) or m.group(2) or "").strip()
+        if not _SAFE_TG_URL.match(href):
+            return m.group(3)
+        return hold(f'<a href="{_esc_html(href)}">{_md_html_to_tg_inline(m.group(3), held)}</a>')
+
+    s = _HTML_A.sub(repl_a, s)
+
+    def repl_tag(m: re.Match) -> str:
+        if m.group(3):  # br|hr
+            return "\n" if m.group(3).lower() == "br" else "\n—\n"
+        tag = m.group(1).lower()
+        tg = {"b": "b", "strong": "b", "i": "i", "em": "i", "u": "u",
+              "s": "s", "del": "s", "strike": "s", "code": "code"}.get(tag, "b")
+        return wrap_inner(tg, m.group(2))
+
+    s = _HTML_TAG.sub(repl_tag, s)
+
+    # markdown
+    s = _MD_LINK.sub(
+        lambda m: hold(f'<a href="{_esc_html(m.group(2))}">{_esc_html(m.group(1))}</a>')
+        if _SAFE_TG_URL.match(m.group(2).strip()) else _esc_html(m.group(1)), s)
+    s = _MD_CODE.sub(lambda m: hold(f"<code>{_esc_html(m.group(1))}</code>"), s)
+    s = _MD_BOLD.sub(lambda m: wrap_inner("b", m.group(1)), s)
+    s = _MD_UNDER.sub(lambda m: wrap_inner("u", m.group(1)), s)
+    s = _MD_STRIKE.sub(lambda m: wrap_inner("s", m.group(1)), s)
+    s = _MD_BOLD2.sub(lambda m: wrap_inner("b", m.group(1)), s)
+    s = _MD_ITALIC.sub(lambda m: wrap_inner("i", m.group(1)), s)
+
+    # экранировать остаток, вернуть плейсхолдеры
+    parts: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\x00":
+            j = s.find("\x00", i + 1)
+            if j > i:
+                try:
+                    parts.append(held[int(s[i + 1:j])])
+                except (ValueError, IndexError):
+                    parts.append(_esc_html(s[i:j + 1]))
+                i = j + 1
+                continue
+        # обычный текст до следующего плейсхолдера
+        j = s.find("\x00", i)
+        chunk = s[i:] if j < 0 else s[i:j]
+        parts.append(_esc_html(chunk))
+        i = len(s) if j < 0 else j
+
+    out = "".join(parts)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    if len(out) > limit:
+        # обрезать по символам, не разрывая тег посередине
+        cut = out[:limit]
+        if cut.count("<") != cut.count(">"):
+            cut = cut.rsplit("<", 1)[0]
+        out = cut.rstrip() + "…"
+    return out
+
+
+def _md_html_to_tg_inline(inner: str, held: list[str]) -> str:
+    """экранировать внутренность уже выбранного тега (без повторного разбора md)."""
+    # внутри тега плейсхолдеров быть не должно — просто escape
+    return _esc_html(re.sub(r"<[^>]+>", "", inner or ""))
+
+
 def trial_enabled() -> bool:
     return db.get_setting("trial_enabled", "1") in ("1", "true", "True", "yes")
 
@@ -8104,7 +8210,9 @@ class SupportEditBody(BaseModel):
 
 
 def _tg_support_text(text: str) -> str:
-    body = _esc_html(text[:700] + ("…" if len(text) > 700 else "")) if text else "📎 Вложение"
+    body = _md_html_to_tg(text, 700) if text else "📎 Вложение"
+    if not body:
+        body = "📎 Вложение"
     return f"💬 <b>Ответ поддержки</b>\n\n{body}"
 
 

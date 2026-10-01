@@ -2,8 +2,10 @@ import React from "react";
 import { T } from "./ui";
 import { openPayUrl } from "../utils/api";
 
-// безопасный рендер оферты/политики: markdown+html → react (без сырого html)
+// безопасный рендер: markdown+html → react (без сырого html)
 const SAFE_URL = /^(https?:\/\/|mailto:|tg:\/\/)[^\s"'<>]+$/i;
+
+export type RichTone = "doc" | "chat" | "chatOnAccent";
 
 function decodeEntities(s: string): string {
   return s
@@ -43,46 +45,66 @@ function htmlBlocksToLines(src: string): string {
 // lead: группа 1 = символ перед маркером (без lookbehind на старых ios)
 type Rule = { re: RegExp; make: (m: RegExpExecArray, key: string) => React.ReactNode; lead?: boolean };
 
-const linkStyle: React.CSSProperties = { color: T.orangeBright, textDecoration: "underline", cursor: "pointer" };
-const codeStyle: React.CSSProperties = {
-  fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.92em", background: T.surfaceRaised,
-  borderRadius: 6, padding: "1px 5px", color: T.text,
+type ToneColors = {
+  text: string; muted: string; link: string; codeBg: string; codeFg: string; border: string; quote: string; strong: string;
 };
 
-function Link({ href, children }: { href: string; children: React.ReactNode }) {
+function colorsFor(tone: RichTone): ToneColors {
+  if (tone === "chatOnAccent") {
+    return {
+      text: "inherit", muted: "inherit", link: "rgba(255,255,255,0.95)",
+      codeBg: "rgba(0,0,0,0.18)", codeFg: "inherit", border: "rgba(255,255,255,0.35)", quote: "rgba(255,255,255,0.85)", strong: "inherit",
+    };
+  }
+  if (tone === "chat") {
+    return {
+      text: "inherit", muted: "inherit", link: T.orangeBright,
+      codeBg: T.surfaceRaised, codeFg: "inherit", border: T.border, quote: T.orange, strong: "inherit",
+    };
+  }
+  return {
+    text: T.text, muted: T.textMuted, link: T.orangeBright,
+    codeBg: T.surfaceRaised, codeFg: T.text, border: T.border, quote: T.orange, strong: T.text,
+  };
+}
+
+function Link({ href, children, color }: { href: string; children: React.ReactNode; color: string }) {
   const url = decodeEntities(href.trim());
   if (!SAFE_URL.test(url)) return <>{children}</>;
   return (
-    <a href={url} style={linkStyle} rel="noopener noreferrer" target="_blank"
+    <a href={url} style={{ color, textDecoration: "underline", cursor: "pointer" }} rel="noopener noreferrer" target="_blank"
       onClick={(e) => { if (/^https?:/i.test(url)) { e.preventDefault(); openPayUrl(url); } }}>
       {children}
     </a>
   );
 }
 
-const RULES: Rule[] = [
-  // разметка html
-  { re: /<(b|strong)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <strong key={k} style={{ color: T.text, fontWeight: 600 }}>{inline(m[2], k)}</strong> },
-  { re: /<(i|em)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <em key={k}>{inline(m[2], k)}</em> },
-  { re: /<u\s*>([\s\S]+?)<\/u\s*>/i, make: (m, k) => <u key={k}>{inline(m[1], k)}</u> },
-  { re: /<(s|del|strike)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <s key={k}>{inline(m[2], k)}</s> },
-  { re: /<code\s*>([\s\S]+?)<\/code\s*>/i, make: (m, k) => <code key={k} style={codeStyle}>{decodeEntities(m[1])}</code> },
-  { re: /<a\s+href\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]+?)<\/a\s*>/i, make: (m, k) => <Link key={k} href={m[1] ?? m[2] ?? ""}>{inline(m[3], k)}</Link> },
-  // разметка markdown
-  { re: /`([^`\n]+)`/, make: (m, k) => <code key={k} style={codeStyle}>{m[1]}</code> },
-  { re: /\[([^\]\n]+)\]\(([^)\s]+)\)/, make: (m, k) => <Link key={k} href={m[2]}>{inline(m[1], k)}</Link> },
-  { re: /\*\*([^*\n]+?)\*\*/, make: (m, k) => <strong key={k} style={{ color: T.text, fontWeight: 600 }}>{inline(m[1], k)}</strong> },
-  { re: /__([^_\n]+?)__/, make: (m, k) => <u key={k}>{inline(m[1], k)}</u> },
-  { re: /~~([^~\n]+?)~~/, make: (m, k) => <s key={k}>{inline(m[1], k)}</s> },
-  { re: /(^|[^\p{L}\p{N}*])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?![\p{L}\p{N}*])/u, lead: true, make: (m, k) => <strong key={k} style={{ color: T.text, fontWeight: 600 }}>{inline(m[2], k)}</strong> },
-  { re: /(^|[^\p{L}\p{N}_])_([^_\s](?:[^_\n]*[^_\s])?)_(?![\p{L}\p{N}_])/u, lead: true, make: (m, k) => <em key={k}>{inline(m[2], k)}</em> },
-];
+function makeRules(c: ToneColors): Rule[] {
+  const codeStyle: React.CSSProperties = {
+    fontFamily: "ui-monospace, Menlo, monospace", fontSize: "0.92em", background: c.codeBg,
+    borderRadius: 6, padding: "1px 5px", color: c.codeFg,
+  };
+  return [
+    { re: /<(b|strong)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <strong key={k} style={{ color: c.strong, fontWeight: 600 }}>{inline(m[2], k, c)}</strong> },
+    { re: /<(i|em)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <em key={k}>{inline(m[2], k, c)}</em> },
+    { re: /<u\s*>([\s\S]+?)<\/u\s*>/i, make: (m, k) => <u key={k}>{inline(m[1], k, c)}</u> },
+    { re: /<(s|del|strike)\s*>([\s\S]+?)<\/\1\s*>/i, make: (m, k) => <s key={k}>{inline(m[2], k, c)}</s> },
+    { re: /<code\s*>([\s\S]+?)<\/code\s*>/i, make: (m, k) => <code key={k} style={codeStyle}>{decodeEntities(m[1])}</code> },
+    { re: /<a\s+href\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>([\s\S]+?)<\/a\s*>/i, make: (m, k) => <Link key={k} href={m[1] ?? m[2] ?? ""} color={c.link}>{inline(m[3], k, c)}</Link> },
+    { re: /`([^`\n]+)`/, make: (m, k) => <code key={k} style={codeStyle}>{m[1]}</code> },
+    { re: /\[([^\]\n]+)\]\(([^)\s]+)\)/, make: (m, k) => <Link key={k} href={m[2]} color={c.link}>{inline(m[1], k, c)}</Link> },
+    { re: /\*\*([^*\n]+?)\*\*/, make: (m, k) => <strong key={k} style={{ color: c.strong, fontWeight: 600 }}>{inline(m[1], k, c)}</strong> },
+    { re: /__([^_\n]+?)__/, make: (m, k) => <u key={k}>{inline(m[1], k, c)}</u> },
+    { re: /~~([^~\n]+?)~~/, make: (m, k) => <s key={k}>{inline(m[1], k, c)}</s> },
+    { re: /(^|[^\p{L}\p{N}*])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?![\p{L}\p{N}*])/u, lead: true, make: (m, k) => <strong key={k} style={{ color: c.strong, fontWeight: 600 }}>{inline(m[2], k, c)}</strong> },
+    { re: /(^|[^\p{L}\p{N}_])_([^_\s](?:[^_\n]*[^_\s])?)_(?![\p{L}\p{N}_])/u, lead: true, make: (m, k) => <em key={k}>{inline(m[2], k, c)}</em> },
+  ];
+}
 
-// инлайн-разметка: кэш ближайшего совпадения по правилу для линейных проходов
-function inline(text: string, keyBase = "i"): React.ReactNode[] {
+function inline(text: string, keyBase = "i", c: ToneColors = colorsFor("doc")): React.ReactNode[] {
+  const RULES = makeRules(c);
   const out: React.ReactNode[] = [];
   const res = RULES.map((r) => new RegExp(r.re.source, r.re.flags.includes("g") ? r.re.flags : r.re.flags + "g"));
-  // ближайшее совпадение по правилу + где начинается сама разметка
   const cache: ({ m: RegExpExecArray; at: number } | null | undefined)[] = RULES.map(() => undefined);
   let pos = 0;
   let n = 0;
@@ -90,16 +112,15 @@ function inline(text: string, keyBase = "i"): React.ReactNode[] {
     let best = -1;
     let bestAt = Infinity;
     for (let i = 0; i < RULES.length; i++) {
-      let c = cache[i];
-      if (c === undefined || (c !== null && c.at < pos)) {
-        // правила lead смотрят на один символ назад
+      let hit = cache[i];
+      if (hit === undefined || (hit !== null && hit.at < pos)) {
         res[i].lastIndex = RULES[i].lead ? Math.max(0, pos - 1) : pos;
         const m = res[i].exec(text);
-        c = m ? { m, at: m.index + (RULES[i].lead ? m[1].length : 0) } : null;
-        if (c && c.at < pos) c = null;  // guard against loops
-        cache[i] = c;
+        hit = m ? { m, at: m.index + (RULES[i].lead ? m[1].length : 0) } : null;
+        if (hit && hit.at < pos) hit = null;
+        cache[i] = hit;
       }
-      if (c && c.at < bestAt) { bestAt = c.at; best = i; }
+      if (hit && hit.at < bestAt) { bestAt = hit.at; best = i; }
     }
     if (best < 0) { out.push(decodeEntities(text.slice(pos))); break; }
     const { m } = cache[best]!;
@@ -150,36 +171,41 @@ function parseBlocks(src: string): Block[] {
   return blocks.filter((b) => !(b.t === "p" && b.lines.length === 0));
 }
 
-function withBreaks(lines: string[], key: string): React.ReactNode[] {
+function withBreaks(lines: string[], key: string, c: ToneColors): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   lines.forEach((l, i) => {
     if (i) out.push(<br key={`${key}.br${i}`} />);
-    out.push(...inline(l, `${key}.${i}`));
+    out.push(...inline(l, `${key}.${i}`, c));
   });
   return out;
 }
 
-export function RichText({ text, style }: { text: string; style?: React.CSSProperties }) {
+export function RichText({ text, style, tone = "doc", compact }: {
+  text: string; style?: React.CSSProperties; tone?: RichTone; compact?: boolean;
+}) {
+  const c = colorsFor(tone);
   const blocks = parseBlocks(text || "");
-  const hSize = [0, 19, 17, 15];
+  const hSize = compact ? [0, 17, 15, 14] : [0, 19, 17, 15];
+  const gap = compact ? 4 : 8;
+  const hGap = compact ? 8 : 16;
   return (
-    <div style={{ fontSize: 14, lineHeight: "21px", color: T.textMuted, wordBreak: "break-word", ...style }}>
+    <div style={{ fontSize: compact ? "inherit" : 14, lineHeight: compact ? "inherit" : "21px", color: c.muted, wordBreak: "break-word", ...style }}>
       {blocks.map((b, i) => {
         const k = `b${i}`;
         const mt = i === 0 ? 0 : undefined;
         switch (b.t) {
           case "h":
-            return <div key={k} role="heading" aria-level={b.level} style={{ color: T.text, fontWeight: 700, fontSize: hSize[b.level], lineHeight: 1.3, margin: `${mt ?? 16}px 0 8px` }}>{inline(b.text, k)}</div>;
+            return <div key={k} role="heading" aria-level={b.level} style={{ color: c.text, fontWeight: 700, fontSize: hSize[b.level], lineHeight: 1.3, margin: `${mt ?? hGap}px 0 ${gap}px` }}>{inline(b.text, k, c)}</div>;
           case "hr":
-            return <div key={k} style={{ height: 1, background: T.border, margin: "14px 0" }} />;
+            return <div key={k} style={{ height: 1, background: c.border, margin: `${compact ? 8 : 14}px 0` }} />;
           case "ul":
-            return <ul key={k} style={{ margin: `${mt ?? 8}px 0 8px`, paddingLeft: 20 }}>{b.items.map((it, j) => <li key={j} style={{ marginBottom: 4 }}>{inline(it, `${k}.${j}`)}</li>)}</ul>;
+            return <ul key={k} style={{ margin: `${mt ?? gap}px 0 ${gap}px`, paddingLeft: 20 }}>{b.items.map((it, j) => <li key={j} style={{ marginBottom: 2 }}>{inline(it, `${k}.${j}`, c)}</li>)}</ul>;
           case "ol":
-            return <ol key={k} start={b.start} style={{ margin: `${mt ?? 8}px 0 8px`, paddingLeft: 22 }}>{b.items.map((it, j) => <li key={j} style={{ marginBottom: 4 }}>{inline(it, `${k}.${j}`)}</li>)}</ol>;
+            return <ol key={k} start={b.start} style={{ margin: `${mt ?? gap}px 0 ${gap}px`, paddingLeft: 22 }}>{b.items.map((it, j) => <li key={j} style={{ marginBottom: 2 }}>{inline(it, `${k}.${j}`, c)}</li>)}</ol>;
           case "quote":
-            return <div key={k} style={{ borderLeft: `3px solid ${T.orange}`, padding: "2px 0 2px 12px", margin: `${mt ?? 8}px 0 8px`, color: T.text }}>{withBreaks(b.lines, k)}</div>;
+            return <div key={k} style={{ borderLeft: `3px solid ${c.quote}`, padding: "2px 0 2px 10px", margin: `${mt ?? gap}px 0 ${gap}px`, color: c.text }}>{withBreaks(b.lines, k, c)}</div>;
           default:
-            return <p key={k} style={{ margin: `${mt ?? 8}px 0 8px` }}>{withBreaks(b.lines, k)}</p>;
+            return <p key={k} style={{ margin: `${mt ?? gap}px 0 ${gap}px` }}>{withBreaks(b.lines, k, c)}</p>;
         }
       })}
     </div>

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MSIcon, PageHeader, Screen, T } from "../components/ui";
+import RichText from "../components/RichText";
 import { btnReset } from "../theme";
 import { useSmartBack } from "../utils/navigation";
 import {
@@ -143,8 +144,8 @@ function Bubble({ m, onImage, onMedia, onReply, onQuote, flash, onNoThanks, clos
           )}
           {m.files.map((f) => <Attachment key={f.id} f={f} mine={mine} onImage={onImage} onMedia={onMedia} />)}
           {m.text && (
-            <div style={{ fontSize: 15, lineHeight: "21px", whiteSpace: "pre-wrap", wordBreak: "break-word", padding: m.files.length ? "2px 6px 2px" : 0 }}>
-              {m.text}
+            <div style={{ fontSize: 15, lineHeight: "21px", wordBreak: "break-word", padding: m.files.length ? "2px 6px 2px" : 0 }}>
+              <RichText text={m.text} tone={mine ? "chatOnAccent" : "chat"} compact />
             </div>
           )}
           {/* time inside bubble */}

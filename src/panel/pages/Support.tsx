@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle, Users, Trash2, CornerUpLeft, Download, Edit2, ExternalLink, FileText, FileX, HelpCircle, Info, Lock, MessageCircle, Paperclip, Play, Save, Search, Send, ShieldAlert, Undo2, X, XCircle } from 'lucide-react';
 import { DotsMenu, Modal, Spinner } from '../components/ui';
+import { RichText } from '../components/RichText';
 import { TEAM_CHAT_ID, TeamChat } from './TeamChat';
 import { apiFetch, getPanelToken, mergeInfo, parseApiErr } from '../lib/api';
 import { fmtDateTime, fmtMoney } from '../lib/format';
@@ -152,7 +153,7 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
                 <div style={{ fontSize: 12, opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }}>{quoteText(m.reply_to)}</div>
               </button>
             )}
-            {m.text && <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: 0.9 }}>{m.text}</div>}
+            {m.text && <div style={{ fontSize: 13, lineHeight: 1.45, wordBreak: 'break-word', opacity: 0.9 }}><RichText text={m.text} tone="chat" /></div>}
             <div className="faint" style={{ alignSelf: 'flex-end', fontSize: 11 }}>{m.edited ? 'изменено · ' : ''}{hms(m.created_at)}</div>
           </div>
           <div className="sup-reply flex flex-col gap-1" style={{ flex: 'none' }}>
@@ -182,7 +183,7 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
             </button>
           )}
           {m.files.map((f) => <Attachment key={f.id} f={f} mine={mine} onImage={onImage} onMedia={onMedia} />)}
-          {m.text && <div style={{ fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: m.files.length ? '0 6px 2px' : 0 }}>{m.text}</div>}
+          {m.text && <div style={{ fontSize: 14, lineHeight: 1.45, wordBreak: 'break-word', padding: m.files.length ? '0 6px 2px' : 0 }}><RichText text={m.text} tone={mine ? 'chatOnLight' : 'chat'} /></div>}
           <div style={{ alignSelf: 'flex-end', fontSize: 11, opacity: 0.55, marginTop: -2, padding: m.files.length && !m.text ? '0 6px 2px' : 0, whiteSpace: 'nowrap' }}>
             {mine && m.author ? `${m.author} · ` : ''}{m.edited ? 'изменено · ' : ''}{hms(m.created_at)}
           </div>

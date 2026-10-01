@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import smtplib
 import socket
 import ssl
@@ -430,7 +431,7 @@ def send_login_notice(to: str, when: str, method: str, ip: str = "", device: str
 
 def send_support_reply(to: str, text: str, files: int = 0, url: str = "") -> tuple[bool, str]:
     """Письмо «Вам ответила поддержка» с текстом ответа и кнопкой «Открыть чат»."""
-    body = text.strip()
+    body = _strip_markup(text)
     short = body[:600] + ("…" if len(body) > 600 else "")
     parts = []
     if short:
@@ -460,6 +461,28 @@ def send_broadcast(to: str, subject: str, body_html: str, body_text: Optional[st
 def _esc(s: str) -> str:
     return ((s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;").replace("'", "&#39;"))
+
+
+def _strip_markup(text: str) -> str:
+    """markdown/html → plain для писем."""
+    s = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.I)
+    s = re.sub(r"</p\s*>", "\n\n", s, flags=re.I)
+    s = re.sub(r"<p\s*>", "", s, flags=re.I)
+    s = re.sub(r"</?(?:ul|ol|li|blockquote|h[1-3]|hr)\s*/?>", "\n", s, flags=re.I)
+    s = re.sub(r'<a\s+href\s*=\s*(?:"([^"]*)"|\'([^\']*)\')[^>]*>([\s\S]*?)</a\s*>',
+               lambda m: f"{m.group(3)} ({m.group(1) or m.group(2) or ''})", s, flags=re.I)
+    s = re.sub(r"</?(?:b|strong|i|em|u|s|del|strike|code)\s*>", "", s, flags=re.I)
+    s = re.sub(r"\[([^\]\n]+)\]\(([^)\s]+)\)", r"\1 (\2)", s)
+    s = re.sub(r"`([^`\n]+)`", r"\1", s)
+    s = re.sub(r"\*\*([^*\n]+?)\*\*", r"\1", s)
+    s = re.sub(r"__([^_\n]+?)__", r"\1", s)
+    s = re.sub(r"~~([^~\n]+?)~~", r"\1", s)
+    s = re.sub(r"(?<![\w*])\*([^*\s](?:[^*\n]*[^*\s])?)\*(?![\w*])", r"\1", s)
+    s = re.sub(r"(?<![\w_])_([^_\s](?:[^_\n]*[^_\s])?)_(?![\w_])", r"\1", s)
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
 def _html_to_text(html: str) -> str:
