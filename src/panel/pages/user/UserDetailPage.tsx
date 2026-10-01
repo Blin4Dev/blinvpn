@@ -159,10 +159,10 @@ export const UserDetailPage: React.FC<{
           onConfirm={(value, notify) => { const a = action; setAction(null); void doAction(a, value, notify); }} />
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3" style={{ flexWrap: 'wrap' }}>
         <button className="btn" onClick={onBack}><ArrowLeft size={16} /> К пользователям</button>
         {canEdit && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {detail.key_blocked
               ? <button className="btn" disabled={busy} onClick={() => void doAction('UNBLOCK_KEY', null, false)}><CheckCircle size={15} /> Разблокировать ключ</button>
               : <button className="btn danger" disabled={busy} onClick={() => void doAction('BLOCK_KEY', null, false, 'Заблокировать ключ (подписку) пользователя?')}><Ban size={15} /> Заблокировать ключ</button>}
@@ -172,9 +172,9 @@ export const UserDetailPage: React.FC<{
       </div>
 
       <div className="card" style={{ padding: 18 }}>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
           <span className="avatar" style={{ width: 48, height: 48, fontSize: 16 }}>{uname.replace('@', '').slice(0, 2).toUpperCase()}</span>
-          <div className="flex-1">
+          <div className="flex-1" style={{ minWidth: 0 }}>
             <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
               <span className="h-sec" style={{ fontSize: 18 }}>{uname}</span>
               <span className={`badge ${stMeta.cls}`}>{stMeta.label}</span>
@@ -341,7 +341,7 @@ export const UserDetailPage: React.FC<{
             <InfoRow label="Ссылка на подписку">
               {subLink ? (
                 <>
-                  <span className="mono sub" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }} title={subLink}>
+                  <span className="mono sub" style={{ maxWidth: 'min(300px, 100%)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', minWidth: 0 }} title={subLink}>
                     {subLink.replace(/^https?:\/\//, '')}
                   </span>
                   <button className="btn sm" onClick={async () => { if (await copyToClipboard(subLink)) onToast('Скопировано', 'Ссылка на подписку', 'success'); }}>
@@ -448,7 +448,7 @@ export const UserDetailPage: React.FC<{
             <InfoRow label="Первое подключение"><span className="mono">{fmtDateTime(rw.first_connected_at)}</span></InfoRow>
             <InfoRow label="Подписка">
               {rw.subscription_url
-                ? <button className="btn ghost sm mono" style={{ padding: 0, maxWidth: 230, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}
+                ? <button className="btn ghost sm mono" style={{ padding: 0, maxWidth: 'min(230px, 100%)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', minWidth: 0 }}
                     title="Скопировать ссылку на подписку"
                     onClick={async () => { if (await copyToClipboard(rw.subscription_url!)) onToast('Скопировано', 'Ссылка на подписку', 'success'); }}>
                     {rw.subscription_url.replace(/^https?:\/\//, '')}

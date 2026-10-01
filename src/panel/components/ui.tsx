@@ -153,9 +153,9 @@ export const Row: React.FC<{ k: React.ReactNode; v: React.ReactNode; hint?: stri
 );
 
 export const InfoRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
-  <div className="flex items-center justify-between gap-3" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-    <span className="sub" style={{ minWidth: 140 }}>{label}</span>
-    <span className="flex items-center gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>{children}</span>
+  <div className="info-row flex items-center justify-between gap-3" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+    <span className="sub" style={{ flex: '0 1 auto', minWidth: 0 }}>{label}</span>
+    <span className="flex items-center gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end', flex: '1 1 12rem', minWidth: 0, maxWidth: '100%' }}>{children}</span>
   </div>
 );
 
@@ -191,18 +191,36 @@ export const refundedRowStyle = (status?: string | null): React.CSSProperties | 
 
 export type DotsItem = { label: string; icon?: React.ElementType; onClick: () => void; danger?: boolean; disabled?: boolean; hint?: string } | null | false | undefined | '' | 0;
 
-// меню «⋯» через portal, чтобы таблицы не обрезали
+// меню «⋯» через portal, чтобы таблицы не обрезали; у края экрана открывается вверх
 export const DotsMenu: React.FC<{ items: DotsItem[]; title?: string; size?: number }> = ({ items, title = 'Действия', size = 32 }) => {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; right: number; maxH: number } | null>(null);
   const btn = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const list = items.filter(Boolean) as Exclude<DotsItem, null | false | undefined | '' | 0>[];
-  useLayoutEffect(() => {
-    if (!open || !btn.current) return;
+  const place = () => {
+    if (!btn.current) return;
     const r = btn.current.getBoundingClientRect();
-    setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
-  }, [open]);
+    const pad = 8;
+    const right = Math.max(pad, window.innerWidth - r.right);
+    const est = menu.current?.offsetHeight || list.length * 48 + 8;
+    const below = window.innerHeight - r.bottom - pad;
+    const above = r.top - pad;
+    const openUp = est > below && above > below;
+    const maxH = Math.max(120, openUp ? above : below);
+    const top = openUp
+      ? Math.max(pad, r.top - Math.min(est, maxH) - 4)
+      : Math.min(r.bottom + 4, Math.max(pad, window.innerHeight - Math.min(est, maxH) - pad));
+    setPos((prev) => (prev && prev.top === top && prev.right === right && prev.maxH === maxH) ? prev : { top, right, maxH });
+  };
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    place();
+  }, [open, list.length]);
+  // после появления портала — пересчёт по реальной высоте меню
+  useLayoutEffect(() => {
+    if (open && pos && menu.current) place();
+  }, [open, pos != null, list.length]);
   useEffect(() => {
     if (!open) return;
     const h = (e: MouseEvent) => { if (!menu.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false); };
@@ -218,7 +236,7 @@ export const DotsMenu: React.FC<{ items: DotsItem[]; title?: string; size?: numb
         <MoreHorizontal size={16} />
       </button>
       {open && pos && createPortal(
-        <div ref={menu} className="menu" style={{ position: 'fixed', top: pos.top, right: pos.right, marginTop: 0, zIndex: 200 }} onClick={(e) => e.stopPropagation()}>
+        <div ref={menu} className="menu" style={{ position: 'fixed', top: pos.top, right: pos.right, marginTop: 0, zIndex: 200, maxHeight: pos.maxH, overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
           {list.map((it, i) => (
             <button key={i} className="menu-item" disabled={it.disabled} title={it.hint}
               style={{ color: it.danger ? 'var(--danger)' : undefined, opacity: it.disabled ? 0.45 : 1, cursor: it.disabled ? 'default' : 'pointer' }}
