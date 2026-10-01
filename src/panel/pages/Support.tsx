@@ -740,28 +740,33 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
 
         <div style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
           {!chat || !data ? null : (() => {
-            const canWriteUser = !!(chat.started_by_me || (data.me.full && chat.ticket?.status === 'open'));
+            // писать пользователю — только после «Начать» (и у админа тоже)
+            const canWriteUser = !!chat.started_by_me;
             const taken = chat.ticket?.status === 'open' && !!chat.ticket.assigned_name && !chat.ticket.assigned_to_me;
-            const showStart = !chat.started_by_me && chat.ticket?.status === 'open' && !(data.me.full && chat.ticket?.assigned_name);
-            const forceNote = !canWriteUser || !!editing?.internal;
-            const asNote = forceNote || noteMode;
+            const canStart = !chat.started_by_me && chat.ticket?.status === 'open' && (!taken || data.me.full);
+            const asNote = !!editing?.internal || noteMode;
             const canNoteSend = !busy && text.trim().length > 0;
             const pickMode = (note: boolean) => {
               if (editing) return;
               setNoteMode(note);
               if (note && pending.length) setPending((p) => { p.forEach((x) => x.preview && URL.revokeObjectURL(x.preview)); return []; });
             };
+            // вкладка «Сообщение» без взятого тикета: «Начать» / «Забрать» вместо поля
+            const messageAction = !canWriteUser && !asNote && !editing ? (
+              canStart ? (
+                <button className="btn solid" style={{ width: '100%', justifyContent: 'center', minHeight: 42 }}
+                  disabled={busy === 'start'} onClick={() => void start(taken)}>
+                  {busy === 'start' ? <Spinner size={15} /> : <Play size={15} />} {taken ? 'Забрать обращение' : 'Начать'}
+                </button>
+              ) : (
+                <div className="sub" style={{ fontSize: 13, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 10, textAlign: 'center' }}>
+                  {taken ? `Ведёт ${chat.ticket!.assigned_name}` : chat.ticket?.status !== 'open' ? 'Обращение закрыто' : 'Нет открытого обращения'}
+                </div>
+              )
+            ) : null;
             return (
               <div className="flex flex-col gap-2">
-                {showStart && (
-                  <button className="btn" style={{ alignSelf: 'flex-start', padding: '6px 12px' }} disabled={busy === 'start'} onClick={() => void start(taken)}>
-                    {busy === 'start' ? <Spinner size={15} /> : <Play size={14} />} {taken ? 'Забрать обращение' : 'Начать'}
-                  </button>
-                )}
-                {!canWriteUser && taken && !data.me.full && (
-                  <div className="sub" style={{ fontSize: 12 }}>Ведёт {chat.ticket!.assigned_name}</div>
-                )}
-                {pending.length > 0 && !asNote && (
+                {pending.length > 0 && !asNote && canWriteUser && (
                   <div className="flex gap-2" style={{ overflowX: 'auto', paddingBottom: 4 }}>
                     {pending.map((p) => (
                       <div key={p.key} style={{ position: 'relative', flex: 'none', width: 68, height: 68, borderRadius: 10, border: `1px solid ${p.error ? 'var(--danger)' : 'var(--border)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
@@ -804,13 +809,12 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
                   <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {!editing && (
                       <div style={{ display: 'inline-flex', alignSelf: 'flex-start', padding: 2, borderRadius: 8, background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)' }}>
-                        <button type="button" disabled={forceNote && !canWriteUser} onClick={() => pickMode(false)}
+                        <button type="button" onClick={() => pickMode(false)}
                           style={{
-                            border: 'none', cursor: forceNote && !canWriteUser ? 'default' : 'pointer', font: 'inherit',
+                            border: 'none', cursor: 'pointer', font: 'inherit',
                             padding: '4px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                             background: !asNote ? 'rgba(255,255,255,0.12)' : 'transparent',
                             color: !asNote ? 'var(--text)' : 'var(--muted, #9a9a9a)',
-                            opacity: !canWriteUser ? 0.4 : 1,
                           }}>Сообщение</button>
                         <button type="button" onClick={() => pickMode(true)}
                           style={{
@@ -821,18 +825,22 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
                           }}>Комментарий</button>
                       </div>
                     )}
-                    <textarea className="input" rows={1} value={text}
-                      placeholder={asNote ? 'Комментарий для сотрудников…' : 'Сообщение пользователю…'}
-                      onChange={(e) => { setText(e.target.value.slice(0, limits.max_text)); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`; }}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } if (e.key === 'Escape' && editing) cancelEdit(); }}
-                      style={{ width: '100%', resize: 'none', minHeight: 42, maxHeight: 160, lineHeight: 1.4, paddingTop: 10, paddingBottom: 10 }} />
+                    {messageAction || (
+                      <textarea className="input" rows={1} value={text}
+                        placeholder={asNote ? 'Комментарий для сотрудников…' : 'Сообщение пользователю…'}
+                        onChange={(e) => { setText(e.target.value.slice(0, limits.max_text)); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`; }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } if (e.key === 'Escape' && editing) cancelEdit(); }}
+                        style={{ width: '100%', resize: 'none', minHeight: 42, maxHeight: 160, lineHeight: 1.4, paddingTop: 10, paddingBottom: 10 }} />
+                    )}
                   </div>
-                  <button className="btn solid" style={{ height: 42, flex: 'none' }}
-                    title={editing ? 'Сохранить' : 'Отправить'}
-                    disabled={editing ? !!busy || (!text.trim() && !editing.files.length) : asNote ? !canNoteSend : !canSend}
-                    onClick={() => void send()}>
-                    {busy === 'send' || uploading ? <Spinner size={15} /> : editing ? <Save size={15} /> : <Send size={15} />}
-                  </button>
+                  {(asNote || canWriteUser || editing) && (
+                    <button className="btn solid" style={{ height: 42, flex: 'none' }}
+                      title={editing ? 'Сохранить' : 'Отправить'}
+                      disabled={editing ? !!busy || (!text.trim() && !editing.files.length) : asNote ? !canNoteSend : !canSend}
+                      onClick={() => void send()}>
+                      {busy === 'send' || uploading ? <Spinner size={15} /> : editing ? <Save size={15} /> : <Send size={15} />}
+                    </button>
+                  )}
                 </div>
               </div>
             );
