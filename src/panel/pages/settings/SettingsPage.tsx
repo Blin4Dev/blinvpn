@@ -1,10 +1,11 @@
 import React from 'react';
 import {
-  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Mail,
+  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Mail, Fingerprint,
 } from 'lucide-react';
 import type { ToastType } from '../../lib/types';
 import { AntiAbuseSettingsTab } from './AntiAbuseTab';
 import { BackupSettingsTab } from './BackupsTab';
+import { CaptchaSettingsTab } from './CaptchaTab';
 import { ForumSettingsTab } from './ForumTab';
 import { LegalSettingsTab } from './LegalTab';
 import { MailSettingsTab } from './MailTab';
@@ -12,7 +13,7 @@ import { PricesSettingsTab } from './PricesTab';
 import { SquadsPage } from './SquadsTab';
 import { StorageSettingsTab } from './StorageTab';
 
-export type Tab = 'price' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'backups' | 'forum' | 'storage';
+export type Tab = 'price' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'captcha' | 'backups' | 'forum' | 'storage';
 
 // разделы настроек (подменю в сайдбаре)
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
@@ -22,6 +23,7 @@ export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: strin
   { id: 'privacy', icon: Shield, label: 'Конфиденциальность' },
   { id: 'squads', icon: Zap, label: 'Сквады' },
   { id: 'mail', icon: Mail, label: 'Почта' },
+  { id: 'captcha', icon: Fingerprint, label: 'Капча' },
   { id: 'forum', icon: Send, label: 'Уведомления' },
   { id: 'backups', icon: Cloud, label: 'Резервные копии' },
   { id: 'storage', icon: Database, label: 'Хранилище S3' },
@@ -35,6 +37,7 @@ export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastT
     {tab === 'privacy' && <LegalSettingsTab kind="privacy" title="Политика конфиденциальности" onToast={onToast} />}
     {tab === 'squads' && <SquadsPage onToast={onToast} />}
     {tab === 'mail' && <MailSettingsTab onToast={onToast} />}
+    {tab === 'captcha' && <CaptchaSettingsTab onToast={onToast} />}
     {tab === 'forum' && <ForumSettingsTab onToast={onToast} />}
     {tab === 'backups' && <BackupSettingsTab onToast={onToast} />}
     {tab === 'storage' && <StorageSettingsTab onToast={onToast} />}

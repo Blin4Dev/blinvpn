@@ -71,7 +71,7 @@ const PAGE_PATHS: Record<string, string> = {
   'Рассылка': '/mailing', 'Промокоды': '/promocodes', 'Акции': '/promotions', 'Ссылки': '/links',
   'Мониторинг': '/monitoring', 'Балансировщик': '/balancer', 'Настройки': '/settings', 'Сотрудники': '/staff', 'Зарплата': '/salary',
 };
-export const SETTINGS_TABS = ['price', 'antiabuse', 'offer', 'privacy', 'squads', 'mail', 'forum', 'backups', 'storage'] as const;
+export const SETTINGS_TABS = ['price', 'antiabuse', 'offer', 'privacy', 'squads', 'mail', 'captcha', 'forum', 'backups', 'storage'] as const;
 export type SettingsTab = typeof SETTINGS_TABS[number];
 
 type Route = { page: string; userId: number | null; nodeId: number | null; tab: SettingsTab; chatId?: number | null };

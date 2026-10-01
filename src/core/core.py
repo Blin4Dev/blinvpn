@@ -102,9 +102,11 @@ except ImportError:  # pragma: no cover
 try:
     from . import support  # type: ignore
     from . import s3store  # type: ignore
+    from . import captcha as captcha_mod  # type: ignore
 except ImportError:  # pragma: no cover
     import support  # type: ignore
     import s3store  # type: ignore
+    import captcha as captcha_mod  # type: ignore
 try:
     from . import monitoring  # type: ignore
 except ImportError:
@@ -2002,6 +2004,7 @@ class OauthBody(BaseModel):
     photo_url: Optional[str] = None
     auth_date: Any = None
     hash: str
+    captcha_token: Optional[str] = None
 
 
 class RedeemPromoBody(BaseModel):
@@ -2045,6 +2048,7 @@ class UpdateEmailBody(BaseModel):
 
 class EmailRequestBody(BaseModel):
     email: str
+    captcha_token: Optional[str] = None
 
 
 class EmailVerifyBody(BaseModel):
@@ -2052,6 +2056,7 @@ class EmailVerifyBody(BaseModel):
     code: str
     ref: Optional[str] = None  # ref с сайта только при регистрации
     merge: bool = False       # подтверждено объединение с аккаунтом этого email
+    captcha_token: Optional[str] = None
 
 
 class OauthLoginBody(OauthBody):
@@ -5526,7 +5531,7 @@ def panel_put_plans(body: PlansUpdateBody, _: dict = Depends(require_owner)) -> 
 
 
 @app.get("/api/app/config")
-def app_config() -> dict[str, Any]:
+def app_config(request: Request) -> dict[str, Any]:
     bot_id = ""
     if TELEGRAM_BOT_TOKEN and ":" in TELEGRAM_BOT_TOKEN:
         bot_id = TELEGRAM_BOT_TOKEN.split(":", 1)[0]
@@ -5534,6 +5539,7 @@ def app_config() -> dict[str, Any]:
     prices = {p["devices"]: p["price_rub"] for p in get_active_plans()}
     offer = db.get_setting("offer_text", "")
     privacy = db.get_setting("privacy_text", "")
+    ip = _client_ip(request)
     return {
         "telegramOauthBotId": bot_id,
         "telegramOauthUrl": "",
@@ -5548,6 +5554,7 @@ def app_config() -> dict[str, Any]:
         "trialDays": fulfillment.trial_days(),
         "providerMin": PROVIDER_MIN_RUB,
         "trafficResetPrice": float(db.get_setting("traffic_reset_price", "0") or 0),
+        "captcha": captcha_mod.public_config(request.headers, ip),
     }
 
 
@@ -5619,9 +5626,20 @@ def _apply_web_referral(user_id: int, code: Optional[str]) -> None:
     db.execute("UPDATE users SET referred_by = ? WHERE id = ? AND referred_by IS NULL", (ref["id"], user_id))
 
 
+def _require_captcha(token: Optional[str], request: Optional[Request]) -> None:
+    """капча на веб-входе (почта / telegram widget); в mini app не вызывается."""
+    if not captcha_mod.enabled():
+        return
+    try:
+        captcha_mod.verify(token or "", request.headers if request else {}, _client_ip(request))
+    except captcha_mod.CaptchaError as e:
+        raise HTTPException(e.status, detail={"message": e.message})
+
+
 @app.post("/api/app/auth/oauth")
 def app_auth_oauth(body: OauthLoginBody, request: Request = None) -> dict[str, Any]:  # type: ignore[assignment]
-    payload = body.model_dump(exclude={"ref"})
+    _require_captcha(body.captcha_token, request)
+    payload = body.model_dump(exclude={"ref", "captcha_token"})
     validated = validate_oauth_login(payload)
     was_new = find_user_by_tg(int(validated.get("id") or 0)) is None
     user = _resolve_app_user_from_tg(
@@ -5645,6 +5663,7 @@ def app_auth_email_request(body: EmailRequestBody, request: Request = None) -> d
     email = (body.email or "").strip().lower()
     if not _valid_email(email):
         raise HTTPException(400, detail={"message": "Введите корректный email"})
+    _require_captcha(body.captcha_token, request)
 
     # лимиты писем на адрес и с ip
     ip = _client_ip(request) or "unknown"
@@ -5686,6 +5705,7 @@ def _email_verify_limits(email: str, request: Optional[Request]) -> None:
 def app_auth_email_verify(body: EmailVerifyBody, request: Request = None) -> dict[str, Any]:  # type: ignore[assignment]
     email = (body.email or "").strip().lower()
     _email_verify_limits(email, request)
+    _require_captcha(body.captcha_token, request)
     if not verify_email_code(email, body.code or ""):
         raise HTTPException(401, detail={"message": "Неверный или истёкший код"})
     was_new = db.fetchone("SELECT id FROM users WHERE lower(email) = ?", (email,)) is None
@@ -8073,6 +8093,29 @@ def panel_s3_check(body: S3ConfigBody, _: dict = Depends(require_owner)) -> dict
     if not (cfg.get("bucket") and cfg.get("access_key") and cfg.get("secret_key")):
         raise HTTPException(400, detail={"message": "Укажите бакет, Access Key и Secret Key"})
     return _s3(s3store.check, cfg)
+
+
+class CaptchaConfigBody(BaseModel):
+    enabled: Optional[bool] = None
+    mode: Optional[str] = None  # auto | yandex | turnstile
+    yandex_site_key: Optional[str] = None
+    yandex_secret: Optional[str] = None
+    turnstile_site_key: Optional[str] = None
+    turnstile_secret: Optional[str] = None
+
+
+@app.get("/api/panel/settings/captcha")
+def panel_captcha_get(_: dict = Depends(require_owner)) -> dict[str, Any]:
+    return captcha_mod.get_config()
+
+
+@app.put("/api/panel/settings/captcha")
+def panel_captcha_put(body: CaptchaConfigBody, _: dict = Depends(require_owner)) -> dict[str, Any]:
+    try:
+        return captcha_mod.save_config(body.model_dump())
+    except captcha_mod.CaptchaError as e:
+        raise HTTPException(e.status, detail={"message": e.message})
+
 
 if __name__ == "__main__":
     import uvicorn

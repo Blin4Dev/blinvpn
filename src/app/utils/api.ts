@@ -402,10 +402,10 @@ export async function unbindEmail(): Promise<AppUser> {
 
 export type EmailRequestResult = { ok: boolean; throttled: boolean; resend_after: number; dev_code?: string; merge?: MergePreview };
 
-export async function requestEmailCode(email: string): Promise<EmailRequestResult> {
+export async function requestEmailCode(email: string, captchaToken?: string): Promise<EmailRequestResult> {
   return appFetch<EmailRequestResult>("/auth/email/request", {
     method: "POST",
-    body: JSON.stringify({ email }),
+    body: JSON.stringify(captchaToken ? { email, captcha_token: captchaToken } : { email }),
   });
 }
 
@@ -430,11 +430,14 @@ export function captureWebRef(): void {
   }
 }
 
-export async function verifyEmailCode(email: string, code: string): Promise<AppUser> {
+export async function verifyEmailCode(email: string, code: string, captchaToken?: string): Promise<AppUser> {
   const ref = getWebRef();
+  const body: Record<string, string> = { email, code };
+  if (ref) body.ref = ref;
+  if (captchaToken) body.captcha_token = captchaToken;
   const b = await appFetch<{ user: AppUser; token: string }>("/auth/email/verify", {
     method: "POST",
-    body: JSON.stringify(ref ? { email, code, ref } : { email, code }),
+    body: JSON.stringify(body),
   });
   if (b.token) setAppToken(b.token);
   return b.user;

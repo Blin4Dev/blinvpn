@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { BrandMark, Btn, Field, LoadingScreen, T, pageFrame, pageOuter } from "../components/ui";
+import { CaptchaBox, type CaptchaPublic } from "../components/CaptchaBox";
 import { TelegramLoginWidget } from "../components/TelegramLoginWidget";
 import {
   appFetch,
@@ -23,17 +24,28 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
   const [resendIn, setResendIn] = useState(0);
   const [botUsername, setBotUsername] = useState("");
   const [oauthBusy, setOauthBusy] = useState(false);
+  const [captcha, setCaptcha] = useState<CaptchaPublic | null>(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaReset, setCaptchaReset] = useState(0);
 
   const validEmail = useMemo(() => /\S+@\S+\.\S+/.test(email.trim()), [email]);
+  const needCaptcha = Boolean(captcha?.enabled && captcha.siteKey);
+  const captchaOk = !needCaptcha || Boolean(captchaToken);
 
   useEffect(() => {
     void (async () => {
       try {
         const res = await fetch("/api/app/config");
-        const body = (await res.json().catch(() => null)) as { botUsername?: string } | null;
+        const body = (await res.json().catch(() => null)) as {
+          botUsername?: string;
+          captcha?: CaptchaPublic;
+        } | null;
         if (!res.ok || !body) return;
         if (typeof body.botUsername === "string" && body.botUsername.trim()) {
           setBotUsername(body.botUsername.trim().replace(/^@/, ""));
+        }
+        if (body.captcha && typeof body.captcha === "object") {
+          setCaptcha(body.captcha);
         }
       } catch {
         /* ignore */
@@ -41,8 +53,17 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
     })();
   }, []);
 
+  const bumpCaptcha = () => {
+    setCaptchaToken("");
+    setCaptchaReset((n) => n + 1);
+  };
+
   const finishOauth = useCallback(
     async (payload: TelegramOAuthPayload) => {
+      if (needCaptcha && !captchaToken) {
+        setError("Пройдите проверку «я не робот»");
+        return;
+      }
       setOauthBusy(true);
       setError("");
       try {
@@ -52,6 +73,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
         if (payload.username) clean.username = payload.username;
         if (payload.photo_url) clean.photo_url = payload.photo_url;
         if (payload.auth_date != null && payload.auth_date !== "") clean.auth_date = payload.auth_date;
+        if (captchaToken) clean.captcha_token = captchaToken;
 
         const ref = getWebRef();
         const b = await appFetch<{ user?: AppUser; token?: string }>("/auth/oauth", {
@@ -62,10 +84,11 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
         onAuthed();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Не удалось войти через Telegram");
+        bumpCaptcha();
         setOauthBusy(false);
       }
     },
-    [onAuthed],
+    [onAuthed, needCaptcha, captchaToken],
   );
 
   useEffect(() => {
@@ -76,11 +99,15 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
 
   const sendCode = useCallback(async () => {
     if (busy || !validEmail) return;
+    if (needCaptcha && !captchaToken) {
+      setError("Пройдите проверку «я не робот»");
+      return;
+    }
     setBusy(true);
     setError("");
     setInfo("");
     try {
-      const r = await requestEmailCode(email.trim());
+      const r = await requestEmailCode(email.trim(), captchaToken || undefined);
       setStep("code");
       setResendIn(r.resend_after || 60);
       setInfo(
@@ -88,26 +115,33 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
           ? `Код (демо-режим): ${r.dev_code}`
           : "Мы отправили код на вашу почту. Проверьте входящие.",
       );
+      bumpCaptcha();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось отправить код");
+      bumpCaptcha();
     } finally {
       setBusy(false);
     }
-  }, [busy, email, validEmail]);
+  }, [busy, email, validEmail, needCaptcha, captchaToken]);
 
   const confirmCode = useCallback(async () => {
     if (busy || code.trim().length < 4) return;
+    if (needCaptcha && !captchaToken) {
+      setError("Пройдите проверку «я не робот»");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      await verifyEmailCode(email.trim(), code.trim());
+      await verifyEmailCode(email.trim(), code.trim(), captchaToken || undefined);
       onAuthed();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Неверный код");
+      bumpCaptcha();
     } finally {
       setBusy(false);
     }
-  }, [busy, code, email, onAuthed]);
+  }, [busy, code, email, onAuthed, needCaptcha, captchaToken]);
 
   if (oauthBusy) return <LoadingScreen text="Входим через Telegram…" />;
 
@@ -141,8 +175,9 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                   onChange={setEmail}
                   onKeyDown={(e) => e.key === "Enter" && void sendCode()}
                 />
+                <CaptchaBox cfg={captcha} onToken={setCaptchaToken} resetKey={captchaReset} />
                 <Btn
-                  disabled={!validEmail || busy}
+                  disabled={!validEmail || busy || !captchaOk}
                   onClick={() => void sendCode()}
                   style={{ marginTop: 16 }}
                 >
@@ -166,8 +201,9 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                   onKeyDown={(e) => e.key === "Enter" && void confirmCode()}
                   style={{ letterSpacing: 8, textAlign: "center", fontSize: 22, fontWeight: 700 }}
                 />
+                <CaptchaBox cfg={captcha} onToken={setCaptchaToken} resetKey={captchaReset} />
                 <Btn
-                  disabled={code.trim().length < 4 || busy}
+                  disabled={code.trim().length < 4 || busy || !captchaOk}
                   onClick={() => void confirmCode()}
                   style={{ marginTop: 16 }}
                 >
@@ -191,6 +227,7 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                       setCode("");
                       setError("");
                       setInfo("");
+                      bumpCaptcha();
                     }}
                   >
                     Изменить почту
@@ -227,7 +264,15 @@ export default function Authentication({ onAuthed }: { onAuthed: () => void }) {
                 <span style={{ fontSize: 13, color: T.textDim }}>или</span>
                 <div style={{ flex: 1, height: 1, background: T.border }} />
               </div>
-              <TelegramLoginWidget botUsername={botUsername} onAuth={(u) => void finishOauth(u)} />
+              <TelegramLoginWidget
+                botUsername={botUsername}
+                onAuth={(u) => void finishOauth(u)}
+              />
+              {needCaptcha && !captchaOk ? (
+                <div style={{ marginTop: 10, color: T.textDim, fontSize: 12, textAlign: "center" }}>
+                  Сначала пройдите проверку выше
+                </div>
+              ) : null}
             </>
           ) : null}
         </div>
