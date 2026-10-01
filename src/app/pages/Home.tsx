@@ -2,7 +2,7 @@
 import { useNavigate } from "react-router-dom";
 import { activateTrial, fetchConfig, fetchMe, fetchSupport } from "../utils/api";
 import { formatDateRu } from "../utils/date";
-import { Btn, LoadingScreen, MSIcon, T, btnReset, pageFrame, pageOuter } from "../components/ui";
+import { Btn, MSIcon, T, btnReset, pageFrame, pageOuter } from "../components/ui";
 
 type SubscriptionState =
   | "active"
@@ -107,6 +107,7 @@ function ActionTile({
   disabled,
   delay,
   badge,
+  animate,
 }: {
   icon: string;
   label: string;
@@ -114,6 +115,7 @@ function ActionTile({
   disabled?: boolean;
   delay: number;
   badge?: number;
+  animate: boolean;
 }) {
   return (
     <button
@@ -134,8 +136,8 @@ function ActionTile({
         border: `1px solid ${T.border}`,
         borderRadius: T.radius.xl,
         cursor: disabled ? "not-allowed" : "pointer",
-        // не через opacity: анимация rise заканчивается на 1 и перебьёт; серый через цвета
-        animation: `blinvpnRise 0.5s var(--ease-out) ${delay}s both`,
+        animation: animate ? `blinvpnRise 0.5s var(--ease-out) ${delay}s both` : undefined,
+        opacity: animate ? undefined : 0,
         position: "relative",
       }}
     >
@@ -167,7 +169,12 @@ function ActionTile({
 
 export default function BlinVPNApp() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  // данные пришли → layout готов к reveal
+  const [dataReady, setDataReady] = useState(false);
+  // следующий кадр после dataReady — чтобы CSS transition сработал
+  const [showUi, setShowUi] = useState(false);
+  // дольше 3 с без данных — подпись снизу
+  const [slow, setSlow] = useState(false);
   const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>("never");
   const [subscriptionUntilText, setSubscriptionUntilText] = useState("");
   const [trialEnabled, setTrialEnabled] = useState(true);
@@ -181,6 +188,17 @@ export default function BlinVPNApp() {
   // чёрный список: заблокирован + только поддержка
   const [blacklisted, setBlacklisted] = useState(false);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setSlow(true), 3000);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!dataReady) return;
+    const id = requestAnimationFrame(() => setShowUi(true));
+    return () => cancelAnimationFrame(id);
+  }, [dataReady]);
+
   const cfg = STATE_CONFIGS[subscriptionState];
   const statusTitle = subscriptionState === "expiring_soon" ? expiringTitle : cfg.statusTitle;
   const tone = TONE[cfg.statusTone];
@@ -190,6 +208,8 @@ export default function BlinVPNApp() {
   const ctaPath = trialOff ? BUY_PATH : cfg.ctaPath;
   const isTrialCta = subscriptionState === "never" && trialEnabled;
   const ctaPrimary = trialOff ? true : cfg.ctaPrimary;
+  const glowOn = subscriptionState === "active" || subscriptionState === "expiring_soon";
+  const glowDim = subscriptionState === "never" || subscriptionState === "had_before";
 
   const handleCta = async () => {
     if (blocked) return;
@@ -243,12 +263,10 @@ export default function BlinVPNApp() {
           }
         } catch { /* safe default */ }
       } finally {
-        setLoading(false);
+        setDataReady(true);
       }
     })();
   }, []);
-
-  if (loading) return <LoadingScreen />;
 
   const subtitle =
     subscriptionUntilText && (subscriptionState === "active" || subscriptionState === "expiring_soon")
@@ -257,10 +275,19 @@ export default function BlinVPNApp() {
         ? "Вы в черном списке проекта"
         : cfg.statusSubtitle;
 
+  const ease = "cubic-bezier(0.22, 1, 0.36, 1)";
+
   return (
     <div style={pageOuter()}>
       <div style={pageFrame()}>
-        <div className="blin-ambient" aria-hidden />
+        <div
+          className="blin-ambient"
+          aria-hidden
+          style={{
+            opacity: showUi ? 1 : 0,
+            transition: `opacity 0.85s ${ease} 0.15s`,
+          }}
+        />
 
         <div
           className="blin-tg-safe"
@@ -277,7 +304,7 @@ export default function BlinVPNApp() {
             boxSizing: "border-box",
           }}
         >
-          {/* logo fills free space */}
+          {/* logo: при загрузке по центру экрана; после данных зона сжимается — логотип уезжает вверх */}
           <div
             style={{
               flex: "1 1 auto",
@@ -285,7 +312,6 @@ export default function BlinVPNApp() {
               alignItems: "center",
               justifyContent: "center",
               minHeight: 0,
-              animation: "blinvpnRise 0.55s var(--ease-out) 0.06s both",
             }}
           >
             <div
@@ -307,10 +333,9 @@ export default function BlinVPNApp() {
                   inset: -12,
                   borderRadius: "50%",
                   background: `radial-gradient(circle, ${T.orangeGlow} 0%, transparent 68%)`,
-                  animation: subscriptionState === "active" || subscriptionState === "expiring_soon"
-                    ? "blinvpnBreathe 4.5s ease-in-out infinite"
-                    : undefined,
-                  opacity: subscriptionState === "never" || subscriptionState === "had_before" ? 0.45 : 1,
+                  opacity: showUi ? (glowDim ? 0.45 : 1) : 0,
+                  transition: `opacity 0.9s ${ease} 0.2s`,
+                  animation: showUi && glowOn ? "blinvpnBreathe 4.5s ease-in-out infinite" : undefined,
                 }}
               />
               <img
@@ -330,12 +355,21 @@ export default function BlinVPNApp() {
             </div>
           </div>
 
-          {/* bottom: status + history + cta + grid */}
-          <div style={{ flexShrink: 0 }}>
+          {/* низ: появляется после данных, сдвигая логотип на место */}
+          <div
+            style={{
+              flexShrink: 0,
+              maxHeight: showUi ? 520 : 0,
+              opacity: showUi ? 1 : 0,
+              overflow: "hidden",
+              transition: `max-height 0.75s ${ease}, opacity 0.55s ${ease} 0.08s`,
+              pointerEvents: showUi ? "auto" : "none",
+            }}
+          >
             <div
               style={{
                 marginBottom: 14,
-                animation: "blinvpnRise 0.5s var(--ease-out) 0.12s both",
+                animation: showUi ? "blinvpnRise 0.5s var(--ease-out) 0.12s both" : undefined,
               }}
             >
               <div
@@ -357,7 +391,7 @@ export default function BlinVPNApp() {
               ) : null}
             </div>
 
-            <div style={{ animation: "blinvpnRise 0.5s var(--ease-out) 0.18s both", marginBottom: 10 }}>
+            <div style={{ animation: showUi ? "blinvpnRise 0.5s var(--ease-out) 0.18s both" : undefined, marginBottom: 10 }}>
               <Btn
                 variant={ctaPrimary ? "primary" : "secondary"}
                 disabled={blocked || trialBusy}
@@ -386,6 +420,7 @@ export default function BlinVPNApp() {
                 label="Друзья"
                 disabled={blocked}
                 delay={0.22}
+                animate={showUi}
                 onClick={() => { if (!blocked) navigate("/referral"); }}
               />
               <ActionTile
@@ -393,6 +428,7 @@ export default function BlinVPNApp() {
                 label="Промокод"
                 disabled={blocked}
                 delay={0.26}
+                animate={showUi}
                 onClick={() => { if (!blocked) navigate("/promocode"); }}
               />
               <ActionTile
@@ -400,18 +436,41 @@ export default function BlinVPNApp() {
                 label="Настройки"
                 disabled={blocked}
                 delay={0.3}
+                animate={showUi}
                 onClick={() => { if (!blocked) navigate("/settings"); }}
               />
               <ActionTile
                 icon="chat"
                 label="Поддержка"
                 delay={0.34}
+                animate={showUi}
                 disabled={blacklisted}
                 badge={supportUnread}
                 onClick={() => { if (!blacklisted) navigate("/support"); }}
               />
             </div>
           </div>
+
+          {/* если данные идут дольше 3 с */}
+          {!dataReady && slow ? (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: "calc(28px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
+                textAlign: "center",
+                fontSize: 14,
+                fontWeight: 500,
+                color: T.textMuted,
+                letterSpacing: "0.02em",
+                animation: "blinvpnFadeIn 0.4s ease both",
+                pointerEvents: "none",
+              }}
+            >
+              Загрузка...
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
