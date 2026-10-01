@@ -1228,13 +1228,9 @@ else
 fi
 
 printf "\n"
-printf "${GREEN}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}\n"
-printf "${GREEN}┃${NC}  🎉 ${BOLD}Установка BlinVPN завершена${NC}                              ${GREEN}┃${NC}\n"
-printf "${GREEN}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}\n"
+printf "${GREEN}┃${NC}    ${BOLD}Установка завершена${NC}                              ${GREEN}┃${NC}\n"
 printf "\n"
-printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
 printf "${BOLD}  Адреса${NC}\n"
-printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
 printf "  Мини-приложение:  ${YELLOW}https://%s${NC}\n" "$DOMAIN"
 printf "  Панель:           ${YELLOW}https://%s${NC}\n" "$PANEL_DOMAIN"
 printf "  API:              ${YELLOW}https://%s/api${NC}\n" "$DOMAIN"

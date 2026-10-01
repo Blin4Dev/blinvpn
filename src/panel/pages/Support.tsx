@@ -28,7 +28,7 @@ const TAB_EMPTY: Record<Tab, string> = { open: 'Новых обращений н
 type ChatRow = {
   id: number; user_id: number; user_label: string; user_name?: string | null; is_banned: boolean; status?: string | null;
   last_message_at?: string | null; last_preview?: string | null; last_sender?: string | null; unread: number;
-  ticket?: Ticket | null; tab?: Tab; group?: '' | 'mine' | 'others';
+  ticket?: Ticket | null; tab?: Tab; group?: '' | 'mine' | 'others' | 'escalated';
 };
 type MeInfo = { name: string; role: 'owner' | 'curator' | 'operator'; full: boolean; can_manage_user: boolean; prompt_ttl_min: number };
 type ChatData = { chat: ChatRow & { started_by_me: boolean }; messages: SMsg[]; changes?: SMsg[]; limits: { max_file_mb: number; max_files: number; max_text: number }; me: MeInfo };
@@ -561,37 +561,65 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
         <div style={{ overflowY: 'auto', flex: 1 }}>
           {chats == null ? <div style={{ padding: 30, display: 'flex', justifyContent: 'center' }}><Spinner /></div>
             : chats.length === 0 ? <div className="sub" style={{ padding: 20, textAlign: 'center', fontSize: 13 }}>{q ? 'Ничего не найдено' : TAB_EMPTY[status]}</div>
-            : chats.map((c, i) => (
+            : chats.map((c, i) => {
+              const esc = !!(c.ticket?.escalated && !c.ticket.assigned_name);
+              const section =
+                status === 'work' && c.group === 'escalated' && (i === 0 || chats[i - 1].group !== 'escalated')
+                  ? 'Передано админу'
+                  : status === 'work' && c.group === 'others' && (i === 0 || chats[i - 1].group !== 'others')
+                    ? 'Ведут другие сотрудники'
+                    : status === 'work' && c.group === 'mine' && (i === 0 || chats[i - 1].group !== 'mine')
+                      && chats.some((x) => x.group === 'escalated')
+                      ? 'Мои обращения'
+                      : null;
+              return (
               <React.Fragment key={c.id}>
-              {status === 'work' && c.group === 'others' && (i === 0 || chats[i - 1].group !== 'others') && (
-                <div className="faint flex items-center gap-2" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '10px 14px 6px', borderBottom: '1px solid var(--border)' }}>
-                  Ведут другие сотрудники
+              {section && (
+                <div className="faint flex items-center gap-2" style={{
+                  fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '10px 14px 6px',
+                  borderBottom: '1px solid var(--border)',
+                  color: section === 'Передано админу' ? '#ff8a3d' : undefined,
+                }}>
+                  {section === 'Передано админу' ? <ShieldAlert size={12} /> : null}{section}
                 </div>
               )}
               <button onClick={() => setChatId(c.id)}
                 style={{ display: 'flex', gap: 10, width: '100%', textAlign: 'left', padding: '12px 14px', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', color: 'inherit', font: 'inherit',
-                  background: sid === c.id ? 'rgba(255,255,255,0.07)' : 'transparent' }}>
-                <div style={{ flex: 'none', width: 38, height: 38, borderRadius: 11, background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14 }}>
-                  {(c.user_label || '#').replace('@', '').slice(0, 1).toUpperCase()}
+                  background: sid === c.id ? 'rgba(255,255,255,0.07)' : esc ? 'rgba(255,107,26,0.07)' : 'transparent',
+                  boxShadow: esc ? 'inset 3px 0 0 #ff6b1a' : undefined }}>
+                <div style={{ flex: 'none', width: 38, height: 38, borderRadius: 11,
+                  background: esc ? 'rgba(255,107,26,0.18)' : 'rgba(255,255,255,0.08)',
+                  color: esc ? '#ff8a3d' : undefined,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 14 }}>
+                  {esc ? <ShieldAlert size={18} /> : (c.user_label || '#').replace('@', '').slice(0, 1).toUpperCase()}
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div className="flex justify-between gap-2">
-                    <span style={{ fontWeight: c.unread ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.user_label}</span>
+                    <span style={{ fontWeight: (c.unread || esc) ? 600 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.user_label}</span>
                     <span className="faint" style={{ fontSize: 11, flex: 'none' }}>
-                      {c.ticket ? <span style={{ marginRight: 6 }}>№{c.ticket.number}{c.ticket.status === 'closed' ? ' · закрыт' : c.ticket.close_prompt ? ' · закрывается' : c.ticket.assigned_to_me ? '' : c.ticket.assigned_name ? ` · ведёт ${c.ticket.assigned_name}` : c.ticket.escalated ? ' · передано админу' : ''}</span> : null}
+                      {c.ticket ? <span style={{ marginRight: 6 }}>№{c.ticket.number}{c.ticket.status === 'closed' ? ' · закрыт' : c.ticket.close_prompt ? ' · закрывается' : c.ticket.assigned_to_me ? '' : c.ticket.assigned_name ? ` · ведёт ${c.ticket.assigned_name}` : ''}</span> : null}
                       {shortWhen(c.last_message_at)}
                     </span>
                   </div>
                   <div className="flex justify-between gap-2" style={{ marginTop: 2 }}>
-                    <span className={c.unread ? '' : 'sub'} style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.last_sender === 'admin' ? 'Поддержка: ' : ''}{c.last_preview}
+                    <span className={c.unread || esc ? '' : 'sub'} style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {esc
+                        ? <><span style={{ color: '#ff8a3d', fontWeight: 600 }}>Передано вам</span>{c.ticket?.escalate_note ? ` · ${c.ticket.escalate_note}` : c.last_preview ? ` · ${c.last_preview}` : ''}</>
+                        : <>{c.last_sender === 'admin' ? 'Поддержка: ' : ''}{c.last_preview}</>}
                     </span>
-                    {c.unread > 0 && <span style={{ flex: 'none', minWidth: 20, height: 20, padding: '0 6px', borderRadius: 10, background: '#fff', color: '#000', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{c.unread}</span>}
+                    {(c.unread > 0 || esc) && (
+                      <span style={{
+                        flex: 'none', minWidth: 20, height: 20, padding: '0 6px', borderRadius: 10,
+                        background: esc ? '#ff6b1a' : '#fff', color: esc ? '#fff' : '#000',
+                        fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>{c.unread > 0 ? c.unread : '!'}</span>
+                    )}
                   </div>
                 </div>
               </button>
               </React.Fragment>
-            ))}
+              );
+            })}
         </div>
       </div>
     );

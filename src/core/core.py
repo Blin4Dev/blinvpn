@@ -7640,10 +7640,12 @@ def _tab_of(c: dict[str, Any], t: Optional[dict[str, Any]], p: dict[str, Any]) -
 
 
 def _work_group(t: Optional[dict[str, Any]], p: dict[str, Any]) -> str:
-    """во вкладке «в работе»: mine vs others."""
+    """во вкладке «в работе»: escalated → mine → others."""
     if not t:
         return ""
-    if t.get("assigned_admin") == p["actor"] or (not t.get("assigned_admin") and t.get("escalated")):
+    if t.get("escalated") and not t.get("assigned_admin"):
+        return "escalated"
+    if t.get("assigned_admin") == p["actor"]:
         return "mine"
     return "others"
 
@@ -7705,8 +7707,9 @@ def panel_support_chats(q: str = Query("", max_length=100), status: str = Query(
     if status == "archive":
         items.sort(key=lambda ct: ct[0].get("last_message_at") or "", reverse=True)
     else:
-        # «в работе»: сначала мои, потом чужие; closing внизу
-        items.sort(key=lambda ct: (0 if status != "work" or _work_group(ct[1], p) == "mine" else 1,
+        # «в работе»: сначала переданные админу, потом мои, потом чужие; closing внизу
+        _wg = {"escalated": 0, "mine": 1, "others": 2}
+        items.sort(key=lambda ct: (_wg.get(_work_group(ct[1], p), 9) if status == "work" else 0,
                                    1 if (ct[1] or {}).get("close_prompt") else 0, (ct[1] or {}).get("queue_at") or ""))
     return {"chats": [_panel_chat_row(c, p, t) for c, t in items[:500]], "counts": counts, "tabs": list(tabs)}
 
