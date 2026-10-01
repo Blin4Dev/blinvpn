@@ -2317,6 +2317,8 @@ class StaffCreateBody(BaseModel):
     password: str
     telegram_id: Any
     role: str = "operator"
+    default_pay: Any = 0
+    default_intervals: Optional[list[Any]] = None
 
 
 class StaffUpdateBody(BaseModel):
@@ -2325,6 +2327,8 @@ class StaffUpdateBody(BaseModel):
     telegram_id: Any = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    default_pay: Any = None
+    default_intervals: Optional[list[Any]] = None
 
 
 class StaffDayBody(BaseModel):
@@ -2414,13 +2418,17 @@ def panel_staff_create(body: StaffCreateBody, _: dict = Depends(require_owner)) 
     tg = _staff_call(staffmod.validate_tg, body.telegram_id)
     name = _staff_call(staffmod.validate_name, body.name)
     role = _staff_call(staffmod.validate_role, body.role)
+    iv = _staff_call(staffpay.validate_intervals, body.default_intervals if body.default_intervals is not None else [["10:00", "19:00"]])
+    pay = _staff_call(staffpay.validate_money, body.default_pay, "Базовая ставка")
     if staffmod.by_username(username):
         raise HTTPException(409, detail={"message": "Сотрудник с таким логином уже есть"})
     digest, salt = hash_password(password)
     now = iso()
-    cur = db.execute("INSERT INTO panel_staff (username, name, password_hash, password_salt, telegram_id, permissions, role, "
-                     "is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, 1, ?, ?)",
-                     (username, name, digest, salt, tg, role, now, now))
+    cur = db.execute(
+        "INSERT INTO panel_staff (username, name, password_hash, password_salt, telegram_id, permissions, role, "
+        "is_active, created_at, updated_at, default_pay, default_intervals) VALUES (?, ?, ?, ?, ?, '{}', ?, 1, ?, ?, ?, ?)",
+        (username, name, digest, salt, tg, role, now, now, pay, json.dumps(iv)),
+    )
     return staffmod.public(staffmod.get(int(cur.lastrowid)))
 
 
@@ -2446,6 +2454,10 @@ def panel_staff_update(staff_id: int, body: StaffUpdateBody, _: dict = Depends(r
         sets["is_active"] = 1 if body.is_active else 0
         if not body.is_active:
             kill = True
+    if body.default_pay is not None:
+        sets["default_pay"] = _staff_call(staffpay.validate_money, body.default_pay, "Базовая ставка")
+    if body.default_intervals is not None:
+        sets["default_intervals"] = json.dumps(_staff_call(staffpay.validate_intervals, body.default_intervals))
     if sets:
         sets["updated_at"] = iso()
         cols = ", ".join(f"{k} = ?" for k in sets)  # ключи только из кода выше

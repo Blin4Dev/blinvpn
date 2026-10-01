@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Optional
 
@@ -101,9 +102,20 @@ def role_of(s: dict[str, Any]) -> str:
 
 def public(s: dict[str, Any]) -> dict[str, Any]:
     """Без хэша и соли пароля."""
+    iv: list = []
+    raw = s.get("default_intervals")
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                iv = parsed
+        except (TypeError, ValueError):
+            iv = []
     return {
         "id": s["id"], "username": s["username"], "name": s.get("name") or "", "telegram_id": s["telegram_id"],
         "role": role_of(s), "is_active": bool(s.get("is_active")),
+        "default_pay": float(s.get("default_pay") or 0),
+        "default_intervals": iv,
         "created_at": s.get("created_at"), "updated_at": s.get("updated_at"),
         "last_login_at": s.get("last_login_at"), "last_login_ip": s.get("last_login_ip"),
     }

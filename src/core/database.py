@@ -311,7 +311,10 @@ CREATE TABLE IF NOT EXISTS panel_staff (
     created_at TEXT NOT NULL,
     updated_at TEXT,
     last_login_at TEXT,
-    last_login_ip TEXT
+    last_login_ip TEXT,
+    -- шаблон смены: подставляется при заполнении графика
+    default_pay REAL NOT NULL DEFAULT 0,
+    default_intervals TEXT               -- JSON [["10:00","19:00"],...]
 );
 -- график работы сотрудника: один день (по Москве) = интервалы работы (перерывы
 -- делят день на части) и оплата за день. Нет строки - выходной.
@@ -814,6 +817,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         },
         "panel_staff": {
             "role": "ALTER TABLE panel_staff ADD COLUMN role TEXT NOT NULL DEFAULT 'operator'",  # curator | operator
+            "default_pay": "ALTER TABLE panel_staff ADD COLUMN default_pay REAL NOT NULL DEFAULT 0",
+            "default_intervals": "ALTER TABLE panel_staff ADD COLUMN default_intervals TEXT",
         },
         "panel_sessions": {
             # null = владелец, иначе id сотрудника

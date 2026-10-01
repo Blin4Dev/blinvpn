@@ -14,7 +14,14 @@ type Staff = {
   id: number; username: string; name: string; role: 'curator' | 'operator'; is_active: boolean; telegram_id?: number;
   last_login_at?: string | null; last_login_ip?: string | null; balance?: number; tickets_in_work: number;
   shift?: { working_today: boolean; on_shift: boolean; intervals: string[][] };
+  default_pay?: number; default_intervals?: Interval[];
 };
+
+const DEFAULT_IV: Interval[] = [['10:00', '19:00']];
+const staffDefaults = (s?: Staff | null) => ({
+  intervals: (s?.default_intervals?.length ? s.default_intervals : DEFAULT_IV) as Interval[],
+  pay: s?.default_pay != null ? String(s.default_pay) : '',
+});
 type Fine = { id: number; amount: number; reason: string; issued_by: string; issued_name?: string; created_at: string; cancelled: boolean };
 type Bonus = { id: number; amount: number; reason: string; issued_name?: string; created_at: string; cancelled: boolean };
 type Ledger = {
@@ -32,17 +39,24 @@ const genPassword = () => {
 // создание / правка сотрудника (owner)
 const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved: (s: Staff, pw?: string) => void; onToast: Toast }> = ({ staff, onClose, onSaved, onToast }) => {
   const isNew = !staff;
+  const defs = staffDefaults(staff);
   const [username, setUsername] = useState(staff?.username || '');
   const [name, setName] = useState(staff?.name || '');
   const [tg, setTg] = useState(staff?.telegram_id ? String(staff.telegram_id) : '');
   const [role, setRole] = useState<'curator' | 'operator'>(staff?.role || 'operator');
   const [password, setPassword] = useState(isNew ? genPassword() : '');
   const [active, setActive] = useState(staff ? staff.is_active : true);
+  const [defIv, setDefIv] = useState<Interval[]>(defs.intervals);
+  const [defPay, setDefPay] = useState(defs.pay || (isNew ? '1000' : ''));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
     try {
-      const body: any = { name, telegram_id: tg.trim(), role };
+      const body: any = {
+        name, telegram_id: tg.trim(), role,
+        default_pay: Number(defPay || 0),
+        default_intervals: defIv,
+      };
       if (password) body.password = password;
       const r: Staff = isNew
         ? await apiFetch('/panel/staff', { method: 'POST', body: JSON.stringify({ ...body, username: username.trim() }) })
@@ -80,6 +94,15 @@ const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved:
             <input className="input mono" value={tg} onChange={(e) => setTg(e.target.value.replace(/[^\d]/g, ''))} placeholder="123456789" inputMode="numeric" />
             <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>Сотрудник должен запустить бота (/start)</div></div>
         </div>
+        <div>
+          <label className="field-label">Базовые часы работы (по Москве)</label>
+          <IntervalsEditor value={defIv} onChange={setDefIv} />
+          <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>Подставляются при заполнении графика и новых днях</div>
+        </div>
+        <div>
+          <label className="field-label">Базовая ставка за день, ₽</label>
+          <input className="input" type="number" min={0} value={defPay} onChange={(e) => setDefPay(e.target.value)} placeholder="1000" />
+        </div>
         {!isNew && (
           <div className="flex items-center justify-between gap-3 inset" style={{ padding: 12 }}>
             <div><div style={{ fontWeight: 500 }}>Доступ включён</div><div className="sub" style={{ fontSize: 12 }}>Выключите — сеансы завершатся, обращения вернутся в пул</div></div>
@@ -92,10 +115,10 @@ const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved:
 };
 
 // день графика
-const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; spill?: Interval[]; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staffId, day, cur, spill, onClose, onSaved, onToast }) => {
+const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; spill?: Interval[]; defaults?: { intervals: Interval[]; pay: string }; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staffId, day, cur, spill, defaults, onClose, onSaved, onToast }) => {
   const [working, setWorking] = useState(!!cur);
-  const [iv, setIv] = useState<Interval[]>(cur?.intervals?.length ? cur.intervals : [['10:00', '19:00']]);
-  const [pay, setPay] = useState(String(cur?.pay ?? ''));
+  const [iv, setIv] = useState<Interval[]>(cur?.intervals?.length ? cur.intervals : (defaults?.intervals || DEFAULT_IV));
+  const [pay, setPay] = useState(String(cur?.pay ?? defaults?.pay ?? ''));
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
@@ -125,12 +148,12 @@ const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; spill?: Inte
 };
 
 // заполнить период
-const BulkModal: React.FC<{ staffId: number; today: string; onClose: () => void; onSaved: (n: number) => void; onToast: Toast }> = ({ staffId, today, onClose, onSaved, onToast }) => {
+const BulkModal: React.FC<{ staffId: number; today: string; defaults?: { intervals: Interval[]; pay: string }; onClose: () => void; onSaved: (n: number) => void; onToast: Toast }> = ({ staffId, today, defaults, onClose, onSaved, onToast }) => {
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(addDays(today, 364));
   const [wd, setWd] = useState<number[]>([0, 1, 2, 3, 4]);
-  const [iv, setIv] = useState<Interval[]>([['10:00', '14:00'], ['15:00', '19:00']]);
-  const [pay, setPay] = useState('1000');
+  const [iv, setIv] = useState<Interval[]>(defaults?.intervals?.length ? defaults.intervals : [['10:00', '14:00'], ['15:00', '19:00']]);
+  const [pay, setPay] = useState(defaults?.pay !== undefined && defaults.pay !== '' ? defaults.pay : '1000');
   const [overwrite, setOverwrite] = useState(true);
   const [clearOther, setClearOther] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -146,6 +169,9 @@ const BulkModal: React.FC<{ staffId: number; today: string; onClose: () => void;
     <Modal onClose={onClose} title="Заполнить график" icon={CalendarRange} width={560}
       footer={<><button className="btn" onClick={onClose}>Отмена</button><button className="btn solid" disabled={busy || !wd.length} onClick={save}>{busy ? <Spinner size={15} /> : <Save size={15} />} Заполнить</button></>}>
       <div className="flex flex-col gap-4">
+        {!!(defaults?.intervals?.length || defaults?.pay) && (
+          <div className="sub" style={{ fontSize: 13 }}>Подставлены базовые часы и ставка сотрудника — можно изменить перед заполнением.</div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div><label className="field-label">С</label><input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
           <div><label className="field-label">По (до года вперёд)</label><input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
@@ -360,6 +386,8 @@ const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myAct
             <div className="flex flex-col gap-2" style={{ fontSize: 14 }}>
               <div>Telegram ID: <span className="mono">{staff.telegram_id}</span></div>
               <div>Статус: {staff.is_active ? 'доступ включён' : <span style={{ color: 'var(--danger)' }}>отключён</span>}</div>
+              <div>Базовая ставка: <span className="mono">{money(staff.default_pay || 0)}</span> / день</div>
+              <div>Базовые часы: <span className="faint">{hoursText((staff.default_intervals?.length ? staff.default_intervals : DEFAULT_IV) as Interval[])}</span></div>
               <div className="sub">{staff.last_login_at ? `Последний вход: ${fmtDateTime(staff.last_login_at).slice(0, 16)}${staff.last_login_ip ? ` · ${staff.last_login_ip}` : ''}` : 'Ещё не входил'}</div>
             </div>
             <div className="flex gap-2" style={{ marginTop: 14, flexWrap: 'wrap' }}>
@@ -370,8 +398,8 @@ const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myAct
           </div>
         )}
 
-        {dayEdit && <DayModal staffId={staff.id} day={dayEdit} cur={days[dayEdit]} spill={spillFromPrev(days[addDays(dayEdit, -1)])} onToast={onToast} onClose={() => setDayEdit(null)} onSaved={() => { setDayEdit(null); loadDays(); loadMoney(); onChanged(); }} />}
-        {bulk && <BulkModal staffId={staff.id} today={today} onToast={onToast} onClose={() => setBulk(false)} onSaved={(n) => { setBulk(false); loadDays(); onChanged(); onToast('График', `Заполнено рабочих дней: ${n}`, 'success'); }} />}
+        {dayEdit && <DayModal staffId={staff.id} day={dayEdit} cur={days[dayEdit]} spill={spillFromPrev(days[addDays(dayEdit, -1)])} defaults={staffDefaults(staff)} onToast={onToast} onClose={() => setDayEdit(null)} onSaved={() => { setDayEdit(null); loadDays(); loadMoney(); onChanged(); }} />}
+        {bulk && <BulkModal staffId={staff.id} today={today} defaults={staffDefaults(staff)} onToast={onToast} onClose={() => setBulk(false)} onSaved={(n) => { setBulk(false); loadDays(); onChanged(); onToast('График', `Заполнено рабочих дней: ${n}`, 'success'); }} />}
         {fineOpen && <FineModal staff={staff} onToast={onToast} onClose={() => setFineOpen(false)} onSaved={() => { setFineOpen(false); loadMoney(); onChanged(); onToast('Штраф', 'Штраф выдан', 'success'); }} />}
         {bonusOpen && <FineModal bonus staff={staff} onToast={onToast} onClose={() => setBonusOpen(false)} onSaved={() => { setBonusOpen(false); loadMoney(); onChanged(); onToast('Премия', 'Премия начислена', 'success'); }} />}
         {editOpen && <StaffEditor staff={staff} onToast={onToast} onClose={() => setEditOpen(false)} onSaved={() => { setEditOpen(false); onChanged(); onToast('Сохранено', staff.username, 'success'); }} />}
