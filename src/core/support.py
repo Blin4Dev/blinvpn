@@ -517,6 +517,37 @@ def s3_download_url(f: dict[str, Any]) -> str:
     })
 
 
+def send_note(chat: dict[str, Any], author: str, text: str, actor: str,
+              reply_to: Optional[int] = None, quote_tickets: Optional[set[int]] = None) -> dict[str, Any]:
+    """комментарий только для сотрудников: юзер не видит, уведомлений нет."""
+    text = (text or "").strip()
+    if not text:
+        raise SupportError("Пустой комментарий")
+    if len(text) > MAX_TEXT:
+        raise SupportError(f"Комментарий длиннее {MAX_TEXT} символов")
+    with db.transaction() as tx:
+        t = open_ticket(chat, tx)
+        if not t:
+            row = tx.execute("SELECT * FROM support_tickets WHERE chat_id = ? ORDER BY id DESC LIMIT 1",
+                             (int(chat["id"]),)).fetchone()
+            t = dict(row) if row else None
+        if not t:
+            raise SupportError("Нет обращения — комментарий оставить некуда", 409)
+        if reply_to:
+            r = tx.execute("SELECT id, ticket_id, internal FROM support_messages WHERE id = ? AND chat_id = ?",
+                           (int(reply_to), int(chat["id"]))).fetchone()
+            if not r or (quote_tickets is not None and r["ticket_id"] not in quote_tickets):
+                reply_to = None
+        now = _iso()
+        cur = tx.execute(
+            "INSERT INTO support_messages (chat_id, ticket_id, reply_to, sender, author, author_actor, text, internal, created_at) "
+            "VALUES (?, ?, ?, 'admin', ?, ?, ?, 1, ?)",
+            (int(chat["id"]), t["id"], reply_to, author, actor, text, now),
+        )
+        mid = cur.lastrowid
+    return message(mid)
+
+
 def send_message(chat: dict[str, Any], sender: str, author: Optional[str], text: str, file_ids: list[str],
                  uploader_id: str, reply_to: Optional[int] = None, actor: Optional[str] = None,
                  quote_tickets: Optional[set[int]] = None, any_ticket: bool = False, guard: Guard = None) -> dict[str, Any]:
@@ -698,7 +729,7 @@ def _own_message(chat: dict[str, Any], mid: int, actor: str) -> dict[str, Any]:
     m = db.fetchone("SELECT * FROM support_messages WHERE id = ? AND chat_id = ?", (int(mid), int(chat["id"])))
     if not m or m.get("deleted_at"):
         raise SupportError("Сообщение не найдено", 404)
-    if m["sender"] != "admin" or m.get("kind") or m.get("internal") or m.get("author_actor") != actor:
+    if m["sender"] != "admin" or m.get("kind") or m.get("author_actor") != actor:
         raise SupportError("Можно изменить или удалить только своё сообщение", 403)
     created = _parse(m["created_at"])
     if not created or (_now() - created).total_seconds() > EDIT_WINDOW:
@@ -717,9 +748,10 @@ def edit_message(chat: dict[str, Any], mid: int, actor: str, text: str) -> dict[
     if text != (m.get("text") or ""):
         db.execute("UPDATE support_messages SET text = ?, edited_at = ? WHERE id = ? AND deleted_at IS NULL",
                    (text, _iso(), m["id"]))
-        last = db.fetchone("SELECT MAX(id) AS m FROM support_messages WHERE chat_id = ? AND internal = 0", (int(chat["id"]),))
-        if last and int(last["m"] or 0) == int(m["id"]):
-            db.execute("UPDATE support_chats SET last_preview = ? WHERE id = ?", (text[:120] or "📎 Вложение", int(chat["id"])))
+        if not m.get("internal"):
+            last = db.fetchone("SELECT MAX(id) AS m FROM support_messages WHERE chat_id = ? AND internal = 0", (int(chat["id"]),))
+            if last and int(last["m"] or 0) == int(m["id"]):
+                db.execute("UPDATE support_chats SET last_preview = ? WHERE id = ?", (text[:120] or "📎 Вложение", int(chat["id"])))
     return message(int(m["id"]))
 
 

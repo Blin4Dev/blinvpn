@@ -15,7 +15,7 @@ type SMsg = {
 };
 const EDIT_WINDOW_MS = 48 * 3600 * 1000;
 // своё сообщение ещё можно править/удалить (48ч)
-const canEditMsg = (m: SMsg) => !!m.mine && !m.deleted && !m.kind && !m.internal && m.sender === 'admin'
+const canEditMsg = (m: SMsg) => !!m.mine && !m.deleted && !m.kind && m.sender === 'admin'
   && Date.now() - new Date(m.created_at).getTime() < EDIT_WINDOW_MS;
 type Ticket = {
   id: number; number: number; status: 'open' | 'closed'; opened_at?: string; closed_at?: string | null; closed_by?: string | null;
@@ -118,30 +118,38 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
       </div>
     );
   }
-  const mine = m.sender === 'admin';
+  const note = !!m.internal;
+  const mine = m.sender === 'admin' && !note;
   if (m.deleted) {
     return (
-      <div data-mid={m.id} style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '78%' }}>
+      <div data-mid={m.id} style={{ alignSelf: note ? 'center' : mine ? 'flex-end' : 'flex-start', maxWidth: '78%' }}>
         <div style={{ border: '1px dashed var(--border-strong)', borderRadius: 14, padding: '7px 12px', fontSize: 13, fontStyle: 'italic' }} className="faint">
-          Сообщение удалено{m.author ? ` · ${m.author}` : ''} · {hms(m.created_at)}
+          {note ? 'Комментарий удалён' : 'Сообщение удалено'}{m.author ? ` · ${m.author}` : ''} · {hms(m.created_at)}
         </div>
       </div>
     );
   }
   const own = canEditMsg(m);
   return (
-    <div data-mid={m.id} className="sup-msg" style={{ alignSelf: mine ? 'flex-end' : 'flex-start', maxWidth: '78%', display: 'flex', flexDirection: 'column', alignItems: mine ? 'flex-end' : 'flex-start' }}>
-      <div className="flex items-end gap-2" style={{ flexDirection: mine ? 'row-reverse' : 'row', maxWidth: '100%' }}>
+    <div data-mid={m.id} className="sup-msg" style={{ alignSelf: note ? 'stretch' : mine ? 'flex-end' : 'flex-start', maxWidth: note ? '100%' : '78%', display: 'flex', flexDirection: 'column', alignItems: note ? 'stretch' : mine ? 'flex-end' : 'flex-start' }}>
+      <div className="flex items-end gap-2" style={{ flexDirection: mine ? 'row-reverse' : 'row', maxWidth: '100%', width: note ? '100%' : undefined }}>
         <div style={{
-          background: mine ? '#fff' : 'var(--surface-2, rgba(255,255,255,0.06))', color: mine ? '#000' : 'var(--text)',
-          border: mine ? 'none' : '1px solid var(--border)', borderRadius: 14, borderBottomRightRadius: mine ? 4 : 14, borderBottomLeftRadius: mine ? 14 : 4,
-          padding: m.files.length && !m.text && !m.reply_to ? 4 : '8px 12px', display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '100%', minWidth: 0,
+          background: note ? 'rgba(255,107,26,0.08)' : mine ? '#fff' : 'var(--surface-2, rgba(255,255,255,0.06))',
+          color: note ? 'var(--text)' : mine ? '#000' : 'var(--text)',
+          border: note ? '1px solid rgba(255,107,26,0.35)' : mine ? 'none' : '1px solid var(--border)',
+          borderRadius: 14, borderBottomRightRadius: mine ? 4 : 14, borderBottomLeftRadius: mine ? 14 : 4,
+          padding: m.files.length && !m.text && !m.reply_to ? 4 : '8px 12px', display: 'flex', flexDirection: 'column', gap: 6, maxWidth: '100%', minWidth: 0, width: note ? '100%' : undefined,
           boxShadow: flash ? '0 0 0 3px rgba(96,165,250,0.7)' : 'none', transition: 'box-shadow 0.3s',
         }}>
+          {note && (
+            <div className="flex items-center gap-1.5" style={{ fontSize: 11, fontWeight: 700, color: '#ff8a3d', letterSpacing: '0.02em' }}>
+              <Lock size={12} /> Только сотрудники{m.author ? ` · ${m.author}` : ''}
+            </div>
+          )}
           {m.reply_to && (
             <button onClick={() => onQuote(m.reply_to!.id)} title="Перейти к сообщению"
               style={{ textAlign: 'left', border: 'none', cursor: 'pointer', font: 'inherit', color: 'inherit', padding: '4px 8px', borderRadius: 8,
-                borderLeft: `3px solid ${mine ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.4)'}`, background: mine ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)' }}>
+                borderLeft: `3px solid ${note || !mine ? 'rgba(255,138,61,0.7)' : 'rgba(0,0,0,0.35)'}`, background: note || !mine ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)' }}>
               <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.75 }}>{m.reply_to.deleted ? '' : m.reply_to.sender === 'admin' ? 'Поддержка' : 'Пользователь'}</div>
               <div style={{ fontSize: 12, opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>{quoteText(m.reply_to)}</div>
             </button>
@@ -150,13 +158,13 @@ const Bubble: React.FC<{ m: SMsg; onImage: (u: string) => void; onMedia?: () => 
           {m.text && <div style={{ fontSize: 14, lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: m.files.length ? '0 6px 2px' : 0 }}>{m.text}</div>}
           {/* время внутри, с секундами */}
           <div style={{ alignSelf: 'flex-end', fontSize: 11, opacity: 0.55, marginTop: -2, padding: m.files.length && !m.text ? '0 6px 2px' : 0, whiteSpace: 'nowrap' }}>
-            {mine && m.author ? `${m.author} · ` : ''}{m.edited ? 'изменено · ' : ''}{hms(m.created_at)}
+            {!note && mine && m.author ? `${m.author} · ` : ''}{m.edited ? 'изменено · ' : ''}{hms(m.created_at)}
           </div>
         </div>
         <div className="sup-reply flex flex-col gap-1" style={{ flex: 'none' }}>
           {onReply && <button className="icon-btn" title="Ответить на это сообщение" onClick={() => onReply(m)} style={{ width: 28, height: 28 }}><CornerUpLeft size={14} /></button>}
           {own && onEdit && <button className="icon-btn" title="Изменить (48 часов после отправки)" onClick={() => onEdit(m)} style={{ width: 28, height: 28 }}><Edit2 size={13} /></button>}
-          {own && onDelete && <button className="icon-btn" title="Удалить — пропадёт у пользователя" onClick={() => onDelete(m)} style={{ width: 28, height: 28 }}><Trash2 size={13} /></button>}
+          {own && onDelete && <button className="icon-btn" title={note ? 'Удалить комментарий' : 'Удалить — пропадёт у пользователя'} onClick={() => onDelete(m)} style={{ width: 28, height: 28 }}><Trash2 size={13} /></button>}
         </div>
       </div>
     </div>
@@ -350,6 +358,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
     const [q, setQ] = useState('');
     const [data, setData] = useState<ChatData | null>(null);
     const [text, setText] = useState('');
+    const [noteMode, setNoteMode] = useState(false);
     const [pending, setPending] = useState<Pending[]>([]);
     const [busy, setBusy] = useState('');
     const [viewer, setViewer] = useState<string | null>(null);
@@ -374,7 +383,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
 
     // открытый чат: загрузка, read, опрос
     useEffect(() => {
-      setData(null); setText(''); setPending([]); setReply(null); setEditing(null); lastId.current = 0; stick.current = true;
+      setData(null); setText(''); setPending([]); setReply(null); setEditing(null); setNoteMode(false); lastId.current = 0; stick.current = true;
       if (sid == null) return;
       let alive = true;
       const first = () => apiFetch(`/panel/support/chats/${sid}`).then((d: ChatData) => {
@@ -494,10 +503,13 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
     const ready = pending.filter((p) => p.id);
     const canSend = !busy && !uploading && (text.trim().length > 0 || ready.length > 0);
     const replaceMsg = (m: SMsg) => setData((cur) => (cur ? { ...cur, messages: cur.messages.map((x) => (x.id === m.id ? m : x)) } : cur));
-    const startEdit = (m: SMsg) => { setReply(null); setEditing(m); setText(m.text || ''); };
+    const startEdit = (m: SMsg) => { setReply(null); setEditing(m); setNoteMode(!!m.internal); setText(m.text || ''); };
     const cancelEdit = () => { setEditing(null); setText(''); };
     const removeMsg = async (m: SMsg) => {
-      if (sid == null || !window.confirm('Удалить сообщение? У пользователя оно пропадёт (и уведомление в Telegram тоже).')) return;
+      const ask = m.internal
+        ? 'Удалить комментарий? Его увидят только сотрудники — у пользователя его и так нет.'
+        : 'Удалить сообщение? У пользователя оно пропадёт (и уведомление в Telegram тоже).';
+      if (sid == null || !window.confirm(ask)) return;
       try {
         await apiFetch(`/panel/support/chats/${sid}/messages/${m.id}`, { method: 'DELETE' });
         replaceMsg({ ...m, deleted: true, text: '', files: [] });
@@ -514,6 +526,21 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
           const m: SMsg = await apiFetch(`/panel/support/chats/${sid}/messages/${editing.id}/edit`, { method: 'POST', body: JSON.stringify({ text: text.trim() }) });
           replaceMsg(m); cancelEdit(); loadChats();
         } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось изменить'), 'error'); } finally { setBusy(''); }
+        return;
+      }
+      const asNote = noteMode || editing?.internal;
+      if (asNote) {
+        if (busy || !text.trim()) return;
+        setBusy('send');
+        try {
+          const m: SMsg = await apiFetch(`/panel/support/chats/${sid}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({ text: text.trim(), internal: true, reply_to: reply?.id || null }),
+          });
+          stick.current = true;
+          setData((cur) => (cur ? { ...cur, messages: [...cur.messages.filter((x) => x.id !== m.id), m].sort((a, b) => a.id - b.id) } : cur));
+          setText(''); setReply(null);
+        } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось отправить комментарий'), 'error'); } finally { setBusy(''); }
         return;
       }
       if (!canSend) return;
@@ -679,7 +706,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
               <React.Fragment key={m.id}>
                 {day && <div className="faint" style={{ alignSelf: 'center', fontSize: 11, margin: '6px 0' }}>{fmtDateTime(m.created_at).slice(0, 10)}</div>}
                 <Bubble m={m} onImage={setViewer} onMedia={keepBottom} onQuote={jumpTo} flash={flashId === m.id}
-                  onReply={(chat?.started_by_me || (data?.me.full && chat?.ticket?.status === 'open')) && m.sender !== 'system' ? (x) => { setEditing(null); setReply(x); } : undefined}
+                  onReply={m.sender !== 'system' ? (x) => { setEditing(null); setReply(x); if (x.internal) setNoteMode(true); } : undefined}
                   onEdit={startEdit} onDelete={(x) => void removeMsg(x)} />
               </React.Fragment>
             );
@@ -687,75 +714,126 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
         </div>
 
         <div style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
-          {!chat ? null : !chat.started_by_me && !(data?.me.full && chat.ticket?.status === 'open' && chat.ticket.assigned_name) ? (() => {
+          {!chat || !data ? null : (() => {
+            const canWriteUser = !!(chat.started_by_me || (data.me.full && chat.ticket?.status === 'open'));
             const taken = chat.ticket?.status === 'open' && !!chat.ticket.assigned_name && !chat.ticket.assigned_to_me;
-            if (taken && !data?.me.full) return <div className="sub" style={{ fontSize: 13, textAlign: 'center', padding: 8 }}>Обращение ведёт {chat.ticket!.assigned_name}</div>;
-            if (chat.ticket?.status !== 'open' && !data?.me.full) return <div className="sub" style={{ fontSize: 13, textAlign: 'center', padding: 8 }}>Обращение закрыто. Новое откроется, когда пользователь напишет</div>;
-            return (
-              <div className="flex flex-col items-center gap-2">
-                <button className="btn solid" style={{ width: '100%', justifyContent: 'center', padding: 12 }} disabled={busy === 'start'} onClick={() => void start(taken)}>
-                  {busy === 'start' ? <Spinner size={16} /> : <Play size={15} />} {taken ? 'Забрать обращение' : 'Начать'}
-                </button>
-                {chat.ticket?.status !== 'open'
-                  ? <div className="sub" style={{ fontSize: 12 }}>Обращение закрыто. «Начать» откроет новое — или оно откроется само, когда пользователь напишет</div>
-                  : chat.ticket?.escalated ? <div className="sub" style={{ fontSize: 12 }}>Передано админу{chat.ticket.escalate_note ? `: ${chat.ticket.escalate_note}` : ''}</div>
-                  : null}
-              </div>
-            );
-          })() : (
-            <>
-              {pending.length > 0 && (
-                <div className="flex gap-2" style={{ overflowX: 'auto', paddingBottom: 8 }}>
-                  {pending.map((p) => (
-                    <div key={p.key} style={{ position: 'relative', flex: 'none', width: 68, height: 68, borderRadius: 10, border: `1px solid ${p.error ? 'var(--danger)' : 'var(--border)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
-                      {p.preview ? <img src={p.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.id ? 1 : 0.5 }} />
-                        : <div className="sub" style={{ padding: 6, fontSize: 10, wordBreak: 'break-all', lineHeight: 1.3 }}><FileText size={16} /><div style={{ maxHeight: 26, overflow: 'hidden' }}>{p.file.name}</div></div>}
-                      {!p.id && !p.error && <div style={{ position: 'absolute', left: 5, right: 5, bottom: 5, height: 3, background: 'rgba(0,0,0,0.5)', borderRadius: 2 }}><div style={{ width: `${Math.round(p.progress * 100)}%`, height: '100%', background: '#fff', borderRadius: 2 }} /></div>}
-                      {p.error && <div style={{ position: 'absolute', inset: 'auto 0 0 0', fontSize: 9, background: 'rgba(0,0,0,0.75)', color: 'var(--danger)', padding: '2px 3px' }}>{p.error}</div>}
-                      <button onClick={() => removePending(p.key)} title="Убрать" style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: 10, border: 'none', background: 'rgba(0,0,0,0.65)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}><X size={12} /></button>
+            const showStart = !chat.started_by_me && !(data.me.full && chat.ticket?.assigned_name);
+            const forceNote = !canWriteUser || !!editing?.internal;
+            const asNote = forceNote || noteMode;
+            const canNoteSend = !busy && text.trim().length > 0;
+            const noteComposer = (
+              <>
+                {editing && (
+                  <div className="flex items-center gap-3" style={{ padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #ff8a3d', background: 'rgba(255,107,26,0.08)', borderRadius: 8 }}>
+                    <Edit2 size={15} style={{ color: '#ff8a3d', flex: 'none' }} />
+                    <div style={{ minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => jumpTo(editing.id)}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#ff8a3d' }}>{editing.internal ? 'Редактирование комментария' : 'Редактирование сообщения'}</div>
+                      <div className="sub" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editing.text || (editing.files.length ? `📎 ${editing.files[0].name}` : '')}</div>
                     </div>
-                  ))}
-                </div>
-              )}
-              {!chat.started_by_me && chat.ticket?.assigned_name && (
-                <div className="sub" style={{ fontSize: 12, marginBottom: 8 }}>
-                  Обращение ведёт {chat.ticket.assigned_name}. Можно написать здесь или забрать его себе (⋯ вверху).
-                </div>
-              )}
-              {editing && (
-                <div className="flex items-center gap-3" style={{ padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #ff8a3d', background: 'rgba(255,107,26,0.08)', borderRadius: 8 }}>
-                  <Edit2 size={15} style={{ color: '#ff8a3d', flex: 'none' }} />
-                  <div style={{ minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => jumpTo(editing.id)}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#ff8a3d' }}>Редактирование сообщения</div>
-                    <div className="sub" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editing.text || (editing.files.length ? `📎 ${editing.files[0].name}` : '')}</div>
+                    <button className="icon-btn" style={{ width: 26, height: 26 }} title="Отменить (Esc)" onClick={cancelEdit}><X size={13} /></button>
                   </div>
-                  <button className="icon-btn" style={{ width: 26, height: 26 }} title="Отменить (Esc)" onClick={cancelEdit}><X size={13} /></button>
-                </div>
-              )}
-              {reply && (
-                <div className="flex items-center gap-3" style={{ padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #60a5fa', background: 'rgba(96,165,250,0.08)', borderRadius: 8 }}>
-                  <CornerUpLeft size={15} style={{ color: '#60a5fa', flex: 'none' }} />
-                  <div style={{ minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => jumpTo(reply.id)}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: '#60a5fa' }}>Ответ на сообщение {reply.sender === 'admin' ? 'поддержки' : 'пользователя'}</div>
-                    <div className="sub" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reply.text || (reply.files.length ? `📎 ${reply.files[0].name}` : '')}</div>
+                )}
+                {reply && (
+                  <div className="flex items-center gap-3" style={{ padding: '6px 10px', marginBottom: 8, borderLeft: '3px solid #ff8a3d', background: 'rgba(255,107,26,0.08)', borderRadius: 8 }}>
+                    <CornerUpLeft size={15} style={{ color: '#ff8a3d', flex: 'none' }} />
+                    <div style={{ minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => jumpTo(reply.id)}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#ff8a3d' }}>
+                        Ответ на {reply.internal ? 'комментарий' : reply.sender === 'admin' ? 'сообщение поддержки' : 'сообщение пользователя'}
+                      </div>
+                      <div className="sub" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{reply.text || (reply.files.length ? `📎 ${reply.files[0].name}` : '')}</div>
+                    </div>
+                    <button className="icon-btn" style={{ width: 26, height: 26 }} title="Отменить" onClick={() => setReply(null)}><X size={13} /></button>
                   </div>
-                  <button className="icon-btn" style={{ width: 26, height: 26 }} title="Отменить ответ" onClick={() => setReply(null)}><X size={13} /></button>
+                )}
+                {asNote && !editing && (
+                  <div className="flex items-center gap-2" style={{ fontSize: 12, color: '#ff8a3d', marginBottom: 8, fontWeight: 600 }}>
+                    <Lock size={13} /> Комментарий видят только сотрудники
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  {canWriteUser && !editing?.internal && (
+                    <>
+                      <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => addFiles(e.target.files)} />
+                      <button className="icon-btn" disabled={asNote} style={{ width: 42, height: 42, flex: 'none', opacity: asNote ? 0.35 : 1 }}
+                        title={asNote ? 'В комментарии файлы недоступны' : 'Прикрепить фото, видео или файл'}
+                        onClick={() => !asNote && fileRef.current?.click()}><Paperclip size={17} /></button>
+                      <button className={`icon-btn ${asNote ? '' : ''}`} style={{
+                        width: 42, height: 42, flex: 'none',
+                        background: asNote ? 'rgba(255,107,26,0.18)' : undefined,
+                        color: asNote ? '#ff8a3d' : undefined,
+                        border: asNote ? '1px solid rgba(255,107,26,0.45)' : undefined,
+                      }} title={asNote ? 'Переключить на ответ пользователю' : 'Комментарий для сотрудников'}
+                        onClick={() => { if (editing) return; setNoteMode((v) => !v); if (pending.length) setPending((p) => { p.forEach((x) => x.preview && URL.revokeObjectURL(x.preview)); return []; }); }}>
+                        <Lock size={17} />
+                      </button>
+                    </>
+                  )}
+                  <textarea className="input" rows={1} value={text}
+                    placeholder={asNote ? 'Комментарий для сотрудников…' : 'Ответ пользователю'}
+                    onChange={(e) => { setText(e.target.value.slice(0, limits.max_text)); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`; }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } if (e.key === 'Escape' && editing) cancelEdit(); }}
+                    style={{ flex: 1, minWidth: 0, resize: 'none', minHeight: 42, maxHeight: 160, lineHeight: 1.4, paddingTop: 10, paddingBottom: 10,
+                      borderColor: asNote ? 'rgba(255,107,26,0.45)' : undefined }} />
+                  <button className="btn solid" style={{ height: 42, flex: 'none', background: asNote && !editing ? '#ff6b1a' : undefined }}
+                    title={editing ? 'Сохранить' : asNote ? 'Отправить комментарий' : 'Отправить'}
+                    disabled={editing ? !!busy || (!text.trim() && !editing.files.length) : asNote ? !canNoteSend : !canSend}
+                    onClick={() => void send()}>
+                    {busy === 'send' || uploading ? <Spinner size={15} /> : editing ? <Save size={15} /> : <Send size={15} />}
+                  </button>
                 </div>
-              )}
-              <div className="flex items-end gap-2">
-                <input ref={fileRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => addFiles(e.target.files)} />
-                <button className="icon-btn" style={{ width: 42, height: 42, flex: 'none' }} title="Прикрепить фото, видео или файл" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
-                <textarea className="input" rows={1} value={text} placeholder="Ответ пользователю"
-                  onChange={(e) => { setText(e.target.value.slice(0, limits.max_text)); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`; }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } if (e.key === 'Escape' && editing) cancelEdit(); }}
-                  style={{ flex: 1, minWidth: 0, resize: 'none', minHeight: 42, maxHeight: 160, lineHeight: 1.4, paddingTop: 10, paddingBottom: 10 }} />
-                <button className="btn solid" style={{ height: 42, flex: 'none' }} title={editing ? 'Сохранить' : 'Отправить'}
-                  disabled={editing ? !!busy || (!text.trim() && !editing.files.length) : !canSend} onClick={() => void send()}>
-                  {busy === 'send' || uploading ? <Spinner size={15} /> : editing ? <Save size={15} /> : <Send size={15} />}
-                </button>
-              </div>
-            </>
-          )}
+              </>
+            );
+
+            // нет права писать пользователю: только комментарий (+ кнопка «Начать», если уместно)
+            if (!canWriteUser) {
+              if (taken && !data.me.full && chat.ticket?.status === 'open') {
+                // оператор смотрит чужой тикет (редко) — комментарии всё равно можно
+              }
+              return (
+                <div className="flex flex-col gap-3">
+                  {showStart && chat.ticket?.status === 'open' && (
+                    <button className="btn solid" style={{ width: '100%', justifyContent: 'center', padding: 12 }} disabled={busy === 'start'} onClick={() => void start(taken)}>
+                      {busy === 'start' ? <Spinner size={16} /> : <Play size={15} />} {taken ? 'Забрать обращение' : 'Начать'}
+                    </button>
+                  )}
+                  {taken && !data.me.full && (
+                    <div className="sub" style={{ fontSize: 12, textAlign: 'center' }}>Обращение ведёт {chat.ticket!.assigned_name}. Можно оставить комментарий для сотрудников.</div>
+                  )}
+                  {chat.ticket?.status !== 'open' && !data.me.full && (
+                    <div className="sub" style={{ fontSize: 12, textAlign: 'center' }}>Обращение закрыто. Можно оставить комментарий для сотрудников.</div>
+                  )}
+                  {chat.ticket?.escalated && !taken && (
+                    <div className="sub" style={{ fontSize: 12, textAlign: 'center' }}>Передано админу{chat.ticket.escalate_note ? `: ${chat.ticket.escalate_note}` : ''}</div>
+                  )}
+                  {noteComposer}
+                </div>
+              );
+            }
+
+            return (
+              <>
+                {pending.length > 0 && !asNote && (
+                  <div className="flex gap-2" style={{ overflowX: 'auto', paddingBottom: 8 }}>
+                    {pending.map((p) => (
+                      <div key={p.key} style={{ position: 'relative', flex: 'none', width: 68, height: 68, borderRadius: 10, border: `1px solid ${p.error ? 'var(--danger)' : 'var(--border)'}`, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
+                        {p.preview ? <img src={p.preview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.id ? 1 : 0.5 }} />
+                          : <div className="sub" style={{ padding: 6, fontSize: 10, wordBreak: 'break-all', lineHeight: 1.3 }}><FileText size={16} /><div style={{ maxHeight: 26, overflow: 'hidden' }}>{p.file.name}</div></div>}
+                        {!p.id && !p.error && <div style={{ position: 'absolute', left: 5, right: 5, bottom: 5, height: 3, background: 'rgba(0,0,0,0.5)', borderRadius: 2 }}><div style={{ width: `${Math.round(p.progress * 100)}%`, height: '100%', background: '#fff', borderRadius: 2 }} /></div>}
+                        {p.error && <div style={{ position: 'absolute', inset: 'auto 0 0 0', fontSize: 9, background: 'rgba(0,0,0,0.75)', color: 'var(--danger)', padding: '2px 3px' }}>{p.error}</div>}
+                        <button onClick={() => removePending(p.key)} title="Убрать" style={{ position: 'absolute', top: 3, right: 3, width: 20, height: 20, borderRadius: 10, border: 'none', background: 'rgba(0,0,0,0.65)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}><X size={12} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {!chat.started_by_me && chat.ticket?.assigned_name && (
+                  <div className="sub" style={{ fontSize: 12, marginBottom: 8 }}>
+                    Обращение ведёт {chat.ticket.assigned_name}. Можно ответить пользователю или оставить комментарий для сотрудников.
+                  </div>
+                )}
+                {noteComposer}
+              </>
+            );
+          })()}
         </div>
       </div>
     );

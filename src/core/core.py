@@ -7516,6 +7516,7 @@ class SupportMessageBody(BaseModel):
     text: Optional[str] = ""
     files: list[str] = Field(default_factory=list)
     reply_to: Optional[int] = None
+    internal: bool = False  # комментарий только для сотрудников
 
 
 @app.get("/api/app/support")
@@ -7972,6 +7973,14 @@ async def panel_support_upload(chat_id: int, request: Request, name: str = Query
 @app.post("/api/panel/support/chats/{chat_id}/messages")
 def panel_support_send(chat_id: int, body: SupportMessageBody, p: dict = Depends(require_panel)) -> dict[str, Any]:
     chat = _panel_chat(chat_id, p)
+    # внутренний комментарий: любой, кто видит чат (тикет брать не нужно)
+    if body.internal:
+        if body.files:
+            raise HTTPException(400, detail={"message": "К комментарию для сотрудников нельзя прикрепить файлы"})
+        msg = _sup(support.send_note, chat, p["name"], body.text or "", p["actor"], body.reply_to,
+                   quote_tickets=_visible_tickets(chat, p))
+        return _staff_view([msg], p)[0]
+
     _require_writer(chat, p)
     full = is_full(p)
     t = support.open_ticket(chat)
