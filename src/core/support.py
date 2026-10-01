@@ -182,14 +182,22 @@ def start(chat: dict[str, Any], actor: str, name: str, takeover: bool = False, g
         took = bool(t and t.get("assigned_admin") and t.get("assigned_admin") != actor)
         if not t:
             t = _new_ticket(chat, "admin", tx)
+        # юзеру «подключился» только один раз за тикет; смена ведущего — только сотрудникам
+        already = bool(tx.execute(
+            "SELECT 1 FROM support_messages WHERE ticket_id = ? AND sender = 'system' AND COALESCE(internal, 0) = 0 "
+            "AND text LIKE 'Специалист поддержки подключился%' LIMIT 1", (t["id"],)).fetchone())
         tx.execute("UPDATE support_tickets SET assigned_admin = ?, assigned_name = ?, escalated = 0 WHERE id = ?",
                    (actor, name, t["id"]))
         tx.execute("UPDATE support_chats SET assigned_admin = ?, assigned_name = ?, started_at = ? WHERE id = ?",
                    (actor, name, now, int(chat["id"])))
-        tx.execute("INSERT INTO support_messages (chat_id, ticket_id, sender, author, text, panel_text, created_at) "
-                   "VALUES (?, ?, 'system', ?, ?, ?, ?)",
-                   (int(chat["id"]), t["id"], name, "Специалист поддержки подключился к диалогу",
-                    f"{name} забрал тикет" if took else f"{name} подключился", now))
+        if took or already:
+            panel = f"{name} забрал тикет" if took else f"{name} подключился"
+            _internal_tx(tx, int(chat["id"]), t["id"], name, panel, now, panel)
+        else:
+            tx.execute("INSERT INTO support_messages (chat_id, ticket_id, sender, author, text, panel_text, created_at) "
+                       "VALUES (?, ?, 'system', ?, ?, ?, ?)",
+                       (int(chat["id"]), t["id"], name, "Специалист поддержки подключился к диалогу",
+                        f"{name} подключился", now))
     return {"ok": True, "changed": True}
 
 
