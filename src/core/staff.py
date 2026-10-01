@@ -58,6 +58,7 @@ ROUTES: list[tuple[set[str], re.Pattern, str]] = [
 
         (R, r"/team-chat", "any"),                 # team chat
         (R, r"/team-chat/unread", "any"),
+        (R, r"/team-chat/members", "any"),         # список для @упоминаний
         ("POST", r"/team-chat/(?:messages|read|messages/\d+/edit)", "any"),
         ("DELETE", r"/team-chat/messages/\d+", "any"),  # своё; чужое - владелец
 

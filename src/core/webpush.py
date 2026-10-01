@@ -218,20 +218,30 @@ def _actors_for(audience: str) -> list[str]:
 
 
 def send(audience: str, title: str, body: str, url: str = "/", tag: str = "", sync: bool = False,
-         exclude: Optional[str] = None) -> None:
-    """Отправить push. По умолчанию — в фоне (не задерживает ответ). exclude — кому не слать (автору)."""
+         exclude: Optional[str | list[str] | set[str] | tuple[str, ...]] = None,
+         only: Optional[list[str]] = None) -> None:
+    """Отправить push. По умолчанию — в фоне. exclude — кому не слать; only — явный список получателей."""
     payload = {"title": str(title)[:120], "body": str(body)[:400], "url": url if str(url).startswith("/") else "/",
                "tag": str(tag)[:60]}
+    if exclude is None:
+        excl: set[str] = set()
+    elif isinstance(exclude, str):
+        excl = {exclude}
+    else:
+        excl = {str(x) for x in exclude if x}
 
     def run() -> None:
         try:
-            actors = [a for a in _actors_for(audience) if a != exclude]
+            if only is not None:
+                actors = [a for a in only if a and a not in excl]
+            else:
+                actors = [a for a in _actors_for(audience) if a not in excl]
             if not actors:
                 return
             q = ",".join("?" * len(actors))
             for sub in db.fetchall(f"SELECT * FROM push_subs WHERE actor IN ({q})", tuple(actors)):
                 try:
-                    _send_one(sub, payload, "high" if audience != "owner" else "normal")
+                    _send_one(sub, payload, "high" if audience != "owner" or only is not None else "normal")
                 except Exception:  # noqa: BLE001
                     pass
         except Exception:  # noqa: BLE001

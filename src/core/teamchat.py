@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -24,6 +25,59 @@ def _clean(text: Any) -> str:
     # управляющие символы вон (кроме \n\t)
     s = "".join(ch for ch in s if ch in "\n\t" or ord(ch) >= 32)
     return s.strip()
+
+
+def members(owner_name: str = "Администратор") -> list[dict[str, Any]]:
+    """кого можно упомянуть через @."""
+    out = [{"actor": "owner", "name": owner_name, "username": "admin", "role": "owner"}]
+    for s in db.fetchall("SELECT id, username, name, role FROM panel_staff WHERE is_active = 1 ORDER BY role, id"):
+        name = (s.get("name") or "").strip() or s["username"]
+        out.append({"actor": f"staff:{int(s['id'])}", "name": name, "username": s["username"], "role": s["role"]})
+    return out
+
+
+def _mention_keys(m: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    for k in (m.get("name"), m.get("username")):
+        s = str(k or "").strip()
+        if s and s not in keys:
+            keys.append(s)
+    return keys
+
+
+def mentioned_actors(text: str, exclude: str = "") -> list[str]:
+    """actors, которых явно упомянули через @Имя или @username."""
+    t = str(text or "")
+    if "@" not in t:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    # длинные имена раньше, чтобы «Иван Петров» не съел «Иван»
+    cands: list[tuple[str, str]] = []
+    for m in members():
+        actor = m["actor"]
+        if actor == exclude or actor in seen:
+            continue
+        for key in _mention_keys(m):
+            cands.append((key, actor))
+    cands.sort(key=lambda x: len(x[0]), reverse=True)
+    used: list[tuple[int, int]] = []
+
+    def overlaps(a: int, b: int) -> bool:
+        return any(not (b <= x or a >= y) for x, y in used)
+
+    for key, actor in cands:
+        if actor in seen:
+            continue
+        for m in re.finditer(r"(?<![\w@])@" + re.escape(key) + r"(?=$|[\s,.!?;:)\]])", t, flags=re.IGNORECASE | re.UNICODE):
+            a, b = m.start(), m.end()
+            if overlaps(a, b):
+                continue
+            used.append((a, b))
+            seen.add(actor)
+            found.append(actor)
+            break
+    return found
 
 
 def _row(r: dict[str, Any], actor: str) -> dict[str, Any]:

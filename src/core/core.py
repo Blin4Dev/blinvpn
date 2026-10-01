@@ -7753,6 +7753,12 @@ def panel_team_chat(after: int = Query(0, ge=0, le=2 ** 62), before: int = Query
             "me": {"actor": p["actor"], "owner": p["kind"] == "owner"}}
 
 
+@app.get("/api/panel/team-chat/members")
+def panel_team_members(_: dict = Depends(require_panel)) -> dict[str, Any]:
+    """активные сотрудники + админ — для @упоминаний в чате."""
+    return {"members": teamchat.members(OWNER_NAME)}
+
+
 @app.get("/api/panel/team-chat/unread")
 def panel_team_unread(p: dict = Depends(require_panel)) -> dict[str, Any]:
     return {"unread": teamchat.unread(p["actor"])}
@@ -7766,7 +7772,16 @@ def panel_team_post(body: TeamMessageBody, p: dict = Depends(require_panel)) -> 
     name = p.get("name") or ("Администратор" if p["kind"] == "owner" else p.get("username") or "")
     m = _team_call(teamchat.post, p["actor"], name, _team_role(p), body.text, body.reply_to)
     try:
-        webpush.send("all", f"Чат сотрудников · {name}", m["text"][:140], url="/support/team", tag="team-chat", exclude=p["actor"])
+        mentioned = teamchat.mentioned_actors(m["text"], exclude=p["actor"])
+        preview = m["text"][:140]
+        if mentioned:
+            webpush.send("all", f"{name} упомянул вас", preview, url="/support/team", tag="team-mention",
+                         only=mentioned)
+            webpush.send("all", f"Чат сотрудников · {name}", preview, url="/support/team", tag="team-chat",
+                         exclude=[p["actor"], *mentioned])
+        else:
+            webpush.send("all", f"Чат сотрудников · {name}", preview, url="/support/team", tag="team-chat",
+                         exclude=p["actor"])
     except Exception:  # noqa: BLE001
         pass
     return m
