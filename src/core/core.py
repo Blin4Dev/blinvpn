@@ -7608,15 +7608,19 @@ def support_file(fid: str, exp: int = Query(0), sig: str = Query("", max_length=
 
 
 def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
-    """что видит сотрудник: владелец/куратор все; оператор — любые открытые (кроме переданных админу)."""
+    """что видит сотрудник: владелец/куратор все; оператор — пул и свои (чужие взятые и эскалации скрыты)."""
     if is_full(p):
         return True
     if t is False:
         t = support.ticket_info(c)
     if not t or t["status"] != "open":
         return False
-    # переданные админу оператору не показываем
-    return not t.get("escalated")
+    if t.get("escalated"):
+        return False
+    assigned = t.get("assigned_admin")
+    if assigned and assigned != p["actor"]:
+        return False
+    return True
 
 
 def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[int]]:
@@ -7626,8 +7630,8 @@ def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[in
     ids = {int(r["id"]) for r in db.fetchall("SELECT id FROM support_tickets WHERE chat_id = ? AND assigned_admin = ?",
                                             (int(chat["id"]), p["actor"]))}
     t = support.open_ticket(chat)
-    # открытое (в т.ч. чужое) — чтобы читать переписку и писать комментарии
-    if t and not t.get("escalated"):
+    # открытое без исполнителя — пул (можно читать и писать комментарии)
+    if t and not t.get("escalated") and not t.get("assigned_admin"):
         ids.add(int(t["id"]))
     return ids
 
@@ -7638,6 +7642,7 @@ def _tab_of(c: dict[str, Any], t: Optional[dict[str, Any]], p: dict[str, Any]) -
         return "archive"
     mine = t.get("assigned_admin") == p["actor"]
     if not is_full(p):
+        # у оператора open = только пул; чужие взятые сюда не попадают (_chat_visible)
         return "mine" if mine else "open"
     if not t.get("assigned_admin") and not t.get("escalated"):
         return "open"
