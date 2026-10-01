@@ -7604,15 +7604,16 @@ def support_file(fid: str, exp: int = Query(0), sig: str = Query("", max_length=
 
 
 def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
-    """что видит сотрудник: владелец/куратор все; оператор — любые открытые (кроме переданных админу)."""
+    """что видит сотрудник: владелец/куратор все; оператор пул."""
     if is_full(p):
         return True
     if t is False:
         t = support.ticket_info(c)
     if not t or t["status"] != "open":
         return False
-    # переданные админу оператору не показываем
-    return not t.get("escalated")
+    if t.get("assigned_admin") == p["actor"]:
+        return True
+    return not t.get("assigned_admin") and not t.get("escalated")
 
 
 def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[int]]:
@@ -7622,8 +7623,7 @@ def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[in
     ids = {int(r["id"]) for r in db.fetchall("SELECT id FROM support_tickets WHERE chat_id = ? AND assigned_admin = ?",
                                             (int(chat["id"]), p["actor"]))}
     t = support.open_ticket(chat)
-    # открытое (в т.ч. чужое) — чтобы читать переписку и писать комментарии
-    if t and not t.get("escalated"):
+    if t and (t.get("assigned_admin") == p["actor"] or (not t.get("assigned_admin") and not t.get("escalated"))):
         ids.add(int(t["id"]))
     return ids
 
