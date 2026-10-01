@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { PageHead, Spinner } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
-import { Day, hoursText, money, monthEnd, monthStart, MonthCalendar, ruDate, ShiftBadge, StatBox } from './common';
+import { addDays, Day, hoursText, money, monthEnd, monthStart, MonthCalendar, ruDate, ShiftBadge, StatBox } from './common';
 
 // свой график, начисления, штрафы, выплаты
 export const SalaryPage: React.FC = () => {
@@ -10,7 +10,7 @@ export const SalaryPage: React.FC = () => {
   const [month, setMonth] = useState<string | null>(null);
   const [days, setDays] = useState<Record<string, Day>>({});
   const load = useCallback((m?: string) => {
-    const q = m ? `?from=${monthStart(m)}&to=${monthEnd(m)}` : '';
+    const q = m ? `?from=${addDays(monthStart(m), -1)}&to=${monthEnd(m)}` : '';
     apiFetch(`/panel/me/salary${q}`).then((r) => {
       setD(r); if (!m) setMonth(monthStart(r.today));
       setDays(Object.fromEntries((r.schedule as Day[]).map((x) => [x.day, x])));

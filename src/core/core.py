@@ -2594,7 +2594,11 @@ def panel_my_salary(date_from: Optional[str] = Query(None, alias="from", max_len
         raise HTTPException(404, detail={"message": "Только для сотрудников"})
     sid = int(p["staff_id"])
     t = staffpay.today_msk()
-    a, b = _range(date_from, date_to) if date_from and date_to else (t.replace(day=1), t + timedelta(days=45))
+    if date_from and date_to:
+        a, b = _range(date_from, date_to)
+    else:
+        # день до 1-го — чтобы хвост смены через полночь был виден в календаре
+        a, b = t.replace(day=1) - timedelta(days=1), t + timedelta(days=45)
     return {**staffpay.ledger(sid), "schedule": _staff_call(staffpay.schedule, sid, a, b), "today": t.isoformat(),
             "shift": staffpay.shift_now(sid)}
 
@@ -7604,16 +7608,15 @@ def support_file(fid: str, exp: int = Query(0), sig: str = Query("", max_length=
 
 
 def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
-    """что видит сотрудник: владелец/куратор все; оператор пул."""
+    """что видит сотрудник: владелец/куратор все; оператор — любые открытые (кроме переданных админу)."""
     if is_full(p):
         return True
     if t is False:
         t = support.ticket_info(c)
     if not t or t["status"] != "open":
         return False
-    if t.get("assigned_admin") == p["actor"]:
-        return True
-    return not t.get("assigned_admin") and not t.get("escalated")
+    # переданные админу оператору не показываем
+    return not t.get("escalated")
 
 
 def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[int]]:
@@ -7623,7 +7626,8 @@ def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[in
     ids = {int(r["id"]) for r in db.fetchall("SELECT id FROM support_tickets WHERE chat_id = ? AND assigned_admin = ?",
                                             (int(chat["id"]), p["actor"]))}
     t = support.open_ticket(chat)
-    if t and (t.get("assigned_admin") == p["actor"] or (not t.get("assigned_admin") and not t.get("escalated"))):
+    # открытое (в т.ч. чужое) — чтобы читать переписку и писать комментарии
+    if t and not t.get("escalated"):
         ids.add(int(t["id"]))
     return ids
 

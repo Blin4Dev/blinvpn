@@ -6,7 +6,7 @@ import { isOwner, useMe } from '../../lib/access';
 import { fmtDateTime } from '../../lib/format';
 import type { ToastType } from '../../lib/types';
 import {
-  addDays, Day, hoursText, Interval, IntervalsEditor, money, monthEnd, monthStart, MonthCalendar, ROLE_RU, ruDate, ShiftBadge, StatBox, WEEK,
+  addDays, Day, hoursText, Interval, IntervalsEditor, money, monthEnd, monthStart, MonthCalendar, ROLE_RU, ruDate, ShiftBadge, spillFromPrev, StatBox, WEEK,
 } from './common';
 
 type Toast = (t: string, m: string, ty: ToastType) => void;
@@ -92,7 +92,7 @@ const StaffEditor: React.FC<{ staff: Staff | null; onClose: () => void; onSaved:
 };
 
 // день графика
-const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staffId, day, cur, onClose, onSaved, onToast }) => {
+const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; spill?: Interval[]; onClose: () => void; onSaved: () => void; onToast: Toast }> = ({ staffId, day, cur, spill, onClose, onSaved, onToast }) => {
   const [working, setWorking] = useState(!!cur);
   const [iv, setIv] = useState<Interval[]>(cur?.intervals?.length ? cur.intervals : [['10:00', '19:00']]);
   const [pay, setPay] = useState(String(cur?.pay ?? ''));
@@ -108,6 +108,11 @@ const DayModal: React.FC<{ staffId: number; day: string; cur?: Day; onClose: () 
     <Modal onClose={onClose} title={ruDate(day)} icon={CalendarRange} width={480}
       footer={<><button className="btn" onClick={onClose}>Отмена</button><button className="btn solid" disabled={busy} onClick={save}>{busy ? <Spinner size={15} /> : <Save size={15} />} Сохранить</button></>}>
       <div className="flex flex-col gap-4">
+        {!!spill?.length && (
+          <div className="sub" style={{ fontSize: 13 }}>
+            До {spill[0][1]} продолжается смена со вчера (оплата вчерашнего дня). Новую смену начинайте не раньше {spill[0][1]}.
+          </div>
+        )}
         <div className="flex items-center justify-between"><span style={{ fontWeight: 500 }}>Рабочий день</span><Toggle on={working} onChange={() => setWorking(!working)} /></div>
         {working && (<>
           <IntervalsEditor value={iv} onChange={setIv} />
@@ -243,7 +248,7 @@ const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myAct
     const [payNote, setPayNote] = useState('');
 
     const loadDays = useCallback(() => {
-      apiFetch(`/panel/staff/${staff.id}/schedule?from=${monthStart(month)}&to=${monthEnd(month)}`)
+      apiFetch(`/panel/staff/${staff.id}/schedule?from=${addDays(monthStart(month), -1)}&to=${monthEnd(month)}`)
         .then((r) => setDays(Object.fromEntries((r.days as Day[]).map((d) => [d.day, d])))).catch(() => setDays({}));
     }, [staff.id, month]);
     const loadMoney = useCallback(() => {
@@ -365,7 +370,7 @@ const StaffDetail: React.FC<{ staff: Staff; today: string; owner: boolean; myAct
           </div>
         )}
 
-        {dayEdit && <DayModal staffId={staff.id} day={dayEdit} cur={days[dayEdit]} onToast={onToast} onClose={() => setDayEdit(null)} onSaved={() => { setDayEdit(null); loadDays(); loadMoney(); onChanged(); }} />}
+        {dayEdit && <DayModal staffId={staff.id} day={dayEdit} cur={days[dayEdit]} spill={spillFromPrev(days[addDays(dayEdit, -1)])} onToast={onToast} onClose={() => setDayEdit(null)} onSaved={() => { setDayEdit(null); loadDays(); loadMoney(); onChanged(); }} />}
         {bulk && <BulkModal staffId={staff.id} today={today} onToast={onToast} onClose={() => setBulk(false)} onSaved={(n) => { setBulk(false); loadDays(); onChanged(); onToast('График', `Заполнено рабочих дней: ${n}`, 'success'); }} />}
         {fineOpen && <FineModal staff={staff} onToast={onToast} onClose={() => setFineOpen(false)} onSaved={() => { setFineOpen(false); loadMoney(); onChanged(); onToast('Штраф', 'Штраф выдан', 'success'); }} />}
         {bonusOpen && <FineModal bonus staff={staff} onToast={onToast} onClose={() => setBonusOpen(false)} onSaved={() => { setBonusOpen(false); loadMoney(); onChanged(); onToast('Премия', 'Премия начислена', 'success'); }} />}

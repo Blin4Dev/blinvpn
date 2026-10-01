@@ -17,10 +17,18 @@ export const monthStart = (s: string) => s.slice(0, 8) + '01';
 export const monthEnd = (s: string) => { const d = parseYmd(monthStart(s)); d.setMonth(d.getMonth() + 1); d.setDate(0); return ymd(d); };
 export const shiftMonth = (s: string, n: number) => { const d = parseYmd(monthStart(s)); d.setMonth(d.getMonth() + n); return ymd(d); };
 export const ruDate = (s: string) => { const d = parseYmd(s); return `${d.getDate()} ${['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'][d.getMonth()]}`; };
-export const hoursText = (iv: Interval[]) => iv.map(([a, b]) => `${a}–${b}`).join(', ');
-export const workedMinutes = (iv: Interval[]) => iv.reduce((s, [a, b]) => s + (toMin(b) - toMin(a)), 0);
 const toMin = (hm: string) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
 const fromMin = (m: number) => { const x = Math.min(m, 1439); return `${pad(Math.floor(x / 60))}:${pad(x % 60)}`; };
+/** конец раньше начала → смена через полночь */
+export const wrapsMidnight = (a: string, b: string) => toMin(b) < toMin(a);
+export const intervalMinutes = (a: string, b: string) => {
+  const ma = toMin(a), mb = toMin(b);
+  return mb > ma ? mb - ma : 24 * 60 - ma + mb;
+};
+export const hoursText = (iv: Interval[]) => iv.map(([a, b]) => wrapsMidnight(a, b) ? `${a}–${b} (+1)` : `${a}–${b}`).join(', ');
+export const workedMinutes = (iv: Interval[]) => iv.reduce((s, [a, b]) => s + intervalMinutes(a, b), 0);
+export const spillFromPrev = (prev?: Day | null): Interval[] =>
+  (prev?.intervals || []).filter(([a, b]) => wrapsMidnight(a, b)).map(([, b]) => ['00:00', b] as Interval);
 export const money = (n: number) => fmtMoney(Number(n || 0));
 
 export const ShiftBadge: React.FC<{ shift?: { working_today: boolean; on_shift: boolean; intervals: string[][] } }> = ({ shift }) => {
@@ -29,27 +37,34 @@ export const ShiftBadge: React.FC<{ shift?: { working_today: boolean; on_shift: 
   return <span className={`badge ${shift.on_shift ? 'solid' : 'mute'}`}>{shift.on_shift ? 'на смене' : 'сегодня'} · {hoursText(shift.intervals as Interval[])}</span>;
 };
 
-// части рабочего дня (+ перерыв = ещё одна часть)
+// части рабочего дня (+ перерыв = ещё одна часть); конец < начала = через полночь
 export const IntervalsEditor: React.FC<{ value: Interval[]; onChange: (v: Interval[]) => void }> = ({ value, onChange }) => {
   const set = (i: number, j: 0 | 1, v: string) => onChange(value.map((x, k) => (k === i ? (j === 0 ? [v, x[1]] : [x[0], v]) : x)) as Interval[]);
+  const lastWraps = value.length > 0 && wrapsMidnight(value[value.length - 1][0], value[value.length - 1][1]);
   const addBreak = () => {
+    if (lastWraps) return;
     const last = value[value.length - 1];
     const start = last ? Math.min(toMin(last[1]) + 60, 23 * 60) : 10 * 60;
     onChange([...value, [fromMin(start), fromMin(start + 180)]]);
   };
+  const total = workedMinutes(value);
   return (
     <div className="flex flex-col gap-2">
       {value.map((x, i) => (
-        <div key={i} className="flex items-center gap-2">
+        <div key={i} className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
           <span className="sub" style={{ width: 70, fontSize: 12 }}>{i === 0 ? 'Работа' : `Часть ${i + 1}`}</span>
           <input className="input" type="time" value={x[0]} onChange={(e) => set(i, 0, e.target.value)} style={{ width: 120 }} />
           <span className="sub">—</span>
           <input className="input" type="time" value={x[1] === '24:00' ? '23:59' : x[1]} onChange={(e) => set(i, 1, e.target.value)} style={{ width: 120 }} />
+          {wrapsMidnight(x[0], x[1]) && <span className="faint" style={{ fontSize: 11 }}>через полночь</span>}
           {value.length > 1 && <button className="icon-btn" title="Убрать часть" onClick={() => onChange(value.filter((_, k) => k !== i))}><Trash2 size={14} /></button>}
         </div>
       ))}
-      <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={addBreak} disabled={value.length >= 8}><Plus size={13} /> Перерыв (ещё часть дня)</button>
-      <div className="faint" style={{ fontSize: 12 }}>Время московское. Всего: {Math.floor(workedMinutes(value) / 60)} ч {workedMinutes(value) % 60 ? `${workedMinutes(value) % 60} мин` : ''}</div>
+      <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={addBreak} disabled={value.length >= 8 || lastWraps}><Plus size={13} /> Перерыв (ещё часть дня)</button>
+      <div className="faint" style={{ fontSize: 12 }}>
+        Время московское. Если конец раньше начала — смена через полночь (оплата только за этот день).
+        Всего: {Math.floor(total / 60)} ч {total % 60 ? `${total % 60} мин` : ''}
+      </div>
     </div>
   );
 };
@@ -82,18 +97,21 @@ export const MonthCalendar: React.FC<{
         {cells.map((c, i) => {
           if (!c) return <div key={i} />;
           const d = days[c];
+          const spill = spillFromPrev(days[addDays(c, -1)]);
           const past = c < today;
+          const has = !!(d || spill.length);
           return (
             <button key={c} onClick={onDay ? () => onDay(c) : undefined} disabled={!onDay}
               style={{
                 minHeight: 74, padding: 6, textAlign: 'left', borderRadius: 10, font: 'inherit', color: 'inherit', cursor: onDay ? 'pointer' : 'default',
                 border: c === today ? '1px solid #fff' : '1px solid var(--border)', opacity: past ? 0.55 : 1,
-                background: d ? 'rgba(255,255,255,0.08)' : 'transparent', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
+                background: has ? 'rgba(255,255,255,0.08)' : 'transparent', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
               }}>
               <span style={{ fontSize: 12, fontWeight: 600 }}>{parseYmd(c).getDate()}</span>
-              {d ? (<>
-                {d.intervals.map(([a, b], k) => <span key={k} style={{ fontSize: 10.5, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}–{b}</span>)}
-                {showPay && d.pay != null && <span className="faint" style={{ fontSize: 10.5 }}>{money(d.pay)}</span>}
+              {has ? (<>
+                {spill.map(([a, b], k) => <span key={`s${k}`} className="faint" style={{ fontSize: 10.5, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}–{b} ←</span>)}
+                {d?.intervals.map(([a, b], k) => <span key={k} style={{ fontSize: 10.5, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{wrapsMidnight(a, b) ? `${a}–${b} +1` : `${a}–${b}`}</span>)}
+                {showPay && d?.pay != null && <span className="faint" style={{ fontSize: 10.5 }}>{money(d.pay)}</span>}
               </>) : <span className="faint" style={{ fontSize: 10.5 }}>выходной</span>}
             </button>
           );
