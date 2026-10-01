@@ -2971,13 +2971,14 @@ def panel_users(
     search: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
-    _: dict = Depends(require_panel),
+    p: dict = Depends(require_panel),
 ) -> dict[str, Any]:
     items = _filter_users(search or q, status)
     page_data = paginate(items, limit, offset if offset else (page - 1) * limit)
     page_items = page_data["items"]
     # сумма успешных платежей пачкой (не n+1)
     revenue_map: dict[int, float] = {}
+    manage_ids: Optional[set[int]] = None  # None = полный доступ (owner/curator)
     if page_items:
         ids = [int(u["id"]) for u in page_items]
         placeholders = ",".join("?" * len(ids))
@@ -2989,9 +2990,21 @@ def panel_users(
         )
         for r in rows:
             revenue_map[int(r["user_id"])] = float(r["s"] or 0)
+        if not is_full(p):
+            manage_ids = {
+                int(r["user_id"]) for r in db.fetchall(
+                    f"SELECT c.user_id FROM support_chats c "
+                    f"JOIN support_tickets t ON t.id = c.open_ticket_id "
+                    f"WHERE c.user_id IN ({placeholders}) AND t.status = 'open' AND t.assigned_admin = ?",
+                    (*ids, p["actor"]),
+                )
+            }
     return {
         "items": [
-            serialize_user(u, revenue=revenue_map.get(int(u["id"]), 0.0))
+            {
+                **serialize_user(u, revenue=revenue_map.get(int(u["id"]), 0.0)),
+                "can_manage": manage_ids is None or int(u["id"]) in manage_ids,
+            }
             for u in page_items
         ],
         "total": page_data["total"],

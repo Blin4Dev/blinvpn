@@ -274,7 +274,7 @@ export function AuthenticatedApp({ onLogout, me }: { onLogout: () => void; me: M
               <div>Нет доступа к этому разделу</div>
             </div>
           ) : detailUserId != null ? (
-            <UserDetailPage userId={detailUserId} onBack={() => setDetailUserId(null)} onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} />
+            <UserDetailPage userId={detailUserId} onBack={() => setDetailUserId(null)} onToast={addToast} onOpenUser={(id) => setDetailUserId(id)} canEdit={!readOnly} />
           ) : (
             <>
               {activePage === 'Главная' && <Dashboard onNavigate={(p) => { setActivePage(p); setMonNodeId(null); }} onOpenUser={(id) => setDetailUserId(id)} />}

@@ -20,6 +20,7 @@ export interface User {
   regDate: string; paidUntil: string; refCode: string; isPartner: boolean;
   partnerBalance: number; partnerRate: number;
   referrals: number; inBlacklist: boolean; revenue: number; noRenew: boolean;
+  canManage?: boolean;
 }
 
 export interface KeyItem {

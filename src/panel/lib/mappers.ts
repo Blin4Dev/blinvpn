@@ -17,5 +17,6 @@ export function mapApiUser(u: any): User {
     inBlacklist: !!u.in_blacklist,
     revenue: Number(u.revenue ?? 0),
     noRenew: !!u.no_renew,
+    canManage: u.can_manage !== false,
   };
 }

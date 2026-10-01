@@ -85,7 +85,7 @@ export const UsersPage: React.FC<{
                         <td style={{ fontWeight: 600 }}>{user.partnerBalance} ₽</td>
                         <td className="muted">{user.paidUntil}</td>
                         <td><span className={`badge ${st.cls}`}>{st.label}</span>{user.partnerRate !== DEFAULT_REF_RATE && <span className="badge mute" style={{ marginLeft: 6 }} title="Индивидуальный процент реферальной программы">Реф. {user.partnerRate}%</span>}{user.noRenew && <span className="badge line" style={{ marginLeft: 6 }}>Без продления</span>}</td>
-                        <td style={{ textAlign: 'right' }}><span className="icon-btn" style={{ display: 'inline-flex' }}><Settings size={15} /></span></td>
+                        <td style={{ textAlign: 'right' }}>{user.canManage !== false && <span className="icon-btn" style={{ display: 'inline-flex' }}><Settings size={15} /></span>}</td>
                       </tr>
                     );
                   })}
