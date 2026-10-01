@@ -334,3 +334,82 @@ a { color: inherit; }
 @media (max-width: 767px) {
   .input, .select, .textarea, textarea, input, select { font-size: 16px; }
 }
+
+/* календарь графика сотрудников */
+.staff-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+.staff-cal-wd {
+  font-size: 11px;
+  text-align: center;
+  color: var(--faint);
+  padding-bottom: 2px;
+}
+.staff-cal-wd.weekend { color: var(--danger); }
+.staff-cal-day {
+  min-width: 0;
+  min-height: 72px;
+  padding: 5px;
+  text-align: left;
+  border-radius: 10px;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  border: 1px solid var(--border);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  overflow: hidden;
+}
+.staff-cal-day.clickable { cursor: pointer; }
+.staff-cal-day.work { background: rgba(255, 255, 255, 0.08); }
+.staff-cal-day.today { border-color: #fff; }
+.staff-cal-day.past { opacity: 0.55; }
+.staff-cal-day:disabled { opacity: inherit; }
+.staff-cal-num { font-size: 12px; font-weight: 600; line-height: 1.2; }
+.staff-cal-dot { display: none; }
+.staff-cal-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--muted, var(--faint));
+}
+.staff-cal-meta > span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staff-cal-pay { color: var(--faint); }
+
+@media (max-width: 767px) {
+  .staff-cal-grid { gap: 3px; }
+  .staff-cal-wd { font-size: 10px; letter-spacing: -0.02em; }
+  .staff-cal-day {
+    min-height: 48px;
+    padding: 4px 2px 6px;
+    border-radius: 8px;
+    align-items: center;
+    text-align: center;
+    gap: 3px;
+  }
+  .staff-cal-num { font-size: 13px; }
+  .staff-cal-meta { display: none; }
+  .staff-cal-day.work .staff-cal-dot {
+    display: block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent, #6ea8fe);
+    flex-shrink: 0;
+  }
+}

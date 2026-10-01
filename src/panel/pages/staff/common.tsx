@@ -69,7 +69,13 @@ export const IntervalsEditor: React.FC<{ value: Interval[]; onChange: (v: Interv
   );
 };
 
-// месяц: рабочие дни (+ оплата, если showPay)
+const shortHm = (hm: string) => hm.replace(/^0/, '').replace(/:00$/, '') || '0';
+const shortIv = (a: string, b: string) => {
+  const t = `${shortHm(a)}–${shortHm(b)}`;
+  return wrapsMidnight(a, b) ? `${t}+` : t;
+};
+
+// месяц: рабочие дни (+ оплата на десктопе, если showPay)
 export const MonthCalendar: React.FC<{
   month: string; today: string; days: Record<string, Day>; showPay?: boolean;
   onMonth: (m: string) => void; onDay?: (day: string) => void;
@@ -81,38 +87,61 @@ export const MonthCalendar: React.FC<{
   while (cells.length % 7) cells.push(null);
   const work = Object.values(days).filter((d) => d.day.slice(0, 7) === month.slice(0, 7));
   return (
-    <div>
+    <div className="staff-cal">
       <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
         <button className="icon-btn" onClick={() => onMonth(shiftMonth(month, -1))}><ChevronLeft size={16} /></button>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', minWidth: 0, padding: '0 6px' }}>
           <div style={{ fontWeight: 600 }}>{MONTHS[first.getMonth()]} {first.getFullYear()}</div>
           <div className="faint" style={{ fontSize: 12 }}>
-            рабочих дней: {work.length}{showPay ? ` · ${money(work.reduce((s, d) => s + (d.pay || 0), 0))}` : ''}
+            {work.length} раб.{showPay ? ` · ${money(work.reduce((s, d) => s + (d.pay || 0), 0))}` : ''}
           </div>
         </div>
         <button className="icon-btn" onClick={() => onMonth(shiftMonth(month, 1))}><ChevronRight size={16} /></button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 6 }}>
-        {WEEK.map((w, i) => <div key={w} className="faint" style={{ fontSize: 11, textAlign: 'center', color: i > 4 ? 'var(--danger)' : undefined }}>{w}</div>)}
+      <div className="staff-cal-grid">
+        {WEEK.map((w, i) => (
+          <div key={w} className={`staff-cal-wd${i > 4 ? ' weekend' : ''}`}>{w}</div>
+        ))}
         {cells.map((c, i) => {
-          if (!c) return <div key={i} />;
+          if (!c) return <div key={i} className="staff-cal-empty" />;
           const d = days[c];
           const spill = spillFromPrev(days[addDays(c, -1)]);
           const past = c < today;
           const has = !!(d || spill.length);
+          const lines = [
+            ...spill.map(([, b]) => `–${shortHm(b)}`),
+            ...(d?.intervals || []).map(([a, b]) => shortIv(a, b)),
+          ];
+          const tip = has
+            ? [...spill.map(([a, b]) => `${a}–${b}`), ...(d?.intervals || []).map(([a, b]) => `${a}–${b}`), showPay && d?.pay != null ? money(d.pay) : '']
+                .filter(Boolean).join('\n')
+            : undefined;
           return (
-            <button key={c} onClick={onDay ? () => onDay(c) : undefined} disabled={!onDay}
-              style={{
-                minHeight: 74, padding: 6, textAlign: 'left', borderRadius: 10, font: 'inherit', color: 'inherit', cursor: onDay ? 'pointer' : 'default',
-                border: c === today ? '1px solid #fff' : '1px solid var(--border)', opacity: past ? 0.55 : 1,
-                background: has ? 'rgba(255,255,255,0.08)' : 'transparent', display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
-              }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{parseYmd(c).getDate()}</span>
-              {has ? (<>
-                {spill.map(([a, b], k) => <span key={`s${k}`} className="faint" style={{ fontSize: 10.5, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}–{b} ←</span>)}
-                {d?.intervals.map(([a, b], k) => <span key={k} style={{ fontSize: 10.5, lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{wrapsMidnight(a, b) ? `${a}–${b} +1` : `${a}–${b}`}</span>)}
-                {showPay && d?.pay != null && <span className="faint" style={{ fontSize: 10.5 }}>{money(d.pay)}</span>}
-              </>) : <span className="faint" style={{ fontSize: 10.5 }}>выходной</span>}
+            <button
+              key={c}
+              type="button"
+              className={[
+                'staff-cal-day',
+                has ? 'work' : '',
+                c === today ? 'today' : '',
+                past ? 'past' : '',
+                onDay ? 'clickable' : '',
+              ].filter(Boolean).join(' ')}
+              onClick={onDay ? () => onDay(c) : undefined}
+              disabled={!onDay}
+              title={tip}
+            >
+              <span className="staff-cal-num">{parseYmd(c).getDate()}</span>
+              {has && (
+                <>
+                  <span className="staff-cal-dot" aria-hidden />
+                  <span className="staff-cal-meta">
+                    {lines.slice(0, 2).map((t, k) => <span key={k}>{t}</span>)}
+                    {lines.length > 2 && <span>…</span>}
+                    {showPay && d?.pay != null && <span className="staff-cal-pay">{money(d.pay)}</span>}
+                  </span>
+                </>
+              )}
             </button>
           );
         })}
