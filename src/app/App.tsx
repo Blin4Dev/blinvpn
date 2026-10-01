@@ -15,7 +15,7 @@ import LegalDocument from "./pages/LegalDocument";
 import Authentication from "./pages/Authentication";
 import ChannelGate from "./pages/ChannelGate";
 import SetupPrompt from "./components/SetupPrompt";
-import { LoadingScreen } from "./components/ui";
+import { BrandSplash } from "./components/ui";
 import { AppErrorProvider } from "./components/ErrorModal";
 import Support from "./pages/Support";
 import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, type Membership } from "./utils/api";
@@ -156,7 +156,7 @@ export default function App() {
     };
   }, [auth]);
 
-  if (auth === "checking") return <LoadingScreen />;
+  if (auth === "checking") return <BrandSplash />;
   if (auth === "anon") return <Authentication onAuthed={() => setAuth("authed")} />;
 
   // рисуем приложение; канал — оверлей

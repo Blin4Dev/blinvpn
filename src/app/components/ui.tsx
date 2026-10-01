@@ -519,6 +519,38 @@ export function LoadingScreen({ text = "Загрузка…" }: { text?: string 
   );
 }
 
+/** сплэш входа: логотип по центру на чёрном, без спиннера */
+export function BrandSplash() {
+  return (
+    <div style={pageOuter()}>
+      <div
+        style={{
+          ...pageFrame(),
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <img
+          src="/assets/logo.png"
+          width={200}
+          height={200}
+          alt="BlinVPN"
+          draggable={false}
+          style={{
+            width: "min(200px, 42vh)",
+            height: "min(200px, 42vh)",
+            maxWidth: 200,
+            maxHeight: 200,
+            objectFit: "contain",
+            userSelect: "none",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // карточка с нормальными отступами (у Surface padded всего 4px)
 export function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (

@@ -13,21 +13,19 @@
       html, body { margin: 0; background: #14110E; }
       #blin-boot {
         position: fixed; inset: 0; z-index: 9999;
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 18px; background: #14110E; font-family: 'Outfit', system-ui, sans-serif;
+        display: flex; align-items: center; justify-content: center;
+        background: #14110E;
       }
-      #blin-boot .sp {
-        width: 52px; height: 52px; border-radius: 50%;
-        border: 4px solid rgba(255,107,26,0.18); border-top-color: #FF6B1A;
-        animation: blinboot 0.85s linear infinite;
+      #blin-boot img {
+        width: min(200px, 42vh); height: min(200px, 42vh);
+        max-width: 200px; max-height: 200px;
+        object-fit: contain;
       }
-      #blin-boot .tx { color: #FFF8F0; font-size: 15px; font-weight: 600; opacity: .85; }
-      @keyframes blinboot { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <div id="blin-boot"><div class="sp"></div><div class="tx">Загрузка…</div></div>
+    <div id="blin-boot"><img src="/assets/logo.png" alt="" width="200" height="200" /></div>
     <!-- Vite root теперь src/app, поэтому путь локальный -->
     <script type="module" src="/main.tsx"></script>
   </body>
