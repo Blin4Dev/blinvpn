@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 import database as db  # type: ignore
 
 SURVEY_DISCOUNT_PERCENT = 5  # скидка за опрос (стекается)
+SURVEY_DISCOUNT_HOURS = 48  # действует 48 часов после прохождения
 
 EMOJI_INVITE = "5460795800101594035"
 EMOJI_BUTTON = "5443038326535759644"
@@ -224,9 +226,25 @@ def has_completed(user_id: int) -> bool:
     return bool(row and int(row.get("completed") or 0) == 1)
 
 
+def _parse_iso(v: Any) -> Optional[datetime]:
+    try:
+        d = datetime.fromisoformat(str(v or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
 def reward_percent(user_id: int) -> float:
-    """Скидка за пройденный опрос (0, если не пройден)."""
-    return float(reward_value()) if has_completed(user_id) else 0.0
+    """скидка за опрос, пока не истекли 48 часов с completed_at."""
+    row = db.fetchone("SELECT completed, completed_at FROM survey_state WHERE user_id = ?", (user_id,))
+    if not row or int(row.get("completed") or 0) != 1:
+        return 0.0
+    done = _parse_iso(row.get("completed_at"))
+    if not done:
+        return 0.0
+    if datetime.now(timezone.utc) - done >= timedelta(hours=SURVEY_DISCOUNT_HOURS):
+        return 0.0
+    return float(reward_value())
 
 
 def _single_kb(q: dict[str, Any]) -> dict[str, Any]:
