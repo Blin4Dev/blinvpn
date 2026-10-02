@@ -93,24 +93,23 @@ export default function Payment() {
     : 0;
 
   const [devices, setDevices] = useState(initialDevices);
-  // продление: по умолчанию текущее число устройств (меньше нельзя)
-  const isExtend = searchParams.get("extend") === "1";
+  // ниже текущего в подписке нельзя (уменьшение — только из панели)
   const [minDevices, setMinDevices] = useState(1);
   useEffect(() => {
-    if (!isExtend) return;
+    if (purpose !== "subscription") return;
     void (async () => {
       try {
-        const s = await appFetch<{ key?: { devices_limit?: number; type?: string } | null; expired_key?: { devices_limit?: number; type?: string } | null }>("/subscription");
+        const s = await appFetch<{ key?: { devices_limit?: number } | null; expired_key?: { devices_limit?: number } | null }>("/subscription");
         const k = s?.key || s?.expired_key;
         const prev = Math.floor(Number(k?.devices_limit));
         if (Number.isFinite(prev) && prev >= 1) {
           const p = Math.min(MAX_DEVICES, prev);
-          setDevices(p);
-          if (k?.type !== "trial") setMinDevices(p);
+          setMinDevices(p);
+          setDevices((v) => Math.max(v, p));
         }
       } catch { /* ignore */ }
     })();
-  }, [isExtend]);
+  }, [purpose]);
   const [rubMap, setRubMap] = useState<Record<number, number>>({
     1: 99,
     2: 169,
@@ -288,19 +287,22 @@ export default function Payment() {
     }
   };
 
-  const stepBtn: React.CSSProperties = {
+  const minusOff = devices <= minDevices;
+  const plusOff = devices >= MAX_DEVICES;
+  const stepBtn = (off: boolean): React.CSSProperties => ({
     ...btnReset,
     width: 44,
     height: 44,
     borderRadius: 12,
     background: T.surface,
     border: `1px solid ${T.border}`,
-    cursor: "pointer",
+    cursor: off ? "default" : "pointer",
+    opacity: off ? 0.35 : 1,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-  };
+  });
 
   return (
     <Screen>
@@ -344,9 +346,9 @@ export default function Payment() {
               type="button"
               aria-label="Меньше"
               className="blin-press"
-              disabled={devices <= minDevices}
+              disabled={minusOff}
               onClick={() => setDevices((v) => Math.max(minDevices, v - 1))}
-              style={stepBtn}
+              style={stepBtn(minusOff)}
             >
               <MSIcon name="remove" style={{ color: T.text, fontSize: 22 }} />
             </button>
@@ -364,8 +366,9 @@ export default function Payment() {
               type="button"
               aria-label="Больше"
               className="blin-press"
+              disabled={plusOff}
               onClick={() => setDevices((v) => Math.min(MAX_DEVICES, v + 1))}
-              style={stepBtn}
+              style={stepBtn(plusOff)}
             >
               <MSIcon name="add" style={{ color: T.text, fontSize: 22 }} />
             </button>

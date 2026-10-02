@@ -6472,13 +6472,17 @@ def _compute_order_price(user: dict[str, Any], body: CreatePaymentBody) -> dict[
             raise HTTPException(400, detail={"message": "Стоимость докупки не рассчитана"})
     else:
         # покупка/продление: число устройств = план
-        target, _upg = fulfillment.find_extend_target(int(user["id"]), purpose, body.subscription_id)
+        target, upgrading_trial = fulfillment.find_extend_target(int(user["id"]), purpose, body.subscription_id)
         if target and target.get("no_renew"):
             raise HTTPException(400, detail={"message": "Продление этой подписки недоступно"})
         base = prices.get(int(body.plan_devices))
         if base is None:
             raise HTTPException(400, detail={"message": "Тариф не найден"})
         total_devices = int(body.plan_devices) + extra
+        if target and not upgrading_trial:
+            cur = int(target.get("devices_limit") or 1)
+            if total_devices < cur:
+                raise HTTPException(400, detail={"message": "Нельзя уменьшить число устройств"})
         keep = fulfillment.retained_devices(
             int(user["id"]), purpose, body.subscription_id, total_devices)
         # доп. устройства в месяц, как тариф, на срок
