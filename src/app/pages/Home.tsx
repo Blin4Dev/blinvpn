@@ -168,10 +168,49 @@ function ActionTile({
   );
 }
 
+type HomeCache = {
+  subscriptionState: SubscriptionState;
+  subscriptionUntilText: string;
+  trialEnabled: boolean;
+  expiringTitle: string;
+  blacklisted: boolean;
+};
+
+let homeCache: HomeCache | null = null;
+
+function snapshotFromMe(me: { subscription_status?: string; subscription_until?: string | null; blacklisted?: boolean }, trialEnabled: boolean): HomeCache {
+  const st = String(me.subscription_status || "");
+  const until = String(me.subscription_until || "");
+  const untilText = until ? formatDateRu(until) : "";
+  let subscriptionState: SubscriptionState = "never";
+  let expiringTitle = "Скоро закончится";
+  let blacklisted = false;
+  if (st === "blocked" || st === "banned") {
+    subscriptionState = "blocked";
+    blacklisted = !!me.blacklisted;
+  } else if (st === "active" || st === "trial") {
+    const daysLeft = until
+      ? Math.ceil((new Date(until).getTime() - Date.now()) / 86_400_000)
+      : Infinity;
+    if (daysLeft <= 3) {
+      expiringTitle = daysLeftTitle(daysLeft);
+      subscriptionState = "expiring_soon";
+    } else {
+      subscriptionState = "active";
+    }
+  } else if (st === "expired") {
+    subscriptionState = "expired";
+  } else if (st === "lapsed") {
+    subscriptionState = "had_before";
+  }
+  return { subscriptionState, subscriptionUntilText: untilText, trialEnabled, expiringTitle, blacklisted };
+}
+
 export default function BlinVPNApp() {
   const navigate = useNavigate();
   // интро только при входе / перезагрузке, не при «назад»
   const playIntro = useRef(homeIntroPending()).current;
+  const cached = useRef(homeCache).current;
   // данные пришли → layout готов к reveal
   const [dataReady, setDataReady] = useState(false);
   // при возврате назад UI сразу, без сплэша
@@ -179,18 +218,18 @@ export default function BlinVPNApp() {
   // дольше 3 с без данных — подпись снизу (только на интро)
   const [slow, setSlow] = useState(false);
   const startedAt = useRef(typeof performance !== "undefined" ? performance.now() : Date.now());
-  const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>("never");
-  const [subscriptionUntilText, setSubscriptionUntilText] = useState("");
-  const [trialEnabled, setTrialEnabled] = useState(true);
+  const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>(cached?.subscriptionState ?? "never");
+  const [subscriptionUntilText, setSubscriptionUntilText] = useState(cached?.subscriptionUntilText ?? "");
+  const [trialEnabled, setTrialEnabled] = useState(cached?.trialEnabled ?? true);
   const [trialBusy, setTrialBusy] = useState(false);
   // непрочитанные ответы поддержки → бейдж на плитке
   const [supportUnread, setSupportUnread] = useState(0);
   useEffect(() => {
     fetchSupport(1e12).then((st) => setSupportUnread(st.chat?.unread || 0)).catch(() => { /* нет чата */ });
   }, []);
-  const [expiringTitle, setExpiringTitle] = useState("Скоро закончится");
+  const [expiringTitle, setExpiringTitle] = useState(cached?.expiringTitle ?? "Скоро закончится");
   // чёрный список: заблокирован + только поддержка
-  const [blacklisted, setBlacklisted] = useState(false);
+  const [blacklisted, setBlacklisted] = useState(cached?.blacklisted ?? false);
 
   useEffect(() => {
     if (!playIntro) return;
@@ -237,7 +276,9 @@ export default function BlinVPNApp() {
   const tAmb = playIntro ? `opacity 1.4s ${ease} 0.35s` : "none";
   const tGlow = playIntro ? `opacity 1.5s ${ease} 0.45s` : "none";
   const tBottom = playIntro ? `max-height 1.35s ${ease}, opacity 1s ${ease} 0.2s` : "none";
-  const rise = (delay: number) => (playIntro && showUi ? `blinvpnRise 0.85s var(--ease-out) ${delay}s both` : undefined);
+  // назад без кэша: не светить дефолт «нет подписки» / триал
+  const paintUi = playIntro ? showUi : showUi && (dataReady || Boolean(cached));
+  const rise = (delay: number) => (playIntro && paintUi ? `blinvpnRise 0.85s var(--ease-out) ${delay}s both` : undefined);
 
   const handleCta = async () => {
     if (blocked) return;
@@ -255,40 +296,24 @@ export default function BlinVPNApp() {
 
   useEffect(() => {
     void (async () => {
+      let trial = homeCache?.trialEnabled ?? true;
       try {
         try {
           const conf = await fetchConfig();
-          if (conf && typeof conf.trialEnabled === "boolean") setTrialEnabled(conf.trialEnabled);
+          if (conf && typeof conf.trialEnabled === "boolean") {
+            trial = conf.trialEnabled;
+          }
         } catch { /* defaults */ }
         try {
           const me = await fetchMe();
           if (!me) return;
-          const st = String(me.subscription_status || "");
-          const until = String(me.subscription_until || "");
-          if (until) setSubscriptionUntilText(formatDateRu(until));
-          // key or account ban → same «заблокирована» state
-          if (st === "blocked" || st === "banned") {
-            setSubscriptionState("blocked");
-            setBlacklisted(!!me.blacklisted);
-          } else if (st === "active" || st === "trial") {
-            const daysLeft = until
-              ? Math.ceil((new Date(until).getTime() - Date.now()) / 86_400_000)
-              : Infinity;
-            if (daysLeft <= 3) {
-              setExpiringTitle(
-                daysLeftTitle(daysLeft),
-              );
-              setSubscriptionState("expiring_soon");
-            } else {
-              setSubscriptionState("active");
-            }
-          } else if (st === "expired") {
-            setSubscriptionState("expired");
-          } else if (st === "lapsed") {
-            setSubscriptionState("had_before");
-          } else {
-            setSubscriptionState("never");
-          }
+          const snap = snapshotFromMe(me, trial);
+          homeCache = snap;
+          setSubscriptionUntilText(snap.subscriptionUntilText);
+          setExpiringTitle(snap.expiringTitle);
+          setBlacklisted(snap.blacklisted);
+          setSubscriptionState(snap.subscriptionState);
+          setTrialEnabled(snap.trialEnabled);
         } catch { /* safe default */ }
       } finally {
         setDataReady(true);
@@ -310,7 +335,7 @@ export default function BlinVPNApp() {
           className="blin-ambient"
           aria-hidden
           style={{
-            opacity: showUi ? 1 : 0,
+            opacity: paintUi ? 1 : 0,
             transition: tAmb,
           }}
         />
@@ -322,11 +347,11 @@ export default function BlinVPNApp() {
             height: "100%",
             paddingLeft: 26,
             paddingRight: 26,
-            paddingTop: showUi ? "calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale))" : 0,
+            paddingTop: paintUi ? "calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale))" : 0,
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
-            transition: playIntro && showUi ? `padding-top 1.35s ${ease}` : "none",
+            transition: playIntro && paintUi ? `padding-top 1.35s ${ease}` : "none",
           }}
         >
           {/* logo: при загрузке по центру экрана; после данных зона сжимается — логотип уезжает вверх */}
@@ -360,9 +385,9 @@ export default function BlinVPNApp() {
                   inset: -12,
                   borderRadius: "50%",
                   background: `radial-gradient(circle, ${T.orangeGlow} 0%, transparent 68%)`,
-                  opacity: showUi ? (glowDim ? 0.45 : 1) : 0,
+                  opacity: paintUi ? (glowDim ? 0.45 : 1) : 0,
                   transition: tGlow,
-                  animation: showUi && glowOn
+                  animation: paintUi && glowOn
                     ? `blinvpnBreathe 4.5s ease-in-out ${playIntro ? "1.2s" : "0s"} infinite`
                     : undefined,
                 }}
@@ -389,11 +414,11 @@ export default function BlinVPNApp() {
           <div
             style={{
               flexShrink: 0,
-              maxHeight: showUi ? 560 : 0,
-              opacity: showUi ? 1 : 0,
+              maxHeight: paintUi ? 560 : 0,
+              opacity: paintUi ? 1 : 0,
               overflow: "hidden",
               transition: tBottom,
-              pointerEvents: showUi ? "auto" : "none",
+              pointerEvents: paintUi ? "auto" : "none",
               paddingBottom: "calc(36px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
             }}
           >
@@ -451,7 +476,7 @@ export default function BlinVPNApp() {
                 label="Друзья"
                 disabled={blocked}
                 delay={0.48}
-                animate={playIntro && showUi}
+                animate={playIntro && paintUi}
                 onClick={() => { if (!blocked) navigate("/referral"); }}
               />
               <ActionTile
@@ -459,7 +484,7 @@ export default function BlinVPNApp() {
                 label="Промокод"
                 disabled={blocked}
                 delay={0.56}
-                animate={playIntro && showUi}
+                animate={playIntro && paintUi}
                 onClick={() => { if (!blocked) navigate("/promocode"); }}
               />
               <ActionTile
@@ -467,14 +492,14 @@ export default function BlinVPNApp() {
                 label="Настройки"
                 disabled={blocked}
                 delay={0.64}
-                animate={playIntro && showUi}
+                animate={playIntro && paintUi}
                 onClick={() => { if (!blocked) navigate("/settings"); }}
               />
               <ActionTile
                 icon="chat"
                 label="Поддержка"
                 delay={0.72}
-                animate={playIntro && showUi}
+                animate={playIntro && paintUi}
                 disabled={blacklisted}
                 badge={supportUnread}
                 onClick={() => { if (!blacklisted) navigate("/support"); }}
