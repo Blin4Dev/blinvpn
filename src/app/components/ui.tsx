@@ -544,6 +544,7 @@ export function BrandSplash() {
             maxHeight: 200,
             objectFit: "contain",
             userSelect: "none",
+            display: "block",
           }}
         />
       </div>

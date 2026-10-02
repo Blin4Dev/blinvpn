@@ -19,6 +19,7 @@ import { BrandSplash } from "./components/ui";
 import { AppErrorProvider } from "./components/ErrorModal";
 import Support from "./pages/Support";
 import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, type Membership } from "./utils/api";
+import { homeIntroPending, subscribeHomeIntroReady } from "./utils/homeIntro";
 import { trackRoute } from "./utils/navigation";
 import PaymentResume from "./components/PaymentResume";
 import TermsGate from "./pages/TermsGate";
@@ -26,11 +27,21 @@ import TermsGate from "./pages/TermsGate";
 // подсказка настройки: раз за сессию
 const SETUP_PROMPT_DISMISSED_KEY = "blinvpn_setup_prompt_dismissed";
 
+function useHomeIntroReady() {
+  const [ready, setReady] = useState(() => !homeIntroPending());
+  useEffect(() => {
+    if (ready) return;
+    return subscribeHomeIntroReady(() => setReady(true));
+  }, [ready]);
+  return ready;
+}
+
 function AnimatedLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const navType = useNavigationType();
   const skipEnterAnimation = useRef(true);
+  const introReady = useHomeIntroReady();
   // ключ заблокирован: только главная
   const [blocked, setBlocked] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -105,10 +116,10 @@ function AnimatedLayout() {
       >
         <Outlet />
       </div>
-      {showSetup && !blocked && (
+      {introReady && showSetup && !blocked && (
         <SetupPrompt onContinue={continueSetup} onClose={dismissSetup} />
       )}
-      {!blocked && <PaymentResume />}
+      {introReady && !blocked && <PaymentResume />}
     </div>
   );
 }
@@ -119,6 +130,7 @@ export default function App() {
   const [membership, setMembership] = useState<Membership | null>(null);
   // оферта при первом входе
   const [terms, setTerms] = useState<"checking" | "ok" | "need">("checking");
+  const introReady = useHomeIntroReady();
 
   useEffect(() => {
     let mounted = true;
@@ -163,9 +175,9 @@ export default function App() {
   return (
     <>
       <RoutedApp />
-      {terms === "need" ? (
+      {introReady && terms === "need" ? (
         <TermsGate onAccepted={() => setTerms("ok")} />
-      ) : gate === "blocked" && membership ? (
+      ) : introReady && gate === "blocked" && membership ? (
         <ChannelGate membership={membership} onPassed={() => setGate("open")} />
       ) : null}
     </>

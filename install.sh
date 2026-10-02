@@ -1036,18 +1036,17 @@ if [[ -f "$NGINX_CONF" ]]; then
             fi
         fi
 
-        log_success "\n🎉 Обновление завершено."
-        log_info "  • Перелогиньтесь в панели."
+        log_success "\nОбновление завершено."
         _upd_pst="$(get_env_var PANEL_SETUP_TOKEN .env 2>/dev/null || true)"
         if [[ -n "$_upd_pst" ]]; then
-            log_info "  • PANEL_SETUP_TOKEN в .env (сброс пароля панели)."
+            log_info "PANEL_SETUP_TOKEN в .env (сброс пароля панели)."
         fi
         exit 0
     fi
 
     section "Существующая установка — выберите действие"
     step "1)" "Обновить код и перезапустить контейнеры (по умолчанию)"
-    step "2)" "Заменить домен(ы) и перевыпустить сертификаты"
+    step "2)" "Заменить домены"
     step "3)" "Выход"
     echo
     prompt "Ваш выбор [1-3] (Enter = 1): " ACTION_CHOICE
@@ -1216,9 +1215,7 @@ done
 if [[ -f "$PANEL_CREDS_FILE" ]]; then
     PANEL_LOGIN="$(get_env_var login "$PANEL_CREDS_FILE" 2>/dev/null || true)"
     PANEL_PASS="$(get_env_var password "$PANEL_CREDS_FILE" 2>/dev/null || true)"
-    printf "\n${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
-    printf "${BOLD}  Доступ в панель — сохраните, повторно НЕ показывается${NC}\n"
-    printf "${GREEN}───────────────────────────────────────────────────────────────${NC}\n"
+    printf "${BOLD}  Доступ в панель:${NC}\n"
     printf "  Логин:  ${YELLOW}%s${NC}\n" "$PANEL_LOGIN"
     printf "  Пароль: ${YELLOW}%s${NC}\n" "$PANEL_PASS"
     sudo rm -f "$PANEL_CREDS_FILE" 2>/dev/null || rm -f "$PANEL_CREDS_FILE" 2>/dev/null || true

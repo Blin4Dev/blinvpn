@@ -1,7 +1,8 @@
-﻿import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { activateTrial, fetchConfig, fetchMe, fetchSupport } from "../utils/api";
 import { formatDateRu } from "../utils/date";
+import { homeIntroPending, markHomeIntroPlayed, signalHomeIntroReady } from "../utils/homeIntro";
 import { Btn, MSIcon, T, btnReset, pageFrame, pageOuter } from "../components/ui";
 
 type SubscriptionState =
@@ -167,22 +168,6 @@ function ActionTile({
   );
 }
 
-const HOME_INTRO_KEY = "blin-home-intro-done";
-
-function homeIntroPending(): boolean {
-  try {
-    return sessionStorage.getItem(HOME_INTRO_KEY) !== "1";
-  } catch {
-    return true;
-  }
-}
-
-function markHomeIntroDone(): void {
-  try {
-    sessionStorage.setItem(HOME_INTRO_KEY, "1");
-  } catch { /* private mode */ }
-}
-
 export default function BlinVPNApp() {
   const navigate = useNavigate();
   // интро только при входе / перезагрузке, не при «назад»
@@ -215,21 +200,26 @@ export default function BlinVPNApp() {
 
   // минимум держим сплэш, чтобы анимация не дёргалась при быстрой загрузке
   const MIN_SPLASH_MS = 1400;
+  // низ главной выезжает ~1.35s — модалки после этого
+  const INTRO_REVEAL_MS = 1450;
   useEffect(() => {
-    if (!dataReady) return;
     if (!playIntro) {
-      setShowUi(true);
+      signalHomeIntroReady();
       return;
     }
+    if (!dataReady) return;
     const elapsed = (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt.current;
     const wait = Math.max(0, MIN_SPLASH_MS - elapsed);
-    const t = window.setTimeout(() => {
-      requestAnimationFrame(() => {
-        setShowUi(true);
-        markHomeIntroDone();
-      });
+    let revealTimer = 0;
+    const splashTimer = window.setTimeout(() => {
+      setShowUi(true);
+      markHomeIntroPlayed();
+      revealTimer = window.setTimeout(() => signalHomeIntroReady(), INTRO_REVEAL_MS);
     }, wait);
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(splashTimer);
+      window.clearTimeout(revealTimer);
+    };
   }, [dataReady, playIntro]);
 
   const cfg = STATE_CONFIGS[subscriptionState];
@@ -326,18 +316,17 @@ export default function BlinVPNApp() {
         />
 
         <div
-          className="blin-tg-safe"
           style={{
             position: "relative",
             zIndex: 1,
             height: "100%",
             paddingLeft: 26,
             paddingRight: 26,
-            // нижний отступ + индикатор home (tg fullscreen)
-            paddingBottom: "calc(36px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
+            paddingTop: showUi ? "calc(var(--blin-tg-pad-top, 0px) / var(--blin-scale))" : 0,
             display: "flex",
             flexDirection: "column",
             boxSizing: "border-box",
+            transition: playIntro && showUi ? `padding-top 1.35s ${ease}` : "none",
           }}
         >
           {/* logo: при загрузке по центру экрана; после данных зона сжимается — логотип уезжает вверх */}
@@ -360,6 +349,8 @@ export default function BlinVPNApp() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                transform: "translateZ(0)",
+                backfaceVisibility: "hidden",
               }}
             >
               <div
@@ -388,6 +379,7 @@ export default function BlinVPNApp() {
                   height: "100%",
                   objectFit: "contain",
                   userSelect: "none",
+                  display: "block",
                 }}
               />
             </div>
@@ -397,11 +389,12 @@ export default function BlinVPNApp() {
           <div
             style={{
               flexShrink: 0,
-              maxHeight: showUi ? 520 : 0,
+              maxHeight: showUi ? 560 : 0,
               opacity: showUi ? 1 : 0,
               overflow: "hidden",
               transition: tBottom,
               pointerEvents: showUi ? "auto" : "none",
+              paddingBottom: "calc(36px + var(--blin-tg-pad-bottom, 0px) / var(--blin-scale))",
             }}
           >
             <div
