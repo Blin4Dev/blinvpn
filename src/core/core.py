@@ -7297,7 +7297,7 @@ def _notify_support_user(user: dict[str, Any], msg: dict[str, Any], chat: Option
 
 
 def _support_cleanup_loop() -> None:
-    """раз в час: чистка старых переписок и журнала."""
+    """раз в 10 мин: чистка старых переписок и журнала."""
     while True:
         try:
             db.execute("DELETE FROM panel_audit WHERE ts < ?", (iso(utcnow() - timedelta(days=180)),))
@@ -7309,7 +7309,7 @@ def _support_cleanup_loop() -> None:
                 print(f"[support] удалено старых сообщений: {r['messages']}, файлов: {r['files']}", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"[support] cleanup failed: {exc}", flush=True)
-        time.sleep(3600)
+        time.sleep(600)
 
 
 def _support_autoclose_loop() -> None:
@@ -7679,12 +7679,13 @@ def app_support_get(after: int = Query(0, ge=0), user: dict = Depends(_app_user_
     u = _support_user(user)
     chat = support.chat_for_user(int(u["id"]), create=False)
     t = support.ticket_info(chat) if chat else None
+    ids = support.alive_ticket_ids(int(chat["id"])) if chat else set()
     return {
         "chat": {"id": chat["id"], "unread": int(chat.get("unread_user") or 0)} if chat else None,
         "ticket": {"status": t["status"]} if t else None,     # номер обращения юзеру не показываем
-        "messages": support.messages(int(chat["id"]), after, for_user=True) if chat else [],
+        "messages": support.messages(int(chat["id"]), after, tickets=ids, for_user=True) if chat else [],
         # изменённые/удалённые сообщения из уже показанных
-        "changes": support.changes(int(chat["id"]), after, for_user=True) if chat and after else [],
+        "changes": support.changes(int(chat["id"]), after, tickets=ids, for_user=True) if chat and after else [],
         "limits": _support_limits(),
     }
 
@@ -7776,15 +7777,16 @@ def _chat_visible(c: dict[str, Any], p: dict[str, Any], t: Any = False) -> bool:
 
 def _visible_tickets(chat: dict[str, Any], p: dict[str, Any]) -> Optional[set[int]]:
     """какие обращения видит сотрудник."""
+    alive = support.alive_ticket_ids(int(chat["id"]))
     if is_full(p):
-        return None
+        return alive
     ids = {int(r["id"]) for r in db.fetchall("SELECT id FROM support_tickets WHERE chat_id = ? AND assigned_admin = ?",
                                             (int(chat["id"]), p["actor"]))}
     t = support.open_ticket(chat)
     # открытое без исполнителя — пул (можно читать и писать комментарии)
     if t and not t.get("escalated") and not t.get("assigned_admin"):
         ids.add(int(t["id"]))
-    return ids
+    return ids & alive
 
 
 def _tab_of(c: dict[str, Any], t: Optional[dict[str, Any]], p: dict[str, Any]) -> str:
@@ -7856,6 +7858,8 @@ def panel_support_chats(q: str = Query("", max_length=100), status: str = Query(
     counts = {k: 0 for k in tabs}
     for c in rows:
         t = support.ticket_info(c)
+        if not t:
+            continue
         if not _chat_visible(c, p, t):
             continue
         tab = _tab_of(c, t, p)
@@ -8029,6 +8033,14 @@ def panel_support_start(chat_id: int, body: Optional[SupportStartBody] = None, p
             who = {"owner": "администратор", "curator": "другой куратор"}.get(_holder_role(t.get("assigned_admin")) or "", "другой сотрудник")
             raise HTTPException(403, detail={"message": f"Нельзя забрать обращение — его ведёт {who}"})
     return _sup(support.start, chat, p["actor"], p["name"], takeover, _guard(p, "start"))
+
+
+@app.post("/api/panel/support/chats/{chat_id}/reopen")
+def panel_support_reopen(chat_id: int, p: dict = Depends(require_panel)) -> dict[str, Any]:
+    if not is_full(p):
+        raise HTTPException(403, detail={"message": "Переоткрыть может только куратор или администратор"})
+    chat = _panel_chat(chat_id, p)
+    return _sup(support.reopen, chat, p["actor"], p["name"], _guard(p, "start"))
 
 
 class SupportCloseBody2(BaseModel):

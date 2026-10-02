@@ -46,7 +46,7 @@ MAX_TEXT = 4000
 EDIT_WINDOW = 48 * 3600  # своё сообщение сотрудник может изменить или удалить в течение 48 часов
 FILE_URL_TTL = 6 * 3600  # ссылка на файл живёт 6 часов
 PENDING_TTL = 2 * 3600  # загруженные, но не отправленные файлы удаляются через 2 часа
-KEEP_AFTER_CLOSE_DAYS = 7  # переписка обращения хранится 7 дней после закрытия
+KEEP_AFTER_CLOSE_DAYS = 1  # переписка исчезает через 24 часа после закрытия
 FILL_TRIGGER = 0.90  # хранилище заполнено на 90% - чистим старые вложения…
 FILL_TARGET = 0.80  # …до 80%
 USER_MAX_PENDING = 10
@@ -139,7 +139,27 @@ def open_ticket(chat: dict[str, Any], tx=None) -> Optional[dict[str, Any]]:
 
 
 def last_ticket(chat: dict[str, Any]) -> Optional[dict[str, Any]]:
-    return db.fetchone("SELECT * FROM support_tickets WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (int(chat["id"]),))
+    row = db.fetchone("SELECT * FROM support_tickets WHERE chat_id = ? ORDER BY id DESC LIMIT 1", (int(chat["id"]),))
+    if not row or not ticket_alive(row):
+        return None
+    return row
+
+
+def ticket_alive(t: Optional[dict[str, Any]]) -> bool:
+    """открытый или закрытый меньше суток назад."""
+    if not t:
+        return False
+    if str(t.get("status") or "") != "closed":
+        return True
+    closed = _parse(t.get("closed_at"))
+    if not closed:
+        return False
+    return (_now() - closed) < timedelta(days=KEEP_AFTER_CLOSE_DAYS)
+
+
+def alive_ticket_ids(chat_id: int) -> set[int]:
+    rows = db.fetchall("SELECT id, status, closed_at FROM support_tickets WHERE chat_id = ?", (int(chat_id),))
+    return {int(r["id"]) for r in rows if ticket_alive(r)}
 
 
 def _new_ticket(chat: dict[str, Any], opened_by: str, tx) -> dict[str, Any]:
@@ -198,6 +218,37 @@ def start(chat: dict[str, Any], actor: str, name: str, takeover: bool = False, g
                        "VALUES (?, ?, 'system', ?, ?, ?, ?)",
                        (int(chat["id"]), t["id"], name, "Специалист поддержки подключился к диалогу",
                         f"{name} подключился", now))
+    return {"ok": True, "changed": True}
+
+
+def reopen(chat: dict[str, Any], actor: str, name: str, guard: Guard = None) -> dict[str, Any]:
+    """снова открыть закрытое обращение (сбрасывает срок хранения)."""
+    with db.transaction() as tx:
+        t = open_ticket(chat, tx)
+        if t:
+            return {"ok": True, "changed": False}
+        row = tx.execute("SELECT * FROM support_tickets WHERE chat_id = ? ORDER BY id DESC LIMIT 1",
+                         (int(chat["id"]),)).fetchone()
+        if not row:
+            raise SupportError("Нет обращения", 404)
+        t = dict(row)
+        if str(t.get("status") or "") != "closed":
+            raise SupportError("Обращение уже открыто", 409)
+        if not ticket_alive(t):
+            raise SupportError("Обращение не найдено", 404)
+        _check(guard, t)
+        now = _iso()
+        tx.execute(
+            "UPDATE support_tickets SET status = 'open', closed_at = NULL, closed_by = NULL, "
+            "assigned_admin = ?, assigned_name = ?, close_prompt_id = NULL, prompt_at = NULL, "
+            "escalated = 0, queue_at = ? WHERE id = ?",
+            (actor, name, now, t["id"]),
+        )
+        tx.execute(
+            "UPDATE support_chats SET open_ticket_id = ?, assigned_admin = ?, assigned_name = ?, started_at = ? "
+            "WHERE id = ?",
+            (t["id"], actor, name, now, int(chat["id"])),
+        )
     return {"ok": True, "changed": True}
 
 
@@ -544,7 +595,7 @@ def send_note(chat: dict[str, Any], author: str, text: str, actor: str,
         if not t:
             row = tx.execute("SELECT * FROM support_tickets WHERE chat_id = ? ORDER BY id DESC LIMIT 1",
                              (int(chat["id"]),)).fetchone()
-            t = dict(row) if row else None
+            t = dict(row) if row and ticket_alive(dict(row)) else None
         if not t:
             raise SupportError("Нет обращения — комментарий оставить некуда", 409)
         if reply_to:

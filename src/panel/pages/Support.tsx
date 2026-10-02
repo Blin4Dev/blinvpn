@@ -477,6 +477,17 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
       } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось начать'), 'error'); } finally { setBusy(''); }
     };
 
+    const reopen = async () => {
+      if (sid == null) return;
+      setBusy('reopen');
+      try {
+        await apiFetch(`/panel/support/chats/${sid}/reopen`, { method: 'POST' });
+        const d: ChatData = await apiFetch(`/panel/support/chats/${sid}`);
+        lastId.current = d.messages.length ? d.messages[d.messages.length - 1].id : 0;
+        stick.current = true; setData(d); loadChats();
+      } catch (e) { onToast('Ошибка', parseApiErr(e, 'Не удалось переоткрыть'), 'error'); } finally { setBusy(''); }
+    };
+
     const act = async (what: 'close' | 'force' | 'pool' | 'escalate', poolReason?: string) => {
       if (sid == null || !data?.chat.ticket) return;
       const num = data.chat.ticket.number;
@@ -761,6 +772,7 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
             const canWriteUser = !!chat.started_by_me;
             const taken = chat.ticket?.status === 'open' && !!chat.ticket.assigned_name && !chat.ticket.assigned_to_me;
             const canStart = !chat.started_by_me && chat.ticket?.status === 'open' && (!taken || !!chat.ticket?.can_takeover);
+            const canReopen = !!data.me.full && chat.ticket?.status === 'closed';
             const asNote = !!editing?.internal || noteMode;
             const canNoteSend = !busy && text.trim().length > 0;
             const pickMode = (note: boolean) => {
@@ -774,6 +786,11 @@ export const SupportPage: React.FC<{ chatId: number | null; setChatId: (id: numb
                 <button className="btn solid" style={{ width: '100%', justifyContent: 'center', minHeight: 42 }}
                   disabled={busy === 'start'} onClick={() => void start(taken)}>
                   {busy === 'start' ? <Spinner size={15} /> : <Play size={15} />} {taken ? 'Забрать обращение' : 'Начать'}
+                </button>
+              ) : canReopen ? (
+                <button className="btn solid" style={{ width: '100%', justifyContent: 'center', minHeight: 42 }}
+                  disabled={busy === 'reopen'} onClick={() => void reopen()}>
+                  {busy === 'reopen' ? <Spinner size={15} /> : <Play size={15} />} Переоткрыть
                 </button>
               ) : (
                 <div className="sub" style={{ fontSize: 13, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 10, textAlign: 'center' }}>
