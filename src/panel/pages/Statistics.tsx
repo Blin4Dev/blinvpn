@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   DollarSign, Users, Key, Gift, CreditCard, Hash, Trophy, UserPlus, Clock, Zap, Smartphone, Wallet, RefreshCw, CalendarDays, ChevronDown,
 } from 'lucide-react';
@@ -24,25 +24,65 @@ const PeriodPicker: React.FC<{ period: StatPeriod; range: Range | null; onPreset
   const today = ymd(new Date());
   const [from, setFrom] = useState(range?.from || ymd(new Date(Date.now() - 29 * 86400000)));
   const [to, setTo] = useState(range?.to || today);
-  const ref = useRef<HTMLDivElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const place = () => {
+    const btn = wrap.current?.querySelector('button');
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const pad = 10;
+    const width = Math.min(280, window.innerWidth - pad * 2);
+    let left = r.right - width;
+    if (left < pad) left = pad;
+    if (left + width > window.innerWidth - pad) left = Math.max(pad, window.innerWidth - pad - width);
+    let top = r.bottom + 6;
+    const est = menu.current?.offsetHeight || 320;
+    if (top + est > window.innerHeight - pad && r.top - 6 - Math.min(est, window.innerHeight - pad * 2) > pad) {
+      top = Math.max(pad, r.top - 6 - Math.min(est, window.innerHeight - pad * 2));
+    }
+    setPos((prev) => (prev && prev.top === top && prev.left === left && prev.width === width) ? prev : { top, left, width });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    place();
+  }, [open]);
+  useLayoutEffect(() => {
+    if (open && pos && menu.current) place();
+  }, [open, pos != null]);
   useEffect(() => {
     if (!open) return undefined;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const h = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
+    const onWin = () => place();
     document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    window.addEventListener('resize', onWin);
+    window.addEventListener('scroll', onWin, true);
+    return () => {
+      document.removeEventListener('mousedown', h);
+      window.removeEventListener('resize', onWin);
+      window.removeEventListener('scroll', onWin, true);
+    };
   }, [open]);
   const label = period === 'custom' && range ? `${ruDate(range.from)} — ${ruDate(range.to)}` : (PERIOD_OPTS.find((o) => o.value === period)?.label || '');
   const valid = !!from && !!to && from <= to;
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={wrap} style={{ position: 'relative' }}>
       <button className="btn" onClick={() => setOpen(!open)}><CalendarDays size={15} /> {label} <ChevronDown size={14} /></button>
       {open && (
-        <div className="card" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 30, padding: 8, width: 280, boxShadow: '0 12px 40px rgba(0,0,0,.6)' }}>
+        <div ref={menu} className="card" style={{
+          position: 'fixed', zIndex: 80, padding: 8,
+          top: pos?.top ?? 0, left: pos?.left ?? 0, width: pos?.width ?? 280,
+          maxHeight: 'min(70dvh, 420px)', overflowY: 'auto',
+          boxShadow: '0 12px 40px rgba(0,0,0,.6)',
+          visibility: pos ? 'visible' : 'hidden',
+        }}>
           {PERIOD_OPTS.map((o) => (
             <button key={o.value} className={`nav-item ${period === o.value ? 'on' : ''}`} style={{ width: '100%' }} onClick={() => { onPreset(o.value); setOpen(false); }}>{o.label}</button>
           ))}
           <div style={{ borderTop: '1px solid var(--border)', margin: '8px 0', paddingTop: 10 }} className="flex flex-col gap-2">
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <input className="input" type="date" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
               <input className="input" type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
             </div>
