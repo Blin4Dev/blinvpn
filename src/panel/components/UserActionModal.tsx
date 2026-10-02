@@ -36,10 +36,15 @@ export const ACTION_MAP: Record<string, ActionConfig> = {
 };
 
 export const UserActionModal: React.FC<{
-  type: string; onClose: () => void; onConfirm: (value: string, notify: boolean) => void; initialValue?: string;
-}> = ({ type, onClose, onConfirm, initialValue = '' }) => {
+  type: string; onClose: () => void;
+  onConfirm: (value: string, notify: boolean, channel?: 'telegram' | 'email') => void;
+  initialValue?: string;
+  canTelegram?: boolean;
+  canEmail?: boolean;
+}> = ({ type, onClose, onConfirm, initialValue = '', canTelegram = false, canEmail = false }) => {
   const [value, setValue] = useState(initialValue);
   const [notify, setNotify] = useState(true);
+  const [channel, setChannel] = useState<'telegram' | 'email'>(canTelegram || !canEmail ? 'telegram' : 'email');
   const config = ACTION_MAP[type] || { title: 'Действие', label: 'Значение', icon: Settings, type: 'text' };
   const numMin = config.min ?? 0;
   const numMax = config.max ?? 999999;
@@ -47,6 +52,8 @@ export const UserActionModal: React.FC<{
   const showStepper = config.type === 'number' && (!!config.presets?.length || config.max !== undefined);
   const setNum = (n: number) => setValue(String(Math.max(numMin, Math.min(numMax, n))));
   const isDestructive = /BAN|DELETE|REMOVE|SUB_/.test(type);
+  const isNotify = type === 'NOTIFY';
+  const notifyReady = !isNotify || ((channel === 'telegram' ? canTelegram : canEmail) && value.trim().length > 0);
 
   return (
     <Modal
@@ -56,8 +63,9 @@ export const UserActionModal: React.FC<{
           <button className="btn block" onClick={onClose}>Отмена</button>
           <button
             className={`btn block ${isDestructive ? 'danger' : 'solid'}`}
-            onClick={() => onConfirm(config.type === 'number' ? String(clampNumber(value, numMin, numMax, numMin || 0)) : value, notify)}
-          >Применить</button>
+            disabled={isNotify && !notifyReady}
+            onClick={() => onConfirm(config.type === 'number' ? String(clampNumber(value, numMin, numMax, numMin || 0)) : value, notify, isNotify ? channel : undefined)}
+          >{isNotify ? 'Отправить' : 'Применить'}</button>
         </>
       }
     >
@@ -81,13 +89,29 @@ export const UserActionModal: React.FC<{
                   </div>
                 )}
               </div>
+            ) : isNotify ? (
+              <textarea className="input" rows={5} value={value} placeholder="Текст сообщения"
+                autoFocus onChange={(e) => setValue(e.target.value)} style={{ resize: 'vertical', fontFamily: 'inherit' }} />
             ) : (
               <input className="input mono" type={config.type} value={value} placeholder={config.type === 'number' ? '0' : ''}
                 autoFocus min={numMin} max={config.max} onChange={(e) => setValue(e.target.value)} />
             )}
           </div>
         )}
-        {type.startsWith('MASS_') ? (
+        {isNotify ? (
+          <div>
+            <label className="field-label">Куда</label>
+            <div className="flex gap-2">
+              <button type="button" className={`chip ${channel === 'telegram' ? 'on' : ''}`} disabled={!canTelegram}
+                onClick={() => canTelegram && setChannel('telegram')}>Telegram</button>
+              <button type="button" className={`chip ${channel === 'email' ? 'on' : ''}`} disabled={!canEmail}
+                onClick={() => canEmail && setChannel('email')}>Почта</button>
+            </div>
+            {!canTelegram && !canEmail ? (
+              <div className="sub" style={{ fontSize: 12, marginTop: 8 }}>Нет Telegram и почты — отправить некуда</div>
+            ) : null}
+          </div>
+        ) : type.startsWith('MASS_') ? (
           <div className="sub" style={{ fontSize: 12 }}>
             {type === 'MASS_ADD_DAYS' && 'Продлеваются только действующие подписки — и в базе, и в Remnawave. Выполняется в фоне.'}
             {type === 'MASS_RESET_TRAFFIC' && 'Счётчик трафика обнулится у всех пользователей в Remnawave.'}

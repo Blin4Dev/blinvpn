@@ -111,13 +111,16 @@ export const UserDetailPage: React.FC<{
 
   useEffect(() => { setLoading(true); setRw(null); setSurvey(null); void load(); void loadPayments(); void loadRw(); void loadSurvey(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userId]);
 
-  const doAction = async (act: string, value: any = null, notify = false, confirmMsg?: string, confirm = false) => {
+  const doAction = async (act: string, value: any = null, notify = false, confirmMsg?: string, confirm = false, channel?: 'telegram' | 'email') => {
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     setBusy(true);
     try {
-      const res = await apiFetch(`/panel/users/${userId}/action`, { method: 'POST', body: JSON.stringify({ action: act, value, notify, confirm }) });
+      const res = await apiFetch(`/panel/users/${userId}/action`, { method: 'POST', body: JSON.stringify({ action: act, value, notify, confirm, channel }) });
       if (res && res.deleted) { onToast('Готово', 'Аккаунт удалён', 'success'); onBack(); return; }
-      onToast('Готово', confirm ? 'Аккаунты объединены' : 'Действие выполнено', 'success');
+      const sent = act === 'NOTIFY'
+        ? (res?.delivery?.telegram ? 'Сообщение отправлено в Telegram' : res?.delivery?.email ? 'Письмо отправлено' : 'Сообщение отправлено')
+        : (confirm ? 'Аккаунты объединены' : 'Действие выполнено');
+      onToast('Готово', sent, 'success');
       await load(); await loadPayments(); await loadRw();
     } catch (e) {
       const m = mergeInfo(e);
@@ -156,7 +159,8 @@ export const UserDetailPage: React.FC<{
     <div className="flex flex-col gap-5">
       {action && (
         <UserActionModal type={action} onClose={() => setAction(null)}
-          onConfirm={(value, notify) => { const a = action; setAction(null); void doAction(a, value, notify); }} />
+          canTelegram={!!detail.telegram_id} canEmail={!!detail.email}
+          onConfirm={(value, notify, channel) => { const a = action; setAction(null); void doAction(a, value, notify, undefined, false, channel); }} />
       )}
 
       <div className="flex items-center justify-between gap-3" style={{ flexWrap: 'wrap' }}>

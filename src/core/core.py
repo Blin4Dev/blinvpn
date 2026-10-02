@@ -1255,19 +1255,21 @@ def _rw_set_enabled(user: dict[str, Any], enabled: bool) -> None:
         pass
 
 
-def _notify_user(user: dict[str, Any], text: str, *, email: bool = False) -> dict[str, Any]:
-    """уведомление в бота; на почту только если email=true."""
+def _notify_user(user: dict[str, Any], text: str, *, email: bool = False,
+                 channel: Optional[str] = None) -> dict[str, Any]:
+    """уведомление: channel=telegram|email; иначе бот, плюс почта если email=true."""
     result = {"telegram": False, "email": False}
     if not text:
         return result
-    if telegram_stars is not None and user.get("telegram_id"):
+    send_tg = channel != "email"
+    send_mail = channel == "email" or (channel is None and email)
+    if send_tg and telegram_stars is not None and user.get("telegram_id"):
         try:
-            # текст из панели экранируем под html
             telegram_stars.TelegramStars().send_message(int(user["telegram_id"]), _esc_html(text))
             result["telegram"] = True
         except Exception:  # noqa: BLE001
             pass
-    if email and user.get("email") and mailer.is_configured():
+    if send_mail and user.get("email") and mailer.is_configured():
         ok, _ = mailer.send_broadcast(user["email"], "BlinVPN", _esc_html(text).replace("\n", "<br>"), body_text=text)
         result["email"] = ok
     return result
@@ -1997,6 +1999,7 @@ class UserActionBody(BaseModel):
     action: str
     value: Any = None
     notify: bool = False
+    channel: Optional[str] = None  # telegram | email — для NOTIFY
     subscription_id: Optional[int] = None
     confirm: bool = False  # подтверждено объединение аккаунтов
 
@@ -4054,7 +4057,23 @@ def panel_user_action(user_id: int, body: UserActionBody, p: dict = Depends(requ
         return {"success": True, "subscription_url": info.get("subscription_url"),
                 "user": serialize_user(get_user(user_id) or user)}
     elif action == "NOTIFY":
-        delivery = _notify_user(user, str(value or ""), email=True)
+        text = str(value or "").strip()
+        if not text:
+            raise HTTPException(400, detail={"message": "Введите сообщение"})
+        ch = str(body.channel or "telegram").strip().lower()
+        if ch not in ("telegram", "email"):
+            raise HTTPException(400, detail={"message": "Куда отправить: Telegram или почта"})
+        if ch == "telegram":
+            if not user.get("telegram_id"):
+                raise HTTPException(400, detail={"message": "У пользователя нет Telegram"})
+        else:
+            if not user.get("email"):
+                raise HTTPException(400, detail={"message": "У пользователя нет почты"})
+            if not mailer.is_configured():
+                raise HTTPException(400, detail={"message": "Почта не настроена"})
+        delivery = _notify_user(user, text, channel=ch)
+        if not delivery.get("telegram") and not delivery.get("email"):
+            raise HTTPException(400, detail={"message": "Не удалось отправить"})
         return {"success": True, "delivery": delivery, "user": serialize_user(user)}
     elif action == "SET_PARTNER_RATE":
         db.execute(
