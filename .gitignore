@@ -1,0 +1,31 @@
+# Зависимости и сборки
+node_modules/
+dist/
+src/panel/dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Данные и секреты — никогда не в репозиторий
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-*
+*credentials*.txt
+*.pem
+*.key
+
+# Мусор
+*.log
+.DS_Store
+.idea/
+.vscode/

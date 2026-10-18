@@ -1,0 +1,43 @@
+{
+  "version": "1",
+  "rules": [
+    {
+      "name": "XBM / VPN clients",
+      "description": "Все VPN-клиенты получают XRAY_JSON, XBM сам конвертирует под клиент",
+      "enabled": true,
+      "operator": "AND",
+      "conditions": [
+        {
+          "headerName": "user-agent",
+          "operator": "REGEX",
+          "value": "happ|streisand|v2raytun|v2ray|neko|foxray|v2box|incy|singbox|sfa|sfi|sfm|sft|karing|flclash|flowvy|mihomo|clash",
+          "caseSensitive": false
+        }
+      ],
+      "responseType": "XRAY_JSON"
+    },
+    {
+      "name": "Browser Subscription",
+      "description": "System critical: do not delete or disable this rule.",
+      "enabled": true,
+      "operator": "AND",
+      "conditions": [
+        {
+          "headerName": "accept",
+          "operator": "CONTAINS",
+          "value": "text/html",
+          "caseSensitive": true
+        }
+      ],
+      "responseType": "BROWSER"
+    },
+    {
+      "name": "Fallback Base64",
+      "description": "System critical: do not delete or disable this rule.",
+      "enabled": true,
+      "operator": "AND",
+      "conditions": [],
+      "responseType": "XRAY_BASE64"
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+# BlinVPN 3.0 — EDGE-сервер (то, что видит пользователь).
+# Выбирается автоматически: в .env edge COMPOSE_FILE=docker-compose.edge.yml
+#
+#   miniapp  127.0.0.1:9741  статика мини-приложения
+#   xbm      127.0.0.1:4100  подписка для VPN-клиентов (кэш переживает недоступность панели)
+#   subpage  127.0.0.1:3010  страница подписки Remnawave (для браузера)
+#
+# Секретов панели здесь нет: токен Remnawave для страницы подписки подставляет edge-ingress
+# на панели, а здесь — заглушка. Все запросы к панели идут только по туннелю.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+services:
+  miniapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.miniapp
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    container_name: blinvpn-miniapp
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${MINIAPP_PORT:-9741}:80"
+    volumes:
+      - ./assets:/usr/share/nginx/live/assets:ro
+
+  xbm:
+    build:
+      context: ./xbm
+    container_name: blinvpn-xbm
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      REMNAWAVE_URL: http://${INGRESS_ADDR:-10.213.0.1:8443}
+      UPSTREAM_EXTRA_HEADERS: '{"X-Edge-Token":"${EDGE_TOKEN}"}'
+      SUB_PAGE_URL: ""
+      SUB_DOMAIN: ${SUB_DOMAIN:-}
+      CONFIG_PATH: /app/config.json
+      PANEL_CONFIG_PATH: /app/state/panel.json
+    volumes:
+      - ./xbm/config.json:/app/config.json:ro
+      - ./data/xbm:/app/state:ro
+    ports:
+      - "127.0.0.1:${XBM_PORT:-4100}:4100"
+
+  subpage:
+    image: ${SUBPAGE_IMAGE:-remnawave/subscription-page:8.0.0}
+    container_name: blinvpn-subpage
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      APP_PORT: "3010"
+      REMNAWAVE_PANEL_URL: http://${INGRESS_ADDR:-10.213.0.1:8443}
+      # настоящий токен подставит edge-ingress на панели; на edge — заглушка
+      REMNAWAVE_API_TOKEN: edge-placeholder
+      # токен edge для двери панели (subpage шлёт его заголовком X-Api-Key)
+      CADDY_AUTH_API_TOKEN: ${EDGE_TOKEN}
+      TRUST_PROXY: "1"
+      CUSTOM_SUB_PREFIX: ""
+      MARZBAN_LEGACY_LINK_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${SUBPAGE_PORT:-3010}:3010"

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>BlinVPN</title>
+    <!--
+      SDK Telegram Mini Apps грузим асинхронно и только внутри Telegram:
+      синхронный скрипт с telegram.org держал всю страницу (на сайте без VPN — пустой экран).
+      Параметры запуска сохраняем сразу, чтобы вход работал даже если telegram.org недоступен (см. utils/tgBoot.ts).
+    -->
+    <script>
+      (function () {
+        var data = "", platform = "", version = "";
+        try {
+          var q = new URLSearchParams(location.hash.slice(1));
+          data = q.get("tgWebAppData") || "";
+          platform = q.get("tgWebAppPlatform") || "";
+          version = q.get("tgWebAppVersion") || "";
+          if (data) sessionStorage.setItem("__blin_tg_launch", JSON.stringify({ d: data, p: platform, v: version }));
+          else {
+            var saved = JSON.parse(sessionStorage.getItem("__blin_tg_launch") || "null");
+            if (saved) { data = saved.d || ""; platform = saved.p || ""; version = saved.v || ""; }
+          }
+        } catch (e) {}
+        var inTg = !!data || !!window.TelegramWebviewProxy;
+        var B = (window.__blinTg = { inTg: inTg, initData: data, platform: platform, version: version });
+        B.ready = new Promise(function (resolve) {
+          if (!inTg) return resolve(false);
+          var s = document.createElement("script");
+          s.src = "https://telegram.org/js/telegram-web-app.js";
+          s.async = true;
+          s.onload = function () {
+            // sdk пришёл позже замены и без данных — оставляем замену
+            if (B.shim && !(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData)) {
+              window.Telegram.WebApp = B.shim;
+            }
+            resolve(true);
+          };
+          s.onerror = function () { resolve(false); };
+          setTimeout(function () { resolve(false); }, 4000);
+          document.head.appendChild(s);
+        });
+      })();
+    </script>
+    <!-- логотип сплэша — первым делом -->
+    <link rel="preload" href="/assets/logo.png" as="image" fetchpriority="high" />
+    <link rel="preload" href="/fonts/material-symbols-blin.7f432a3e.woff2" as="font" type="font/woff2" crossorigin />
+    <style>
+      html, body { margin: 0; background: #14110E; }
+      #blin-boot {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; align-items: center; justify-content: center;
+        background: #14110E;
+        /* как pageFrame: логотип в масштабе макета 402, иначе скачок в React */
+        padding: 0;
+        box-sizing: border-box;
+      }
+      #blin-boot img {
+        width: calc(min(200px, 42vh) * var(--blin-scale, 1));
+        height: calc(min(200px, 42vh) * var(--blin-scale, 1));
+        max-width: calc(200px * var(--blin-scale, 1));
+        max-height: calc(200px * var(--blin-scale, 1));
+        object-fit: contain;
+      }
+    </style>
+    <script>
+      (function () {
+        var w = window.innerWidth || 402;
+        document.documentElement.style.setProperty("--blin-scale", String(Math.min(1, w / 402)));
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="blin-boot"><img src="/assets/logo.png" alt="" width="200" height="200" fetchpriority="high" decoding="sync" /></div>
+    <!-- Vite root теперь src/app, поэтому путь локальный -->
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

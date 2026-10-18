@@ -1,0 +1,138 @@
+# BlinVPN 3.0 — сервер ПАНЕЛИ.
+# Выбирается автоматически: в .env панели COMPOSE_FILE=docker-compose.panel.yml
+#
+#   api         127.0.0.1:8000  панель (/api/panel), internal, ВСЕ фоновые задачи
+#   api-public  127.0.0.1:8001  только мини-апп (/api/app) — сюда ходит edge-ingress
+#   webhook     127.0.0.1:5000  уведомления платёжек
+#   ingress     10.213.0.1:8443 единственная дверь из туннеля edge → панель
+#   bot, monitor, panel (SPA 127.0.0.1:9742)
+#
+# Все python-сервисы — network_mode host и слушают только 127.0.0.1 (ingress — адрес туннеля).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
+x-python: &python
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.python
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+  image: blinvpn-python:local
+  env_file: .env
+  volumes:
+    - ./data:/app/data
+  restart: unless-stopped
+  network_mode: host
+  logging: *default-logging
+
+services:
+  api:
+    <<: *python
+    container_name: blinvpn-api
+    environment:
+      DB_PATH: /app/data/data.db
+      API_ROLE: panel
+    command: >
+      uvicorn core:app --host 127.0.0.1 --port ${API_PORT:-8000}
+      --no-proxy-headers --no-server-header --timeout-keep-alive 30
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.getenv('API_PORT','8000'), timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api-public:
+    <<: *python
+    container_name: blinvpn-api-public
+    environment:
+      DB_PATH: /app/data/data.db
+      API_ROLE: public
+    command: >
+      uvicorn core:app --host 127.0.0.1 --port ${API_PUBLIC_PORT:-8001}
+      --no-proxy-headers --no-server-header --timeout-keep-alive 30
+      --workers ${API_PUBLIC_WORKERS:-2}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.getenv('API_PUBLIC_PORT','8001'), timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  webhook:
+    <<: *python
+    container_name: blinvpn-webhook
+    environment:
+      DB_PATH: /app/data/data.db
+    command: >
+      uvicorn payments.webhooks:app --host 127.0.0.1 --port ${WEBHOOK_PORT:-5000}
+      --no-proxy-headers --no-server-header
+    depends_on:
+      api:
+        condition: service_healthy
+
+  ingress:
+    <<: *python
+    container_name: blinvpn-ingress
+    environment:
+      DB_PATH: /app/data/data.db
+      PYTHONPATH: /app/src/ingress:/app/src/core:/app/src/api
+    working_dir: /app/src/ingress
+    command: >
+      uvicorn ingress:app --host ${WG_PANEL_IP:-10.213.0.1} --port ${INGRESS_PORT:-8443}
+      --no-proxy-headers --no-server-header --no-access-log --timeout-keep-alive 60
+    depends_on:
+      api-public:
+        condition: service_healthy
+      webhook:
+        condition: service_started
+
+  bot:
+    <<: *python
+    container_name: blinvpn-bot
+    environment:
+      DB_PATH: /app/data/data.db
+    command: python /app/src/bot/bot.py
+    depends_on:
+      api:
+        condition: service_healthy
+
+  monitor:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.monitor
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    container_name: blinvpn-monitor
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/data.db
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    network_mode: host
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+
+  panel:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.panel
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    container_name: blinvpn-panel
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "127.0.0.1:${PANEL_PORT:-9742}:80"
+    volumes:
+      - ./assets:/usr/share/nginx/live/assets:ro
