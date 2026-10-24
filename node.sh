@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Версия агента. ПРИ ЛЮБОМ ИЗМЕНЕНИИ ЭТОГО ФАЙЛА увеличивайте вторую цифру (1.2.0 → 1.3.0):
 # по ней панель понимает, что ноды пора обновить, и обновляет их сама.
-NODE_VERSION="1.4.0"
+NODE_VERSION="1.5.0"
 # ─────────────────────────────────────────────────────────────────────────────
 #  BlinVPN — агент мониторинга сервера (blinmon)
 #
@@ -49,19 +49,25 @@ GITHUB_NODE_SH="https://raw.githubusercontent.com/Blin4Dev/blinvpn/main/node.sh"
 DEFAULT_PORT=5055
 ALLOW_REBOOT=1
 PANEL_URL=""
+PANEL_IPS=""     # адреса сервера панели: только им открыт порт агента
+ARG_IPS=""       # set-panel-ip 1.2.3.4
 AUTO=0
 
-# Аргументы: node.sh <команда> [--panel https://панель] [--auto]
+# Аргументы: node.sh <команда> [--panel https://панель] [--panel-ip IP[,IP]] [--auto]
 CMD="${1:-install}"; [[ $# -gt 0 ]] && shift
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --panel) PANEL_URL="${2:-}"; shift 2 || shift ;;
+    --panel-ip) PANEL_IPS="${2:-}"; shift 2 || shift ;;
     --auto)  AUTO=1; shift ;;
-    *) shift ;;
+    *) [[ -z "$ARG_IPS" ]] && ARG_IPS="$1"; shift ;;
   esac
 done
 if [[ -n "$PANEL_URL" && ! "$PANEL_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
   PANEL_URL=""   # только https://домен[:порт], без путей
+fi
+if [[ -n "$PANEL_IPS" && ! "$PANEL_IPS" =~ ^[0-9A-Fa-f:.,]+$ ]]; then
+  PANEL_IPS=""   # только IPv4/IPv6 через запятую
 fi
 
 red()   { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -106,11 +112,6 @@ ask_port() {
   PORT="$p"
 }
 
-ask_reboot() {
-  local a=""
-  read -r -p "Разрешить перезагружать сервер из панели? [Y/n]: " a </dev/tty || true
-  case "${a,,}" in n|no|н|нет) ALLOW_REBOOT=0 ;; *) ALLOW_REBOOT=1 ;; esac
-}
 
 conf_get() {  # conf_get ключ [по умолчанию]
   python3 - "$CONF" "$1" "${2:-}" <<'PY' 2>/dev/null || printf '%s' "${2:-}"
@@ -120,17 +121,32 @@ print(sys.argv[3] if v is None else (1 if v is True else 0 if v is False else v)
 PY
 }
 
+conf_ips() {  # адреса панели из конфига через запятую
+  python3 - "$CONF" <<'PY' 2>/dev/null || true
+import json, sys
+print(",".join(json.load(open(sys.argv[1])).get("panel_ips") or []))
+PY
+}
+
 write_config() {
   install -d -m 0750 -o root -g "$APP" "$CONF_DIR"
   umask 077
   # Ключ передаём через окружение, а не аргументом — иначе он виден всем в списке процессов
-  BLINMON_KEY="$KEY" python3 - "$PORT" "$CONF" "$ALLOW_REBOOT" "$PANEL_URL" <<'PY'
-import json, os, sys
+  BLINMON_KEY="$KEY" python3 - "$PORT" "$CONF" "$ALLOW_REBOOT" "$PANEL_URL" "$PANEL_IPS" <<'PY'
+import ipaddress, json, os, sys
 key = os.environ["BLINMON_KEY"]
-port, path, reboot, panel = int(sys.argv[1]), sys.argv[2], sys.argv[3] == "1", sys.argv[4]
+port, path, reboot, panel, raw_ips = int(sys.argv[1]), sys.argv[2], sys.argv[3] == "1", sys.argv[4], sys.argv[5]
+ips = []
+for x in raw_ips.split(","):
+    try:
+        ip = str(ipaddress.ip_address(x.strip()))
+    except ValueError:
+        continue
+    if ip not in ips:
+        ips.append(ip)
 with open(path, "w") as f:
     json.dump({"secret": key, "port": port, "speedtest_interval_min": 10, "allow_reboot": reboot,
-               "panel_url": panel}, f)
+               "panel_url": panel, "panel_ips": ips}, f)
 PY
   chown root:"$APP" "$CONF"
   chmod 0640 "$CONF"
@@ -413,6 +429,33 @@ def check_auth(method, target, headers):
     return nonce
 
 
+ALLOW_PATH = "/etc/blinmon/allow.json"   # пишет root (firewall.sh): адреса панели из конфига + A-записи её домена
+_allow = {"at": 0.0, "ips": frozenset()}
+
+
+def peer_allowed_list():
+    peer_allowed("")   # обновить кэш списка
+    return _allow["ips"]
+
+
+def peer_allowed(ip):
+    """Порт агента — только для панели. Список пуст (старая установка без адреса панели) — пускаем всех:
+    запросы и так подписаны ключом."""
+    now = time.time()
+    if now - _allow["at"] > 30:
+        _allow["at"] = now
+        try:
+            with open(ALLOW_PATH) as f:
+                _allow["ips"] = frozenset(str(x) for x in (json.load(f).get("ips") or []))
+        except (OSError, ValueError):
+            pass   # файла нет/битый — оставляем прежний список
+    if not _allow["ips"]:
+        return True
+    if ip.startswith("::ffff:"):
+        ip = ip[7:]
+    return ip in _allow["ips"]
+
+
 def rate_ok(ip):
     now = time.time()
     with lock:
@@ -449,6 +492,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle(self, method):
+        if not peer_allowed(self.client_address[0]):
+            self.close_connection = True   # чужим — ни ответа, ни версии агента
+            return
         if not rate_ok(self.client_address[0]):
             return self._send(429, {"error": "rate"})
         target = self.path
@@ -484,6 +530,7 @@ class Handler(BaseHTTPRequestHandler):
                     "speed_running": speed_state["running"],
                     "boot_id": BOOT_ID,
                     "allow_reboot": ALLOW_REBOOT,
+                    "panel_only": bool(peer_allowed_list()),
                     "update": update_state(),
                 }
             return self._send(200, data, nonce)
@@ -667,6 +714,117 @@ UNIT
   fi
 }
 
+write_firewall() {
+  # Доступ к порту агента только с адресов панели. Root; запускается при установке/обновлении,
+  # командой set-panel-ip и раз в час таймером (панель могла переехать — берём A-записи её домена).
+  cat > "$DIR/firewall.sh.new" <<'FW'
+#!/usr/bin/env bash
+set -uo pipefail
+CONF=/etc/blinmon/config.json
+ALLOW=/etc/blinmon/allow.json
+STATE=/etc/blinmon/firewall.json
+APP=blinmon
+umask 022
+[[ -f "$CONF" ]] || exit 0
+# порт; адреса панели (конфиг ∪ A/AAAA её домена; DNS не ответил — прежние из STATE); прежние наши правила
+out="$(python3 - "$CONF" "$STATE" <<'PY'
+import ipaddress, json, socket, sys
+from urllib.parse import urlsplit
+conf = json.load(open(sys.argv[1]))
+try:
+    state = json.load(open(sys.argv[2]))
+except (OSError, ValueError):
+    state = {}
+def norm(xs):
+    out = []
+    for x in xs or []:
+        try:
+            ip = str(ipaddress.ip_address(str(x).strip()))
+        except ValueError:
+            continue
+        if ip not in out:
+            out.append(ip)
+    return out
+ips = norm(conf.get("panel_ips"))
+dns, host = [], urlsplit(conf.get("panel_url") or "").hostname
+if host:
+    try:
+        dns = norm(sa[0] for *_, sa in socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP))
+        dns = [x for x in dns if ipaddress.ip_address(x).is_global]
+    except OSError:
+        dns = norm(state.get("dns"))   # DNS временно не ответил — не закрываем доступ панели
+# ограничиваем, только когда адреса панели заданы явно (команда из панели / set-panel-ip).
+# A-записи домена панели лишь добавляются к ним (панель переехала на новый IP — доступ не пропадёт);
+# одних A-записей мало: панель может ходить к ноде с другого адреса (IPv6, второй IP) — сломали бы мониторинг
+allow = (ips + [x for x in dns if x not in ips]) if ips else []
+print(int(conf.get("port", 5055)))
+print(",".join(allow))
+print(",".join(dns))
+print(",".join(norm(state.get("ips"))))
+print(state.get("port") or "")
+PY
+)" || exit 0
+PORT="$(sed -n 1p <<<"$out")"; ALLOWED="$(sed -n 2p <<<"$out")"; DNS="$(sed -n 3p <<<"$out")"
+PREV="$(sed -n 4p <<<"$out")"; PREV_PORT="$(sed -n 5p <<<"$out")"
+IFS=',' read -r -a NEW <<<"$ALLOWED"; IFS=',' read -r -a OLD <<<"$PREV"
+in_list() { local x; for x in "${@:2}"; do [[ "$x" == "$1" ]] && return 0; done; return 1; }
+
+# список для самого агента (он root-файлы только читает)
+python3 - "$ALLOW" "$ALLOWED" <<'PY'
+import json, os, sys, tempfile
+path, ips = sys.argv[1], [x for x in sys.argv[2].split(",") if x]
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".allow.")
+with os.fdopen(fd, "w") as f:
+    json.dump({"ips": ips}, f)
+os.chmod(tmp, 0o640)
+os.replace(tmp, path)
+PY
+chown root:"$APP" "$ALLOW" 2>/dev/null || true
+
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+  if ((${#NEW[@]})); then
+    for ip in "${NEW[@]}"; do ufw allow proto tcp from "$ip" to any port "$PORT" >/dev/null 2>&1; done
+    for ip in "${OLD[@]}"; do
+      [[ -n "$ip" ]] || continue
+      if ! in_list "$ip" "${NEW[@]}" || [[ -n "$PREV_PORT" && "$PREV_PORT" != "$PORT" ]]; then
+        ufw delete allow proto tcp from "$ip" to any port "${PREV_PORT:-$PORT}" >/dev/null 2>&1 || true
+      fi
+    done
+    # прежнее «открыто всем» (агент ≤ 1.4) — закрываем
+    ufw delete allow "${PORT}/tcp" >/dev/null 2>&1 || true
+    echo "Порт ${PORT}/tcp открыт в ufw только для панели: ${ALLOWED//,/, }"
+  else
+    ufw allow "${PORT}/tcp" >/dev/null 2>&1
+    echo "Адрес панели неизвестен — порт ${PORT}/tcp открыт всем (запросы всё равно подписаны ключом)."
+    echo "Ограничить: sudo bash node.sh set-panel-ip <IP панели>"
+  fi
+elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+  rich() { local fam=ipv4; [[ "$1" == *:* ]] && fam=ipv6; printf 'rule family="%s" source address="%s" port port="%s" protocol="tcp" accept' "$fam" "$1" "$2"; }
+  if ((${#NEW[@]})); then
+    for ip in "${NEW[@]}"; do firewall-cmd --permanent --add-rich-rule="$(rich "$ip" "$PORT")" >/dev/null 2>&1; done
+    for ip in "${OLD[@]}"; do
+      [[ -n "$ip" ]] || continue
+      in_list "$ip" "${NEW[@]}" || firewall-cmd --permanent --remove-rich-rule="$(rich "$ip" "${PREV_PORT:-$PORT}")" >/dev/null 2>&1 || true
+    done
+    firewall-cmd --permanent --remove-port="${PORT}/tcp" >/dev/null 2>&1 || true
+  else
+    firewall-cmd --permanent --add-port="${PORT}/tcp" >/dev/null 2>&1
+  fi
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+
+python3 - "$STATE" "$ALLOWED" "$DNS" "$PORT" <<'PY'
+import json, sys
+path, ips, dns, port = sys.argv[1:5]
+json.dump({"ips": [x for x in ips.split(",") if x], "dns": [x for x in dns.split(",") if x], "port": int(port)},
+          open(path, "w"))
+PY
+chmod 0600 "$STATE"
+FW
+  chmod 0700 "$DIR/firewall.sh.new"
+  mv -f "$DIR/firewall.sh.new" "$DIR/firewall.sh"
+}
+
 write_updater() {
   # Сам скрипт обновления (root). Пишем во временный файл и подменяем — так
   # можно обновлять его прямо во время работы.
@@ -724,6 +882,8 @@ ver_of() { sed -n 's/^NODE_VERSION="\([0-9]*\.[0-9]*\.[0-9]*\)".*/\1/p' "$1" | h
 newer_or_eq() { python3 -c 'import sys; v=lambda s: tuple(int(x) for x in (s or "0").split(".")); sys.exit(0 if v(sys.argv[1]) >= v(sys.argv[2]) else 1)' "$1" "$2"; }
 looks_ok() { [[ -n "$(ver_of "$1")" ]] && grep -q 'blinmon' "$1" && bash -n "$1" 2>/dev/null; }
 
+# доступ к порту — только с текущих адресов панели (она могла переехать на новый IP)
+[[ -x /opt/blinmon/firewall.sh ]] && /opt/blinmon/firewall.sh >/dev/null 2>&1
 panel="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("panel_url") or "")' "$CONF" 2>/dev/null || true)"
 cur="$(sed -n 's/^VERSION = "\([0-9.]*\)".*/\1/p' /opt/blinmon/agent.py | head -1)"
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
@@ -807,11 +967,7 @@ UNIT
 }
 
 open_firewall() {
-  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
-    ufw allow "${PORT}/tcp" >/dev/null && green "Порт ${PORT}/tcp открыт в ufw."
-  elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="${PORT}/tcp" >/dev/null && firewall-cmd --reload >/dev/null && green "Порт ${PORT}/tcp открыт в firewalld."
-  fi
+  [[ -x "$DIR/firewall.sh" ]] && "$DIR/firewall.sh"
 }
 
 do_install() {
@@ -822,12 +978,14 @@ do_install() {
   id "$APP" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$APP"
   ask_key
   ask_port
-  ask_reboot
+  ALLOW_REBOOT=1   # перезагрузка из панели разрешена всегда (панель сама спрашивает подтверждение)
+  [[ -n "$PANEL_IPS" ]] || bold "Адрес панели не передан — порт агента будет открыт всем. Возьмите команду установки из панели."
   write_agent
   write_config
   write_unit
   systemctl daemon-reload
   write_reboot_units
+  write_firewall
   write_updater
   systemctl enable --now "$APP" >/dev/null
   systemctl restart "$APP"
@@ -847,8 +1005,9 @@ do_set_key() {
   [[ -f "$CONF" ]] || { red "Агент не установлен."; exit 1; }
   ask_key
   PORT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["port"])' "$CONF")"
-  ALLOW_REBOOT="$(conf_get allow_reboot 0)"
+  ALLOW_REBOOT=1
   PANEL_URL="${PANEL_URL:-$(conf_get panel_url)}"
+  PANEL_IPS="${PANEL_IPS:-$(conf_ips)}"
   write_config
   systemctl restart "$APP"
   green "Ключ обновлён, агент перезапущен."
@@ -864,17 +1023,8 @@ do_update() {
   KEY="$(conf_get secret)"
   PORT="$(conf_get port "$DEFAULT_PORT")"
   PANEL_URL="${PANEL_URL:-$(conf_get panel_url)}"
-  if [[ "$AUTO" == "1" ]]; then
-    ALLOW_REBOOT="$(conf_get allow_reboot 1)"
-  elif python3 -c 'import json,sys; sys.exit(0 if "allow_reboot" in json.load(open(sys.argv[1])) else 1)' "$CONF"; then
-    ALLOW_REBOOT="$(conf_get allow_reboot 0)"
-    if [[ "$ALLOW_REBOOT" == "1" ]]; then echo "Перезагрузка из панели: разрешена."; else echo "Перезагрузка из панели: запрещена."; fi
-    local a=""
-    read -r -p "Изменить? [y/N]: " a </dev/tty || true
-    case "${a,,}" in y|yes|д|да) ask_reboot ;; esac
-  else
-    ask_reboot
-  fi
+  PANEL_IPS="${PANEL_IPS:-$(conf_ips)}"
+  ALLOW_REBOOT=1   # с 1.5.0 перезагрузка из панели разрешена всегда — без вопросов
   if [[ -z "$PANEL_URL" && "$AUTO" != "1" ]]; then
     echo "Адрес панели не указан — обновляться агент будет только с GitHub."
     echo "Чтобы добавить запасной источник: sudo bash node.sh update --panel https://<панель>"
@@ -885,9 +1035,11 @@ do_update() {
   write_unit
   systemctl daemon-reload
   write_reboot_units
+  write_firewall
   write_updater
   systemctl enable "$APP" >/dev/null 2>&1 || true
   systemctl restart "$APP"
+  open_firewall
   sleep 1
   if systemctl is-active --quiet "$APP"; then
     green "Агент обновлён до ${NODE_VERSION} и перезапущен (ключ и порт прежние)."
@@ -897,12 +1049,37 @@ do_update() {
   fi
 }
 
+do_set_panel_ip() {
+  need_root
+  [[ -f "$CONF" ]] || { red "Агент не установлен."; exit 1; }
+  local ips="${ARG_IPS:-$PANEL_IPS}"
+  if [[ -z "$ips" ]]; then
+    read -r -p "IP сервера панели (несколько — через запятую): " ips </dev/tty || true
+  fi
+  ips="$(printf '%s' "$ips" | tr -d '[:space:]')"
+  [[ "$ips" =~ ^[0-9A-Fa-f:.,]+$ ]] || { red "Нужен IP (IPv4/IPv6), несколько — через запятую."; exit 1; }
+  KEY="$(conf_get secret)"; PORT="$(conf_get port "$DEFAULT_PORT")"; PANEL_URL="$(conf_get panel_url)"
+  ALLOW_REBOOT=1; PANEL_IPS="$ips"
+  write_config
+  write_firewall
+  open_firewall
+  green "Готово: порт агента доступен только с ${ips//,/, }"
+}
+
 do_uninstall() {
   need_root
   systemctl disable --now "$APP" 2>/dev/null || true
   systemctl disable --now blinmon-reboot.path blinmon-update.path blinmon-update.timer 2>/dev/null || true
   rm -f "$UNIT" "$REBOOT_PATH_UNIT" "$REBOOT_SVC_UNIT" "$UPDATE_PATH_UNIT" "$UPDATE_SVC_UNIT" "$UPDATE_TIMER_UNIT"; systemctl daemon-reload
   rm -rf /var/lib/blinmon /var/lib/blinmon-update
+  if [[ -f "$CONF_DIR/firewall.json" ]] && command -v ufw >/dev/null 2>&1; then
+    python3 - "$CONF_DIR/firewall.json" <<'PY' 2>/dev/null | while read -r ip port; do ufw delete allow proto tcp from "$ip" to any port "$port" >/dev/null 2>&1 || true; done
+import json, sys
+st = json.load(open(sys.argv[1]))
+for ip in st.get("ips") or []:
+    print(ip, st.get("port") or 5055)
+PY
+  fi
   rm -rf "$DIR" "$CONF_DIR"
   id "$APP" >/dev/null 2>&1 && userdel "$APP" 2>/dev/null || true
   green "Агент удалён."
@@ -912,7 +1089,8 @@ case "$CMD" in
   install)   do_install ;;
   update)    do_update ;;
   set-key)   do_set_key ;;
+  set-panel-ip) do_set_panel_ip ;;
   uninstall) do_uninstall ;;
   version)   echo "$NODE_VERSION" ;;
-  *) echo "Использование: sudo bash node.sh [install|update|set-key|uninstall|version] [--panel https://панель]"; exit 1 ;;
+  *) echo "Использование: sudo bash node.sh [install|update|set-key|set-panel-ip|uninstall|version] [--panel https://панель] [--panel-ip IP]"; exit 1 ;;
 esac

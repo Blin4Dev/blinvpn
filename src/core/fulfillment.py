@@ -5,7 +5,7 @@ import os
 import secrets
 import uuid as _uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 try:
     from . import database as db  # type: ignore
@@ -286,18 +286,23 @@ def _create_subscription_row(
     squads: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     key_uuid = str(_uuid.uuid4())
-    short = provision.get("short_uuid") or key_uuid.split("-")[0]
-    rw_id = provision.get("rw_id") or str(_uuid.uuid4())
-    key_config = provision.get("subscription_url") or provisioning.local_fallback_config(short)
+    # Remnawave не ответила: никаких выдуманных short_uuid/ссылок — раньше бот выдавал «случайную»
+    # подписку (кусок локального uuid), которой нет в Remnawave. Помечаем, фон досоздаст.
+    pending = provisioning.is_configured() and not provision.get("ok")
+    short = provision.get("short_uuid") or (None if provisioning.is_configured() else key_uuid.split("-")[0])
+    rw_id = provision.get("rw_id") or (None if provisioning.is_configured() else str(_uuid.uuid4()))
+    key_config = provision.get("subscription_url") or (provisioning.local_fallback_config(short) if short else None)
     now = db.utcnow_iso()
     db.execute(
         "INSERT INTO subscriptions (user_id, rw_id, key_uuid, short_uuid, key_config, status, expires_at, "
-        "devices_limit, devices_used, traffic_used, traffic_limit, custom_name, type, squads_json, created_at) "
-        "VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, 0, 0, ?, NULL, ?, ?, ?)",
+        "devices_limit, devices_used, traffic_used, traffic_limit, custom_name, type, squads_json, created_at, "
+        "rw_pending, rw_pending_error) "
+        "VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, 0, 0, ?, NULL, ?, ?, ?, ?, ?)",
         (
             int(user["id"]), rw_id, key_uuid, short, key_config, iso(expire_at),
             int(max(1, devices)), int(traffic_gb), sub_type,
             db.dumps(squads if squads is not None else vpn_squads()), now,
+            1 if pending else 0, (str(provision.get("error") or "")[:300] or None) if pending else None,
         ),
     )
     sub = db.fetchone("SELECT * FROM subscriptions WHERE id = ?", (db.last_id(),))
@@ -349,8 +354,12 @@ def grant_trial(user: dict[str, Any]) -> dict[str, Any]:
 
 def _apply_provision_to_sub(sub: dict[str, Any], provision: dict[str, Any]) -> None:
     if not provision.get("ok"):
+        if provisioning.is_configured():
+            # продление/устройства не дошли до Remnawave — в базе уже новые значения, фон их дотолкнёт
+            db.execute("UPDATE subscriptions SET rw_pending = 1, rw_pending_error = ? WHERE id = ?",
+                       (str(provision.get("error") or "")[:300] or None, sub["id"]))
         return
-    sets, params = [], []
+    sets, params = ["rw_pending = 0", "rw_pending_error = NULL"], []
     if provision.get("rw_id"):
         sets.append("rw_id = ?")
         params.append(provision["rw_id"])
@@ -360,10 +369,47 @@ def _apply_provision_to_sub(sub: dict[str, Any], provision: dict[str, Any]) -> N
     if provision.get("subscription_url"):
         sets.append("key_config = ?")
         params.append(provision["subscription_url"])
-    if not sets:
-        return
     params.append(sub["id"])
     db.execute(f"UPDATE subscriptions SET {', '.join(sets)} WHERE id = ?", params)
+
+
+def retry_pending_provisions(log: Callable[[str], None] = print, limit: int = 20) -> dict[str, int]:
+    """Досоздать в Remnawave подписки, которые не дошли до неё при покупке/продлении/выдаче.
+
+    Берёт текущие значения из базы (срок, устройства, трафик, сквады) — их Remnawave и получит.
+    """
+    if not provisioning.is_configured():
+        return {"done": 0, "failed": 0}
+    rows = db.fetchall(
+        "SELECT * FROM subscriptions WHERE rw_pending = 1 AND status = 'Active' "
+        "ORDER BY id LIMIT ?", (int(limit),))
+    done = failed = 0
+    for sub in rows:
+        user = db.fetchone("SELECT * FROM users WHERE id = ?", (int(sub["user_id"]),))
+        if not user:
+            db.execute("UPDATE subscriptions SET rw_pending = 0 WHERE id = ?", (sub["id"],))
+            continue
+        exp = parse_iso(sub.get("expires_at")) or (utcnow() + timedelta(days=1))
+        try:
+            squads = db.loads(sub.get("squads_json")) or None
+        except Exception:  # noqa: BLE001
+            squads = None
+        gb = int(sub.get("traffic_limit") or 0)
+        prov = provisioning.provision(
+            user_id=int(user["id"]), telegram_id=int(user["telegram_id"]) if user.get("telegram_id") else None,
+            username=user.get("username"), expire_at=exp, devices=int(sub.get("devices_limit") or 1),
+            squads=squads if isinstance(squads, list) else None, email=user.get("email"),
+            traffic_limit_bytes=gb * GB if gb > 0 else 0, traffic_reset_strategy=RESET_STRATEGY,
+        )
+        if prov.get("ok"):
+            _apply_provision_to_sub(sub, prov)
+            done += 1
+            log(f"[provision] подписка #{sub['id']} (пользователь #{user['id']}) создана в Remnawave")
+        else:
+            failed += 1
+            db.execute("UPDATE subscriptions SET rw_pending_error = ? WHERE id = ?",
+                       (str(prov.get("error") or "")[:300] or None, sub["id"]))
+    return {"done": done, "failed": failed}
 
 
 def find_extend_target(

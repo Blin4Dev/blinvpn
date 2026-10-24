@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Mail, Fingerprint, CreditCard, Server,
+  DollarSign, Zap, Send, Cloud, FileText, Shield, ShieldAlert, Database, Mail, Fingerprint, CreditCard, Server, Wrench,
 } from 'lucide-react';
 import type { ToastType } from '../../lib/types';
 import { AntiAbuseSettingsTab } from './AntiAbuseTab';
@@ -9,13 +9,14 @@ import { CaptchaSettingsTab } from './CaptchaTab';
 import { ForumSettingsTab } from './ForumTab';
 import { LegalSettingsTab } from './LegalTab';
 import { MailSettingsTab } from './MailTab';
+import { MaintenanceSettingsTab } from './MaintenanceTab';
 import { PaymentsSettingsTab } from './PaymentsTab';
 import { PricesSettingsTab } from './PricesTab';
 import { ServersSettingsTab } from './ServersTab';
 import { SquadsPage } from './SquadsTab';
 import { StorageSettingsTab } from './StorageTab';
 
-export type Tab = 'price' | 'payments' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'captcha' | 'backups' | 'forum' | 'storage' | 'servers';
+export type Tab = 'price' | 'payments' | 'antiabuse' | 'offer' | 'privacy' | 'squads' | 'mail' | 'captcha' | 'backups' | 'forum' | 'storage' | 'servers' | 'maintenance';
 
 // разделы настроек (подменю в сайдбаре)
 export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: string }[] = [
@@ -31,6 +32,7 @@ export const SETTINGS_SECTIONS: { id: Tab; icon: React.ElementType; label: strin
   { id: 'backups', icon: Cloud, label: 'Резервные копии' },
   { id: 'storage', icon: Database, label: 'Хранилище S3' },
   { id: 'servers', icon: Server, label: 'Серверы' },
+  { id: 'maintenance', icon: Wrench, label: 'Техработы' },
 ];
 
 export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastType) => void; tab: Tab; onTab?: (t: Tab) => void }> = ({ onToast, tab }) => (
@@ -47,5 +49,6 @@ export const SettingsPage: React.FC<{ onToast: (t: string, m: string, ty: ToastT
     {tab === 'backups' && <BackupSettingsTab onToast={onToast} />}
     {tab === 'storage' && <StorageSettingsTab onToast={onToast} />}
     {tab === 'servers' && <ServersSettingsTab onToast={onToast} />}
+    {tab === 'maintenance' && <MaintenanceSettingsTab onToast={onToast} />}
   </div>
 );

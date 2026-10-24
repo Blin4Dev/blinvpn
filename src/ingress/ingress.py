@@ -26,6 +26,7 @@ import contextlib
 import binascii
 import hmac
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -69,6 +70,7 @@ SCAN_LIMIT = _env_int("INGRESS_SCAN_LIMIT", 6 * 1024 * 1024)
 BODY_LIMIT_APP = 1 * 1024 * 1024
 BODY_LIMIT_UPLOAD = 55 * 1024 * 1024
 BODY_LIMIT_HOOK = 64 * 1024
+BODY_LIMIT_SUBPAGE = 32 * 1024  # заголовки браузера для subpage-config
 
 try:
     _ALLOWED_NETS = [ipaddress.ip_network(n.strip(), strict=False) for n in ALLOW_NET.split(",") if n.strip()]
@@ -124,10 +126,10 @@ _UUID_RE = r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-F
 
 
 class Rule:
-    __slots__ = ("site", "rx", "methods", "upstream", "limit", "timeout", "stream", "auth")
+    __slots__ = ("site", "rx", "methods", "upstream", "limit", "timeout", "stream", "auth", "get_body")
 
     def __init__(self, site: str, rx: str, methods: tuple[str, ...], upstream: str, limit: int,
-                 timeout: float, stream: bool = False, auth: str = "") -> None:
+                 timeout: float, stream: bool = False, auth: str = "", get_body: bool = False) -> None:
         self.site = site
         self.rx = re.compile(rx)
         self.methods = methods
@@ -136,6 +138,8 @@ class Rule:
         self.timeout = timeout
         self.stream = stream
         self.auth = auth  # sub: "strip" | "inject"
+        # GET с JSON-телом (так устроен subpage-config в Remnawave 3.4: {"requestHeaders": {...}})
+        self.get_body = get_body
 
 
 def _rules() -> list[Rule]:
@@ -151,8 +155,8 @@ def _rules() -> list[Rule]:
         Rule("sub", r"^/api/system/metadata$", ("GET",), REMNAWAVE_UP, 0, 15.0, auth="inject"),
         Rule("sub", rf"^/api/subscription-page-configs(?:/|/{_UUID_RE})?$", ("GET",), REMNAWAVE_UP, 0, 15.0,
              auth="inject"),
-        Rule("sub", rf"^/api/subscriptions/subpage-config/{_TOKEN_RE}$", ("GET",), REMNAWAVE_UP, 0, 15.0,
-             auth="inject"),
+        Rule("sub", rf"^/api/subscriptions/subpage-config/{_TOKEN_RE}$", ("GET",), REMNAWAVE_UP,
+             BODY_LIMIT_SUBPAGE, 15.0, auth="inject", get_body=True),
     ]
 
 
@@ -187,9 +191,12 @@ def _log(msg: str) -> None:
     print(f"[ingress] {msg}", flush=True)
 
 
-def _json(status: int, message: str) -> JSONResponse:
-    return JSONResponse({"detail": {"message": message}, "error": message}, status_code=status,
-                        headers={"Cache-Control": "no-store"})
+def _json(status: int, message: str, maintenance: str = "") -> JSONResponse:
+    body: dict = {"detail": {"message": message}, "error": message}
+    if maintenance:
+        # метка для мини-аппа: панель недоступна → страница техработ
+        body["maintenance"] = maintenance
+    return JSONResponse(body, status_code=status, headers={"Cache-Control": "no-store"})
 
 
 def _peer_ok(request: Request) -> bool:
@@ -366,9 +373,24 @@ async def proxy(request: Request) -> Response:
         if got is None:
             return _json(413, "Слишком большой запрос")
         body = got
+    elif rule.get_body:
+        got = await _read_body(request, rule.limit)
+        if got is None:
+            return _json(413, "Слишком большой запрос")
+        if got.strip():
+            # пропускаем только JSON-объект — Remnawave всё равно проверит схему, но мусор до неё не дойдёт
+            try:
+                doc = json.loads(got)
+            except ValueError:
+                return _json(400, "Bad request")
+            if not isinstance(doc, dict):
+                return _json(400, "Bad request")
+            body = got
 
     client_ip = _client_ip(request)
     headers = _req_headers(request, rule, path, client_ip)
+    if body and rule.get_body:
+        headers["content-type"] = "application/json"
     url = rule.upstream + path + (f"?{query}" if query else "")
     sem = _semaphore()
     try:
@@ -423,6 +445,9 @@ async def proxy(request: Request) -> Response:
         return _json(504, "Сервис не ответил вовремя")
     except httpx.HTTPError as exc:
         _log(f"{method} {path}: {type(exc).__name__}")
+        if rule.site == "app" and isinstance(exc, (httpx.ConnectError, httpx.RemoteProtocolError)):
+            # api-public не запущен/перезапускается: для мини-аппа это техработы
+            return _json(503, "Идут технические работы. Попробуйте позже", maintenance="down")
         return _json(502, "Сервис временно недоступен")
     finally:
         if not released:

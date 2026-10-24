@@ -304,7 +304,7 @@ upstream xray_balancer_mw   { server xray-balancer-mw:4100; }
 
 map $http_user_agent $backend {
     default                          subscription_page;
-    ~*(?:happ|streisand|v2raytun)    xray_balancer_mw;
+    ~*(?:blinvpn|happ|streisand|v2raytun)    xray_balancer_mw;
     ~*(?:v2ray|neko|foxray|v2box)    xray_balancer_mw;
     ~*(?:clash|mihomo|hiddify)       xray_balancer_mw;
     ~*(?:^sfa|^sfi|^sfm|karing)      xray_balancer_mw;

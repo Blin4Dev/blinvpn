@@ -8,7 +8,7 @@ import { apiFetch, copyToClipboard, parseApiErr } from '../../lib/api';
 import { fmtDateTime, relTime } from '../../lib/format';
 import type { ToastType } from '../../lib/types';
 import { InstallSteps, MonEditModal, MonPayModal } from './NodeModals';
-import { MON_COLORS, NodeDot, UptimeBar, agentCmd, fmtBytes, fmtDur, fmtMbit, fmtRate, fmtUptime, pct, uptimeColor } from './shared';
+import { MON_COLORS, NodeDot, UptimeBar, agentCmd, fmtBytes, fmtDur, fmtMbit, fmtRate, fmtUptime, pct, uptimeColor, usePanelIps } from './shared';
 import type { Beat, MonDetail } from './shared';
 import type { ChartWindow } from '../../components/charts';
 
@@ -71,6 +71,7 @@ export const INCIDENT_ICON: Record<string, string> = { critical: '🔴', warning
 export const MonNodePage: React.FC<{ nodeId: number; onBack: () => void; onToast: (t: string, m: string, ty: ToastType) => void }> = ({ nodeId, onBack, onToast }) => {
   const [d, setD] = useState<MonDetail | null>(null);
   const [missing, setMissing] = useState(false);
+  const panelIps = usePanelIps();  // для команды установки/обновления агента
   const [range, setRange] = useState<'6h' | '24h' | '7d'>('24h');
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState('');
@@ -195,6 +196,19 @@ export const MonNodePage: React.FC<{ nodeId: number; onBack: () => void; onToast
                   </div>
                 </>
               )}
+            </div>
+          );
+        })()}
+        {d.agent_ok && d.panel_only === false && panelIps && panelIps.length > 0 && (() => {
+          const cmd = `sudo bash node.sh set-panel-ip ${panelIps.join(',')}`;
+          return (
+            <div className="inset" style={{ marginTop: 14, padding: 12, fontSize: 13 }}>
+              <div style={{ fontWeight: 500 }}>Порт агента открыт всем</div>
+              <div className="sub" style={{ margin: '4px 0 8px' }}>Чтобы он отвечал только панели, выполните на сервере (в папке, где лежит node.sh):</div>
+              <div className="flex items-center gap-2">
+                <code className="mono" style={{ flex: 1, minWidth: 0, overflowX: 'auto', whiteSpace: 'nowrap', padding: '8px 10px', background: 'rgba(0,0,0,0.3)', borderRadius: 8, fontSize: 12 }}>{cmd}</code>
+                <button className="btn sm" title="Скопировать" onClick={() => { copyToClipboard(cmd); onToast('Скопировано', 'Команда в буфере обмена', 'success'); }}><Copy size={14} /></button>
+              </div>
             </div>
           );
         })()}

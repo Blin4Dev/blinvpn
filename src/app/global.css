@@ -4,7 +4,7 @@
   font-weight: 100 700;
   /* урезанный набор (scripts/subset-icons.py); block: пока грузится, не показываем названия иконок словами */
   font-display: block;
-  src: url('/fonts/material-symbols-blin.7f432a3e.woff2') format('woff2');
+  src: url('/fonts/material-symbols-blin.4db2c537.woff2') format('woff2');
 }
 
 /* Outfit со своего домена (раньше — Google Fonts, блокировал отрисовку). кириллицы в Outfit нет — русский текст идёт системным шрифтом, как и раньше */

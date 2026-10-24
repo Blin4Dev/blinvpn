@@ -30,7 +30,7 @@ import sys
 import time
 
 MARK = "BLINVPN-XBM"
-UA_RE = r"~*(?:happ|streisand|v2raytun|v2ray|neko|foxray|v2box|incy|clash|mihomo|flclash|flowvy|hiddify|singbox|karing|^sfa|^sfi|^sfm|^sft|stash)"
+UA_RE = r"~*(?:blinvpn|happ|streisand|v2raytun|v2ray|neko|foxray|v2box|incy|clash|mihomo|flclash|flowvy|hiddify|singbox|karing|^sfa|^sfi|^sfm|^sft|stash)"
 MAP_VAR = "$blinvpn_sub_backend"
 
 

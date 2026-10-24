@@ -1,6 +1,6 @@
 {
   "name": "blinvpn",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "type": "module",
   "description": "BlinVPN — Telegram mini-app, панель и бэкенд",

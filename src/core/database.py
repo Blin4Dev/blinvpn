@@ -884,6 +884,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "update_requested_at": "ALTER TABLE mon_nodes ADD COLUMN update_requested_at TEXT",
             "update_state": "ALTER TABLE mon_nodes ADD COLUMN update_state TEXT",
             "allow_reboot": "ALTER TABLE mon_nodes ADD COLUMN allow_reboot INTEGER",
+            # порядок в списке (перетаскивание в панели)
+            "position": "ALTER TABLE mon_nodes ADD COLUMN position INTEGER",
+            # агент ≥1.5: порт открыт только для панели
+            "panel_only": "ALTER TABLE mon_nodes ADD COLUMN panel_only INTEGER",
         },
         "payments": {
             # реф. баланс, замороженный при создании
@@ -921,6 +925,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "deleted_at": "ALTER TABLE subscriptions ADD COLUMN deleted_at TEXT",
             # админ: без продления (устройства/сброс трафика можно)
             "no_renew": "ALTER TABLE subscriptions ADD COLUMN no_renew INTEGER NOT NULL DEFAULT 0",
+            # Remnawave не ответила при создании/продлении — фон досоздаёт (см. fulfillment.retry_pending_provisions)
+            "rw_pending": "ALTER TABLE subscriptions ADD COLUMN rw_pending INTEGER NOT NULL DEFAULT 0",
+            "rw_pending_error": "ALTER TABLE subscriptions ADD COLUMN rw_pending_error TEXT",
             # время предупреждения анти-абуза
             "aa_warned_at": "ALTER TABLE subscriptions ADD COLUMN aa_warned_at TEXT",
             # причина/время бана подписки

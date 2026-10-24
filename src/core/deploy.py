@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable, Optional
 
-VERSION = "3.0.0"
+VERSION = "3.0.1"
 EDGE_PROTOCOL = 1  # версия протокола panel ↔ edge (ingress, agent)
 
 

@@ -1208,32 +1208,34 @@ def _rw_client():
         return None
 
 
-def _rw_find_user(user: dict[str, Any]):
-    """(client, rw_user|none): сначала telegram_id, потом email."""
+def _rw_find_user(user: dict[str, Any], errors: Optional[list[str]] = None):
+    """(client, rw_user|none): сначала telegram_id, потом email.
+
+    errors — сюда складываются сбои связи с Remnawave (не «не найден»): по ним отличаем
+    «пользователя нет» от «Remnawave не ответила».
+    """
     client = _rw_client()
     if not client:
         return None, None
+
+    def _try(fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            # «не найден»/«неверный запрос» — пользователя просто нет; остальное — Remnawave не ответила
+            if errors is not None and type(exc).__name__ not in ("RemnawaveNotFoundError", "RemnawaveValidationError"):
+                errors.append(f"{type(exc).__name__}: {exc}")
+            return None
+
     rw = None
-    try:
-        if user.get("telegram_id"):
-            rw = client.find_user_by_telegram(int(user["telegram_id"]))
-    except Exception:  # noqa: BLE001
-        rw = None
+    if user.get("telegram_id"):
+        rw = _try(lambda: client.find_user_by_telegram(int(user["telegram_id"])))
     if not rw and user.get("email"):
-        try:
-            rw = unwrap_rw(client.resolve_user(email=user["email"]))
-        except Exception:  # noqa: BLE001
-            rw = None
+        rw = _try(lambda: unwrap_rw(client.resolve_user(email=user["email"])))
     if not rw:
-        try:
-            rw = unwrap_rw(client.resolve_user(username=provisioning.rw_username(int(user["id"]))))
-        except Exception:  # noqa: BLE001
-            rw = None
+        rw = _try(lambda: unwrap_rw(client.resolve_user(username=provisioning.rw_username(int(user["id"])))))
     if not rw and not user.get("telegram_id"):
-        try:
-            rw = unwrap_rw(client.resolve_user(username=f"web_{int(user['id'])}"))
-        except Exception:  # noqa: BLE001
-            rw = None
+        rw = _try(lambda: unwrap_rw(client.resolve_user(username=f"web_{int(user['id'])}")))
     if not isinstance(rw, dict) or not (rw.get("uuid") or rw.get("id")):
         rw = None
     return client, rw
@@ -5727,6 +5729,21 @@ def panel_mon_overview(_: dict = Depends(require_panel)) -> dict[str, Any]:
     return monitoring.overview()
 
 
+class MonReorderBody(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/panel/monitoring/reorder")
+def panel_mon_reorder(body: MonReorderBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
+    _mon(monitoring.reorder_nodes, body.ids[:1000])
+    return {"ok": True}
+
+
+@app.get("/api/panel/monitoring/agent-install")
+def panel_mon_agent_install(_: dict = Depends(require_panel)) -> dict[str, Any]:
+    return monitoring.agent_install_info()
+
+
 @app.post("/api/panel/monitoring/nodes")
 def panel_mon_create(body: MonNodeCreateBody, _: dict = Depends(require_panel)) -> dict[str, Any]:
     node, secret = _mon(monitoring.create_node, body.name, body.ip, body.port or monitoring.DEFAULT_PORT)
@@ -6503,7 +6520,12 @@ def app_subscription_reset_key(user: dict = Depends(_app_user_from_init)) -> dic
         if not isinstance(exc, HTTPException) or exc.status_code >= 500:
             forum.report_error("Не удалось сбросить ключ (мини-приложение)", f"{type(exc).__name__}: {exc}")
         raise HTTPException(502, detail={"message": "Не удалось сбросить ключ. Попробуйте позже."})
-    link = info.get("subscription_url") or _app_sub_url(get_user(int(fresh["id"])) or fresh)
+    link = info.get("subscription_url")
+    if not link:
+        try:
+            link = _app_sub_url(get_user(int(fresh["id"])) or fresh)
+        except HTTPException:
+            link = None  # ключ уже сброшен — ссылку покажет «Добавить подписку»
     return {"success": True, "subscription_url": link, "available_at": iso(now + KEY_RESET_COOLDOWN)}
 
 
@@ -6617,33 +6639,45 @@ def app_activate_trial(user: dict = Depends(require_channel_dep)) -> dict[str, A
 
 
 def _app_sub_url(user: dict[str, Any]) -> Optional[str]:
-    """url подписки для импорта в приложение."""
-    # 1) remnawave: настоящая ссылка
-    client, rw = _rw_find_user(user)
+    """url подписки для импорта в приложение — только настоящая ссылка из Remnawave.
+
+    Remnawave не ответила → 503 «попробуйте через минуту» (а не старая/выдуманная ссылка из базы).
+    Пользователя в Remnawave нет, а подписка в базе есть → она ещё не создана: фон досоздаст.
+    """
+    if _rw_client() is None:
+        # установка без Remnawave: только то, что сохранено в базе
+        row = db.fetchone(
+            "SELECT short_uuid, key_config FROM subscriptions WHERE user_id = ? AND status != 'Banned' "
+            "ORDER BY id DESC LIMIT 1", (user["id"],))
+        if not row:
+            return None
+        if row.get("short_uuid"):
+            link = deploy.public_sub_link(str(row["short_uuid"]))
+            if link:
+                return link
+        kc = row.get("key_config")
+        return None if (kc and deploy.contains_leak(kc)) else kc
+    errors: list[str] = []
+    client, rw = _rw_find_user(user, errors)
     if client and rw:
         try:
             u = client.subscription_url_for(rw)
-            if u:
-                return str(u)
         except Exception:  # noqa: BLE001
-            pass
-    # 2) fallback: short_uuid или сохранённый конфиг
-    row = db.fetchone(
-        "SELECT short_uuid, key_config FROM subscriptions WHERE user_id = ? AND status != 'Banned' "
-        "ORDER BY id DESC LIMIT 1",
-        (user["id"],),
-    )
-    if not row:
-        return None
-    if row.get("short_uuid"):
-        link = deploy.public_sub_link(str(row["short_uuid"]))
-        if link:
-            return link
-    kc = row.get("key_config")
-    # старый сохранённый конфиг отдаём, только если в нём нет адреса панели
-    if kc and deploy.contains_leak(kc):
-        return None
-    return kc
+            u = None
+        if u:
+            short = rw.get("shortUuid") or rw.get("short_uuid")
+            if short:
+                # база помнит актуальный short_uuid (нужен XBM-проверке, превью локаций)
+                db.execute("UPDATE subscriptions SET short_uuid = ? WHERE user_id = ? AND status = 'Active' "
+                           "AND COALESCE(short_uuid, '') != ?", (str(short), int(user["id"]), str(short)))
+            return str(u)
+    if errors:
+        raise HTTPException(503, detail={"message": "Сервис подписок временно недоступен. Попробуйте через минуту."})
+    pending = db.fetchone("SELECT id FROM subscriptions WHERE user_id = ? AND status = 'Active' AND rw_pending = 1 "
+                          "LIMIT 1", (int(user["id"]),))
+    if pending:
+        raise HTTPException(503, detail={"message": "Подписка ещё создаётся. Попробуйте через минуту."})
+    return None
 
 
 @app.get("/api/app/subscription/applink")
@@ -8035,6 +8069,56 @@ def _clean_usernames() -> None:
         print(f"[names] cleanup failed: {exc}", flush=True)
 
 
+def _mark_fake_short_uuids() -> None:
+    """Один раз: подписки, созданные, пока Remnawave не отвечала (до 3.0.1), получили выдуманный short_uuid —
+    первые 8 символов локального key_uuid. Таких ссылок в Remnawave нет: помечаем на досоздание."""
+    if not provisioning.is_configured() or db.get_setting("fake_short_uuid_migrated", "") == "1":
+        return
+    rows = db.fetchall("SELECT id, key_uuid, short_uuid FROM subscriptions WHERE status = 'Active' "
+                       "AND short_uuid IS NOT NULL AND key_uuid IS NOT NULL")
+    fake = [r["id"] for r in rows if len(str(r["short_uuid"])) == 8
+            and str(r["short_uuid"]) == str(r["key_uuid"]).split("-")[0]]
+    for sid in fake:
+        db.execute("UPDATE subscriptions SET rw_pending = 1, short_uuid = NULL, key_config = NULL, "
+                   "rw_pending_error = 'создана, пока Remnawave не отвечала' WHERE id = ?", (sid,))
+    db.set_setting("fake_short_uuid_migrated", "1")
+    if fake:
+        print(f"[provision] подписок с выдуманной ссылкой: {len(fake)} — будут созданы в Remnawave", flush=True)
+
+
+def _provision_retry_loop() -> None:
+    """подписки, не дошедшие до Remnawave (она не отвечала при покупке), — досоздаём раз в минуту."""
+    alerted_at = 0.0
+    time.sleep(20)
+    try:
+        _mark_fake_short_uuids()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[provision] миграция выдуманных ссылок: {type(exc).__name__}: {exc}", flush=True)
+    while True:
+        try:
+            r = fulfillment.retry_pending_provisions(lambda m: print(m, flush=True))
+            left = int((db.fetchone("SELECT COUNT(*) AS c FROM subscriptions WHERE rw_pending = 1 "
+                                    "AND status = 'Active'") or {}).get("c") or 0)
+            if left and time.time() - alerted_at > 1800:
+                alerted_at = time.time()
+                err = (db.fetchone("SELECT rw_pending_error AS e FROM subscriptions WHERE rw_pending = 1 "
+                                   "AND status = 'Active' ORDER BY id DESC LIMIT 1") or {}).get("e") or "—"
+                forum.report_error(f"Подписки не созданы в Remnawave: {left}",
+                                   f"Remnawave не отвечает; повторяю каждую минуту. Последняя ошибка: {err}")
+            if r.get("done") and not left:
+                alerted_at = 0.0
+        except Exception as exc:  # noqa: BLE001
+            print(f"[provision] ошибка: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def _provision_retry_startup() -> None:
+    if not _bg_allowed():
+        return
+    threading.Thread(target=_provision_retry_loop, name="provision-retry", daemon=True).start()
+
+
 @app.on_event("startup")
 def _xbm_startup() -> None:
     if not _bg_allowed():
@@ -8838,6 +8922,89 @@ def panel_edge_status(_: dict = Depends(require_owner)) -> dict[str, Any]:
     return st
 
 
+# ── режим техработ ────────────────────────────────────────────────────
+# Включается в панели. Пока включён, мини-приложение получает только страницу техработ:
+# все /api/app/* (кроме статуса) отвечают 503 с меткой maintenance, обойти из клиента нельзя.
+# Та же страница показывается, когда edge жив, а панель не отвечает (метку ставят ingress и nginx edge).
+
+MAINTENANCE_KEY = "maintenance_mode"
+_MAINT_TTL = 2.0  # процессов несколько (api-public с воркерами): настройка подхватывается за ≤2 с
+_maint_cache: dict[str, Any] = {"t": -1e9, "on": False}
+_MAINT_OPEN_PATHS = {"/api/app/status"}
+_MAINT_BODY = json.dumps({
+    "detail": {"message": "Идут технические работы. Попробуйте позже"},
+    "error": "Идут технические работы. Попробуйте позже",
+    "maintenance": "manual",
+}, ensure_ascii=False).encode()
+
+
+def maintenance_on(fresh: bool = False) -> bool:
+    now = time.monotonic()
+    if fresh or now - float(_maint_cache["t"]) > _MAINT_TTL:
+        try:
+            _maint_cache["on"] = db.get_setting(MAINTENANCE_KEY, "") == "1"
+        except Exception:  # noqa: BLE001
+            pass  # база занята — оставляем прежнее значение
+        _maint_cache["t"] = now
+    return bool(_maint_cache["on"])
+
+
+@app.get("/api/app/status")
+def app_status() -> JSONResponse:
+    """без авторизации: мини-апп спрашивает при запуске и пока открыт. Ничего, кроме флага и ссылки на канал."""
+    return JSONResponse({"ok": True, "maintenance": maintenance_on(), "channel_url": REQUIRED_CHANNEL_URL},
+                        headers={"Cache-Control": "no-store"})
+
+
+class MaintenanceBody(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/panel/maintenance")
+def panel_maintenance_get(_: dict = Depends(require_owner)) -> dict[str, Any]:
+    st = db.get_settings([MAINTENANCE_KEY, "maintenance_since", "maintenance_by"])
+    on = st.get(MAINTENANCE_KEY) == "1"
+    return {"enabled": on, "since": st.get("maintenance_since") or None if on else None,
+            "by": st.get("maintenance_by") or None if on else None, "channel_url": REQUIRED_CHANNEL_URL}
+
+
+@app.post("/api/panel/maintenance")
+def panel_maintenance_set(body: MaintenanceBody, p: dict = Depends(require_owner)) -> dict[str, Any]:
+    was = db.get_setting(MAINTENANCE_KEY, "") == "1"
+    if body.enabled != was:
+        db.set_setting(MAINTENANCE_KEY, "1" if body.enabled else "")
+        db.set_setting("maintenance_since", iso() if body.enabled else "")
+        db.set_setting("maintenance_by", str(p.get("name") or p.get("login") or "владелец") if body.enabled else "")
+        try:
+            forum.send("incidents", "🛠 <b>Режим техработ включён</b>: мини-приложение показывает страницу техработ."
+                       if body.enabled else "✅ <b>Режим техработ выключен</b>: мини-приложение снова работает.")
+        except Exception:  # noqa: BLE001
+            pass
+    maintenance_on(fresh=True)
+    return panel_maintenance_get(p)
+
+
+class MaintenanceMiddleware:
+    """блок мини-аппа на время техработ — до роутинга, ни одна ручка /api/app не выполнится."""
+
+    def __init__(self, app_):
+        self.app = app_
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = str(scope.get("path") or "")
+            if (path.startswith(("/api/app/", "/api/support/file/")) and path not in _MAINT_OPEN_PATHS
+                    and maintenance_on()):
+                await send({"type": "http.response.start", "status": 503, "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(_MAINT_BODY)).encode()),
+                    (b"cache-control", b"no-store"),
+                ]})
+                await send({"type": "http.response.body", "body": _MAINT_BODY})
+                return
+        await self.app(scope, receive, send)
+
+
 # ── роли процессов: в public-процессе физически нет ручек панели ─────────
 
 _PUBLIC_PREFIXES = ("/api/app/", "/api/support/file/")
@@ -8891,6 +9058,7 @@ class RoleGuardMiddleware:
         await self.app(scope, receive, send)
 
 
+app.add_middleware(MaintenanceMiddleware)
 app.add_middleware(RoleGuardMiddleware)
 
 

@@ -11,7 +11,7 @@ const { cacheUpstreamResponse, getCachedResponse, cache: upstreamCache } = requi
 const routing = require('./routing');
 const nodeStats = require('./node-stats');
 const sticky = require('./sticky-assignments');
-const { getGroups, matchGroup, detectClientType, isLteOutbound, refreshGroups } = require('./groups');
+const { getGroups, matchGroup, detectClientType, isBlinvpnApp, isLteOutbound, refreshGroups } = require('./groups');
 const { outboundToLink } = require('./converters');
 const gen = require('./generators');
 const panel = require('./panel-config');  // [BlinVPN] настройки из панели (на лету)
@@ -285,6 +285,11 @@ const server = http.createServer(async (req, res) => {
             forwardHeaders['x-forwarded-for'] = '8.8.8.8';
             forwardHeaders['x-real-ip'] = '8.8.8.8';
             logger.info('raw', `[${shortUA}] токен ...${token.slice(-8)} → ?raw=1 (UA spoofed Happ/1.0, IP=8.8.8.8)`);
+        } else if (isBlinvpnApp(rawUA)) {
+            // [BlinVPN] фирменное приложение: для Remnawave это Happ (те же Response Rules и заголовки),
+            // исходный UA — в скобках, чтобы в списке устройств Remnawave было видно BlinVPN
+            forwardHeaders['user-agent'] = `Happ/1.0 (${rawUA.replace(/[^\x20-\x7e]/g, '').slice(0, 120)})`;
+            logger.debug('proxy', `[${shortUA}] фирменное приложение → как Happ`);
         } else if (clientType === 'mihomo' || clientType === 'singbox' || clientType === 'incy') {
             // Подменяем UA для mihomo/singbox/incy — middleware сам конвертирует
             // XRAY_JSON в нужный формат клиента.

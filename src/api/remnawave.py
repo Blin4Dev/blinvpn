@@ -4,6 +4,7 @@ Remnawave Panel API client (3.4.4)
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import ssl
@@ -134,6 +135,12 @@ class RemnawaveAPI:
             "Accept": "application/json",
             "Authorization": f"Bearer {self.token}",
             "X-Api-Contract": API_CONTRACT,
+            # Remnawave в production рвёт соединение (res.socket.destroy) без этих двух заголовков —
+            # ProxyCheckMiddleware: «Reverse proxy and HTTPS are required». Панель ходит к ней напрямую
+            # по http://127.0.0.1:3000, поэтому представляемся своим же обратным прокси.
+            "X-Forwarded-For": "127.0.0.1",
+            "X-Forwarded-Proto": "https",
+            "X-Real-IP": "127.0.0.1",
         }
         if headers:
             hdrs.update(headers)
@@ -178,6 +185,10 @@ class RemnawaveAPI:
             raise RemnawaveError(message, status=e.code, payload=err_payload) from e
         except urllib.error.URLError as e:
             raise RemnawaveError(f"Не удалось связаться с Remnawave ({self.base_url}): {e.reason}") from e
+        except (http.client.HTTPException, OSError) as e:
+            # обрыв после отправки запроса (RemoteDisconnected, ConnectionReset, таймаут чтения) — urllib
+            # не заворачивает его в URLError; раньше он улетал наверх как «500/502 без причины»
+            raise RemnawaveError(f"Remnawave оборвала соединение ({self.base_url}): {type(e).__name__}") from e
 
     def get(self, path: str, **kwargs: Any) -> Any:
         return self.request("GET", path, **kwargs)

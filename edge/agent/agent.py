@@ -56,6 +56,8 @@ ENV_FILE = os.environ.get("BLINVPN_ENV_FILE") or os.path.join(PROJECT, ".env")
 NGINX_CONF = "/etc/nginx/sites-available/blinvpn-edge.conf"
 NGINX_LINK = "/etc/nginx/sites-enabled/blinvpn-edge.conf"
 NGINX_ACME = "/etc/nginx/sites-enabled/blinvpn-acme.conf"
+# временно отключённая ссылка — вне sites-enabled (nginx включает оттуда все файлы)
+NGINX_PARKED = "/etc/nginx/blinvpn-edge.conf.parked"
 DUMMY_CRT = "/etc/nginx/blinvpn-dummy.crt"
 DUMMY_KEY = "/etc/nginx/blinvpn-dummy.key"
 TEMPLATE = os.path.join(PROJECT, "deploy", "edge", "nginx.conf.tpl")
@@ -183,10 +185,8 @@ def nginx_version() -> tuple[int, int, int]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (0, 0, 0)
 
 
-def default_tls() -> str:
-    """ssl_reject_handshake (nginx ≥ 1.19.4) или самоподписанный сертификат-заглушка."""
-    if nginx_version() >= (1, 19, 4):
-        return "ssl_reject_handshake on;"
+def ensure_dummy_cert() -> None:
+    """самоподписанная заглушка: для default_server и для доменов, чей сертификат ещё не выпущен."""
     if not (os.path.exists(DUMMY_CRT) and os.path.exists(DUMMY_KEY)):
         run(["openssl", "req", "-x509", "-nodes", "-newkey", "rsa:2048", "-days", "3650",
              "-subj", "/CN=localhost", "-keyout", DUMMY_KEY, "-out", DUMMY_CRT], timeout=60)
@@ -194,7 +194,36 @@ def default_tls() -> str:
             os.chmod(DUMMY_KEY, 0o600)
         except OSError:
             pass
+
+
+def default_tls() -> str:
+    """ssl_reject_handshake (nginx ≥ 1.19.4) или самоподписанный сертификат-заглушка."""
+    if nginx_version() >= (1, 19, 4):
+        return "ssl_reject_handshake on;"
+    ensure_dummy_cert()
     return f"ssl_certificate {DUMMY_CRT};\n    ssl_certificate_key {DUMMY_KEY};"
+
+
+_LE_PATH_RE = re.compile(r"(ssl_certificate(?:_key)?)\s+(/etc/letsencrypt/live/([^/\s;]+)/(fullchain|privkey)\.pem);")
+
+
+def substitute_missing_certs(text: str) -> tuple[str, list[str]]:
+    """Домены без выпущенного сертификата → заглушка. Иначе nginx -t падает на весь конфиг, и из этого
+    состояния не выбраться: certbot нужен рабочий nginx, а nginx — сертификат (deadlock 3.0.0)."""
+    missing: list[str] = []
+
+    def repl(m: "re.Match[str]") -> str:
+        directive, path, dom, kind = m.group(1), m.group(2), m.group(3), m.group(4)
+        if os.path.exists(path):
+            return m.group(0)
+        if dom not in missing:
+            missing.append(dom)
+        return f"{directive} {DUMMY_KEY if kind == 'privkey' else DUMMY_CRT};"
+
+    out = _LE_PATH_RE.sub(repl, text)
+    if missing:
+        ensure_dummy_cert()
+    return out, missing
 
 
 def domains() -> dict[str, str]:
@@ -241,6 +270,17 @@ def render_nginx(out: Callable[[str], None] = log) -> bool:
         with open(NGINX_CONF, encoding="utf-8") as f:
             prev = f.read()
     render.render_file(TEMPLATE, NGINX_CONF, vals, mode=0o600)  # в конфиге токен edge
+    with open(NGINX_CONF, encoding="utf-8") as f:
+        text, no_cert = substitute_missing_certs(f.read())
+    if no_cert:
+        with open(NGINX_CONF, "w", encoding="utf-8") as f:
+            f.write(text)
+        out("нет сертификата для " + ", ".join(no_cert) + " — временная заглушка (браузер покажет предупреждение). "
+            "Выпустить: sudo blinvpn-edge certs")
+    try:
+        os.unlink(NGINX_PARKED)
+    except FileNotFoundError:
+        pass
     if not os.path.islink(NGINX_LINK):
         try:
             os.unlink(NGINX_LINK)
@@ -259,6 +299,14 @@ def render_nginx(out: Callable[[str], None] = log) -> bool:
             with open(NGINX_CONF, "w", encoding="utf-8") as f:
                 f.write(prev)
             out("возвращён прежний конфиг nginx")
+        else:
+            # прежнего нет (первая установка) — не оставляем включённым конфиг, который ломает nginx целиком
+            for path in (NGINX_LINK, NGINX_CONF):
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+            out("неработающий конфиг отключён")
         return False
     run(["systemctl", "reload", "nginx"], timeout=60)
     out("nginx обновлён")
@@ -270,7 +318,14 @@ def ensure_certs(names: list[str], email: str, out: Callable[[str], None] = log)
     missing = [d for d in names if d and not os.path.isdir(f"/etc/letsencrypt/live/{d}")]
     if not missing:
         return True
-    os.makedirs(os.path.join(WEBROOT, ".well-known", "acme-challenge"), exist_ok=True)
+    challenge_dir = os.path.join(WEBROOT, ".well-known", "acme-challenge")
+    os.makedirs(challenge_dir, exist_ok=True)
+    # права не зависят от umask вызвавшего процесса: иначе (umask 077) nginx под www-data отдаёт 403 на челлендж
+    for path in ("/var/www", WEBROOT, os.path.join(WEBROOT, ".well-known"), challenge_dir):
+        try:
+            os.chmod(path, 0o755)
+        except OSError:
+            pass
     l6 = "    listen [::]:80;\n" if (render is not None and render.ipv6_available()) else ""
     blocks = "".join(
         f"server {{\n    listen 80;\n{l6}    server_name {d};\n"
@@ -279,14 +334,23 @@ def ensure_certs(names: list[str], email: str, out: Callable[[str], None] = log)
     with open(NGINX_ACME, "w", encoding="utf-8") as f:
         f.write(blocks)
     ok = True
+    parked = ""
     try:
         code, text = run(["nginx", "-t"], timeout=30)
+        if code != 0 and os.path.lexists(NGINX_LINK):
+            # основной конфиг сломан (например, остался от 3.0.0 со ссылками на несуществующие сертификаты):
+            # на время выпуска отключаем его, иначе certbot никогда не получит рабочий nginx
+            parked = NGINX_PARKED
+            os.replace(NGINX_LINK, parked)
+            out("основной конфиг nginx не проходит проверку — на время выпуска сертификатов он отключён")
+            code, text = run(["nginx", "-t"], timeout=30)
         if code != 0:
             out("nginx -t не прошёл перед выпуском сертификатов")
             for line in text.splitlines()[-5:]:
                 out("  " + line)
             return False
-        run(["systemctl", "reload", "nginx"], timeout=60)
+        if run(["systemctl", "reload", "nginx"], timeout=60)[0] != 0:
+            run(["systemctl", "restart", "nginx"], timeout=60)
         for d in missing:
             out(f"сертификат для {d}…")
             cmd = ["certbot", "certonly", "--webroot", "-w", WEBROOT, "-d", d, "--agree-tos", "--non-interactive",
@@ -294,13 +358,20 @@ def ensure_certs(names: list[str], email: str, out: Callable[[str], None] = log)
             cmd += ["--email", email] if email else ["--register-unsafely-without-email"]
             code, _ = run(cmd, timeout=300, out=out)
             if code != 0:
-                out(f"не удалось выпустить сертификат для {d}: проверьте A-запись (должна указывать на этот сервер)")
+                out(f"не удалось выпустить сертификат для {d} (причина — в ответе certbot выше; "
+                    f"частые: A/AAAA-запись, порт 80 снаружи, права на {WEBROOT}, лимиты Let's Encrypt)")
                 ok = False
     finally:
         try:
             os.unlink(NGINX_ACME)
         except FileNotFoundError:
             pass
+        if parked and os.path.lexists(parked):
+            os.replace(parked, NGINX_LINK)
+            # вернули как было; render-nginx следом пересоберёт его уже с настоящими сертификатами
+            if run(["nginx", "-t"], timeout=30)[0] != 0:
+                os.replace(NGINX_LINK, parked)
+                out("основной конфиг пока отключён — его пересоберёт render-nginx")
         run(["systemctl", "reload", "nginx"], timeout=60)
     return ok
 

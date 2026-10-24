@@ -490,13 +490,45 @@ def create_node(name: Any, ip: Any, port: Any = DEFAULT_PORT) -> tuple[dict[str,
     if db.fetchone("SELECT id FROM mon_nodes WHERE ip = ? AND port = ?", (ip, port)):
         raise MonitorError("Нода с таким адресом и портом уже есть")
     secret = new_secret()
+    pos = int((db.fetchone("SELECT COALESCE(MAX(position), 0) AS m FROM mon_nodes") or {}).get("m") or 0) + 1
     db.execute(
-        "INSERT INTO mon_nodes (name, ip, port, secret_enc, enabled, created_at) VALUES (?, ?, ?, ?, 0, ?)",
-        (name, ip, port, encrypt(secret), _iso()),
+        "INSERT INTO mon_nodes (name, ip, port, secret_enc, enabled, created_at, position) VALUES (?, ?, ?, ?, 0, ?, ?)",
+        (name, ip, port, encrypt(secret), _iso(), pos),
     )
     node = get_node(db.last_id())
     assert node is not None
     return node, secret
+
+
+def reorder_nodes(ids: list[Any]) -> None:
+    """порядок нод в списке: ids — все ноды в нужном порядке (неизвестные/повторы игнорируются)."""
+    known = [int(r["id"]) for r in db.fetchall("SELECT id FROM mon_nodes ORDER BY position IS NULL, position, "
+                                                "name COLLATE NOCASE, id")]
+    order: list[int] = []
+    for x in ids or []:
+        try:
+            i = int(x)
+        except (TypeError, ValueError):
+            continue
+        if i in known and i not in order:
+            order.append(i)
+    order += [i for i in known if i not in order]   # не присланные — в конец, в прежнем порядке
+    with db.transaction() as conn:
+        for pos, i in enumerate(order, 1):
+            conn.execute("UPDATE mon_nodes SET position = ? WHERE id = ?", (pos, i))
+
+
+def agent_install_info() -> dict[str, Any]:
+    """адреса панели для команды установки агента: порт агента открывается только им."""
+    out: list[str] = []
+    for x in re.split(r"[,\s]+", os.getenv("LEAK_GUARD_IPS") or ""):
+        try:
+            ip = ipaddress.ip_address(x.strip())
+        except ValueError:
+            continue
+        if ip.is_global and str(ip) not in out:
+            out.append(str(ip))
+    return {"panel_ips": out}
 
 
 def rotate_secret(node_id: int) -> str:
@@ -729,7 +761,7 @@ def ingest(node: dict[str, Any], data: dict[str, Any]) -> None:
         tx.execute(
             "UPDATE mon_nodes SET last_seen = ?, last_error = NULL, fail_count = 0, agent_version = ?, boot_id = ?, "
             "cursor = ?, speed_cursor = ?, uptime = ?, cores = ?, live_json = ?, speed_running = ?, "
-            "update_state = ?, allow_reboot = ? WHERE id = ?",
+            "update_state = ?, allow_reboot = ?, panel_only = ? WHERE id = ?",
             (_iso(), re.sub(r"[^0-9.]", "", str(data.get("version") or ""))[:16], str(data.get("boot_id") or "")[:32],
              _int(data.get("seq")) or 0, _int(data.get("speed_seq")) or 0, _int(data.get("uptime")), _int(data.get("cores")),
              json.dumps({k: _num(live.get(k)) for k in ("cpu", "ram_used", "ram_total", "swap_used", "swap_total", "disk_used",
@@ -737,7 +769,8 @@ def ingest(node: dict[str, Any], data: dict[str, Any]) -> None:
                                                          "load1", "ts")}),
              1 if data.get("speed_running") else 0,
              json.dumps(_clean_update_state(data.get("update"))) if isinstance(data.get("update"), dict) else None,
-             None if data.get("allow_reboot") is None else (1 if data.get("allow_reboot") else 0), nid),
+             None if data.get("allow_reboot") is None else (1 if data.get("allow_reboot") else 0),
+             None if data.get("panel_only") is None else (1 if data.get("panel_only") else 0), nid),
         )
 
 
@@ -1180,7 +1213,8 @@ def dot_of(node: dict[str, Any], open_titles: Optional[list[str]] = None) -> tup
 
 
 def overview() -> dict[str, Any]:
-    nodes = db.fetchall("SELECT * FROM mon_nodes ORDER BY name COLLATE NOCASE, id")
+    # свой порядок (перетаскивание); у старых нод его ещё нет — они в конце, по имени
+    nodes = db.fetchall("SELECT * FROM mon_nodes ORDER BY position IS NULL, position, name COLLATE NOCASE, id")
     titles: dict[int, list[str]] = {}
     for r in db.fetchall("SELECT node_id, title FROM mon_incidents WHERE resolved_at IS NULL AND severity != 'info'"):
         titles.setdefault(int(r["node_id"]), []).append(r["title"])
@@ -1248,6 +1282,8 @@ def node_detail(node_id: int) -> dict[str, Any]:
         "latest_version": bundled_agent().get("version"),
         "can_self_update": can_self_update(node),
         "can_reboot": can_reboot(node),
+        # None — старый агент (не сообщает); False — порт агента открыт всем
+        "panel_only": None if node.get("panel_only") is None else bool(node.get("panel_only")),
         "update": {"target": node.get("update_target"), "requested_at": node.get("update_requested_at"),
                    "state": _load_json(node.get("update_state"), {}) or None},
         "beats_24h": _node_beats(nid, 86400, 48),

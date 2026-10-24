@@ -4,7 +4,7 @@ import { ListRow, PageHeader, Screen, SectionLabel, Surface, T, btnReset } from 
 import { useSmartBack } from "../utils/navigation";
 import { fetchMe, isTelegram, openTgLink, type AppUser } from "../utils/api";
 
-const APP_VERSION = "3.0.0";
+const APP_VERSION = "3.0.1";
 const APP_NEWS_URL = "https://t.me/blinnotes";
 import { tgUser } from "../utils/telegram";
 

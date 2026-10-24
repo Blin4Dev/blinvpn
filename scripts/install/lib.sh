@@ -10,7 +10,7 @@ NC=$'\033[0m'
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
 
-BLINVPN_VERSION="3.0.0"
+BLINVPN_VERSION="3.0.1"
 PROJECT_DIR="${PROJECT_DIR:-/opt/blinvpn}"
 ENV_FILE="${PROJECT_DIR}/.env"
 WG_IFACE="blinvpn"
@@ -329,7 +329,10 @@ issue_certs() {
         [[ -n "$d" && ! -d "/etc/letsencrypt/live/${d}" ]] && missing+=("$d")
     done
     ((${#missing[@]})) || return 0
+    # umask 077 делал каталоги 0700 -> nginx (www-data) отдавал 403 на ACME-челлендж
+    umask 022
     mkdir -p /var/www/html/.well-known/acme-challenge
+    chmod 755 /var/www /var/www/html /var/www/html/.well-known /var/www/html/.well-known/acme-challenge
     local acme=/etc/nginx/sites-enabled/blinvpn-acme.conf
     : >"$acme"
     local l6=""
@@ -338,13 +341,26 @@ issue_certs() {
         printf 'server {\n    listen 80;\n%s\n    server_name %s;\n    location /.well-known/acme-challenge/ { root /var/www/html; }\n    location / { return 404; }\n}\n' "$l6" "$d" >>"$acme"
     done
     rm -f /etc/nginx/sites-enabled/default
+    # основной конфиг сломан (ссылается на ещё не выпущенный сертификат и т.п.) — на время выпуска
+    # отключаем его, иначе certbot никогда не получит рабочий nginx (deadlock 3.0.0)
+    local parked="" main
+    if ! nginx -t >/dev/null 2>&1; then
+        for main in /etc/nginx/sites-enabled/blinvpn-panel.conf /etc/nginx/sites-enabled/blinvpn-edge.conf; do
+            if [[ -L "$main" || -f "$main" ]]; then
+                mv -f "$main" "/etc/nginx/$(basename "$main").parked"
+                parked="${parked} ${main}"
+            fi
+        done
+        [[ -n "$parked" ]] && log_warn "Основной конфиг nginx не проходит проверку — на время выпуска сертификатов он отключён"
+    fi
     if ! nginx -t >/dev/null 2>&1; then
         nginx -t || true
         rm -f "$acme"
+        for main in $parked; do mv -f "/etc/nginx/$(basename "$main").parked" "$main"; done
         die "nginx -t не прошёл перед выпуском сертификатов"
     fi
     systemctl reload nginx || systemctl restart nginx
-    local ok=0 email_args=()
+    local ok=0 email_args=() out
     if [[ -n "$email" ]]; then
         email_args=(--email "$email")
     else
@@ -352,15 +368,23 @@ issue_certs() {
     fi
     for d in "${missing[@]}"; do
         log_info "Сертификат для ${d}…"
-        if certbot certonly --webroot -w /var/www/html -d "$d" --agree-tos --non-interactive \
-            --keep-until-expiring "${email_args[@]}" >/dev/null 2>&1; then
+        if out="$(certbot certonly --webroot -w /var/www/html -d "$d" --agree-tos --non-interactive \
+            --keep-until-expiring "${email_args[@]}" 2>&1)"; then
             log_ok "✔ ${d}"
         else
-            log_error "Не удалось получить сертификат для ${d}: A-запись должна указывать на этот сервер, порт 80 открыт."
+            log_error "Не удалось получить сертификат для ${d}. Ответ certbot:"
+            printf '%s\n' "$out" | tail -n 15 >&2
+            hint "Проверьте: A-запись (и отсутствие AAAA на чужой адрес), порт 80 снаружи, права на /var/www/html, лимиты Let's Encrypt."
+            hint "Полный лог: /var/log/letsencrypt/letsencrypt.log"
             ok=1
         fi
     done
     rm -f "$acme"
+    for main in $parked; do
+        mv -f "/etc/nginx/$(basename "$main").parked" "$main"
+        # всё ещё не проходит — пусть пересоберёт render (он уже увидит сертификаты)
+        nginx -t >/dev/null 2>&1 || mv -f "$main" "/etc/nginx/$(basename "$main").parked"
+    done
     systemctl reload nginx || true
     return "$ok"
 }
@@ -375,6 +399,8 @@ ensure_certbot_timer() {
 # ── WireGuard ─────────────────────────────────────────────────────
 
 wg_keys() {
+    local _um
+    _um="$(umask)"
     umask 077
     mkdir -p /etc/wireguard
     if [[ ! -s "$WG_KEY" ]]; then
@@ -383,6 +409,7 @@ wg_keys() {
     wg pubkey <"$WG_KEY" >"$WG_PUB"
     chmod 600 "$WG_KEY"
     chmod 644 "$WG_PUB"
+    umask "$_um"
 }
 
 wg_up() {

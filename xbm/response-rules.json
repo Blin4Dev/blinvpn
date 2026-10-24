@@ -10,7 +10,7 @@
         {
           "headerName": "user-agent",
           "operator": "REGEX",
-          "value": "happ|streisand|v2raytun|v2ray|neko|foxray|v2box|incy|singbox|sfa|sfi|sfm|sft|karing|flclash|flowvy|mihomo|clash",
+          "value": "blinvpn|happ|streisand|v2raytun|v2ray|neko|foxray|v2box|incy|singbox|sfa|sfi|sfm|sft|karing|flclash|flowvy|mihomo|clash",
           "caseSensitive": false
         }
       ],

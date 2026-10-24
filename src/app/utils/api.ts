@@ -1,5 +1,6 @@
 // клиент api мини-приложения
 import { launchInitData } from "./tgBoot";
+import { reportMaintenanceSignal } from "./maintenance";
 
 export type Plan = { devices: number; price_rub: number; price_stars: number };
 export type PlansResponse = {
@@ -146,6 +147,7 @@ export async function appFetch<T = unknown>(
   }
   const body = await res.json().catch(() => null);
   if (!res.ok) {
+    if (body && body.maintenance) reportMaintenanceSignal(body.maintenance);
     const msg =
       (body && (body.detail?.message || body.detail || body.error)) ||
       `Ошибка ${res.status}`;

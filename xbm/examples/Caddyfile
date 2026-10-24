@@ -33,7 +33,7 @@ https://{$SUB_DOMAIN} {
     }
 
     @xray_client {
-        header_regexp User-Agent (?i)(happ|streisand|v2ray|v2raytun|neko|foxray|v2box|xray|invisibleman|flclash|clash-?verge|clash-?meta|mihomo|koala-?clash|murge|clash-nyanpasu|flowvy|rabbithole|prizrak-box|^sfa|^sfi|^sfm|^sft|karing|singbox|hiddify|^stash|^clash)
+        header_regexp User-Agent (?i)(blinvpn|happ|streisand|v2ray|v2raytun|neko|foxray|v2box|xray|invisibleman|flclash|clash-?verge|clash-?meta|mihomo|koala-?clash|murge|clash-nyanpasu|flowvy|rabbithole|prizrak-box|^sfa|^sfi|^sfm|^sft|karing|singbox|hiddify|^stash|^clash)
         not path /health
         not path /mw-health
     }

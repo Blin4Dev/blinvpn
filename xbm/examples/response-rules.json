@@ -46,7 +46,7 @@
             "description": "Response with generated JSON config (Xray JSON Template). Includes V2RayTUN.",
             "enabled": true,
             "operator": "AND",
-            "conditions": [{ "headerName": "user-agent", "operator": "REGEX", "value": "^(?:Happ|INCY|Streisand|FoXray|V2Box|V2rayN|V2RayTUN|InvisibleMan|Xray)", "caseSensitive": false }],
+            "conditions": [{ "headerName": "user-agent", "operator": "REGEX", "value": "^(?:BlinVPN|Happ|INCY|Streisand|FoXray|V2Box|V2rayN|V2RayTUN|InvisibleMan|Xray)", "caseSensitive": false }],
             "responseType": "XRAY_JSON"
         },
         {

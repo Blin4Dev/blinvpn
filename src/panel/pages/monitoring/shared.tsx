@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { apiFetch } from '../../lib/api';
 
 export type MonDot = 'grey' | 'red' | 'yellow' | 'blue' | 'green';
 export type MonStatus = 'idle' | 'connecting' | 'green' | 'yellow' | 'orange' | 'red';
@@ -20,7 +21,7 @@ export type MonDetail = MonNodeBrief & {
   payment: { date?: string | null; url?: string | null };
   incidents: MonIncident[]; open_incidents: number;
   agent_outdated?: boolean; rebooting?: boolean;
-  latest_version?: string | null; can_self_update?: boolean; can_reboot?: boolean;
+  latest_version?: string | null; can_self_update?: boolean; can_reboot?: boolean; panel_only?: boolean | null;
   update?: { target?: string | null; requested_at?: string | null; state?: { ok: boolean; error?: string; version?: string; at?: number } | null };
   beats_24h?: Beat[]; beats_7d?: Beat[];
 };
@@ -69,9 +70,28 @@ if (typeof document !== 'undefined' && !document.getElementById('mon-pulse-css')
   document.head.appendChild(st);
 }
 
+// адреса сервера панели: агент откроет свой порт только им (ufw) и сам не ответит никому другому
+let panelIps: string[] | null = null;
+let panelIpsReq: Promise<string[]> | null = null;
+const fetchPanelIps = () => {
+  if (!panelIpsReq) {
+    panelIpsReq = apiFetch('/panel/monitoring/agent-install')
+      .then((r: { panel_ips?: unknown }) => (panelIps = Array.isArray(r?.panel_ips) ? (r.panel_ips as string[]) : []))
+      .catch(() => { panelIpsReq = null; return (panelIps = []); });
+  }
+  return panelIpsReq;
+};
+/** подгрузить адреса панели для команды установки (перерисует компонент, когда придут) */
+export const usePanelIps = () => {
+  const [v, setV] = useState<string[] | null>(panelIps);
+  useEffect(() => { if (panelIps === null) void fetchPanelIps().then(setV); }, []);
+  return v;
+};
+
 // команда установки/обновления агента на сервере
-export const agentCmd = (mode: 'install' | 'update') =>
-  `curl -fsSL ${window.location.origin}/node.sh -o node.sh && sudo bash node.sh ${mode} --panel ${window.location.origin}`;
+export const agentCmd = (mode: 'install' | 'update', ips: string[] | null = panelIps) =>
+  `curl -fsSL ${window.location.origin}/node.sh -o node.sh && sudo bash node.sh ${mode} --panel ${window.location.origin}`
+  + (ips && ips.length ? ` --panel-ip ${ips.join(',')}` : '');
 
 export const DOT_COLORS: Record<MonDot, string> = {
   grey: 'rgba(255,255,255,0.28)', red: '#ff6b6b', yellow: '#facc15', blue: '#60a5fa', green: '#34d399',

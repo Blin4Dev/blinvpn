@@ -5,6 +5,8 @@ import { AppErrorProvider } from "./components/ErrorModal";
 import { checkAuth, fetchMe, fetchMembership, fetchSetupStatus, type Membership } from "./utils/api";
 import { holdHomeIntro, homeIntroPending, releaseHomeIntro, setFastHomeIntro, subscribeHomeIntroReady } from "./utils/homeIntro";
 import { trackRoute } from "./utils/navigation";
+import { checkMaintenance, useMaintenance } from "./utils/maintenance";
+import Maintenance from "./pages/Maintenance";
 
 /*
   загрузка по частям:
@@ -175,7 +177,7 @@ function AnimatedLayout() {
   );
 }
 
-export default function App() {
+function MainApp() {
   const [auth, setAuth] = useState<"checking" | "authed" | "anon">("checking");
   const [gate, setGate] = useState<"checking" | "open" | "blocked">("checking");
   const [membership, setMembership] = useState<Membership | null>(null);
@@ -285,6 +287,47 @@ export default function App() {
       ) : null}
     </>
   );
+}
+
+// корень: страница техработ подменяет ВСЁ приложение — ни маршрутов, ни онбординга под ней нет
+export default function App() {
+  const maint = useMaintenance();
+  const active = maint === "manual" || maint === "down";
+  const wasActive = useRef(false);
+
+  useEffect(() => {
+    void checkMaintenance();
+  }, []);
+
+  // пока открыто: раз в минуту (на странице техработ — каждые 10 с) и при возврате в приложение
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void checkMaintenance();
+    };
+    const id = window.setInterval(tick, active ? 10_000 : 60_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (active) {
+      wasActive.current = true;
+      try {
+        (window as unknown as { Telegram?: { WebApp?: { BackButton?: { hide?: () => void } } } }).Telegram?.WebApp?.BackButton?.hide?.();
+      } catch {
+        /* ignore */
+      }
+    } else if (maint === "ok" && wasActive.current) {
+      // работы закончились: начисто перезапускаем, чтобы не осталось ошибок, полученных во время сбоя
+      window.location.reload();
+    }
+  }, [active, maint]);
+
+  if (active) return <Maintenance />;
+  return <MainApp />;
 }
 
 function RoutedApp() {

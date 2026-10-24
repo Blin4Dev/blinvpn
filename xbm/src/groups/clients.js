@@ -5,6 +5,8 @@
  * Используется в server.js для выбора формата подписки (Xray-JSON / Mihomo YAML / SingBox JSON / passthrough).
  */
 
+// [BlinVPN] фирменное приложение: всё как у Happ (Xray JSON, happ-routing, serverDescription, meta)
+const BLINVPN_RE = /blinvpn/i;
 const HAPP_RE = /happ/i;
 const INCY_RE = /incy/i;
 const XRAY_BALANCED_RE = /^(?:streisand|foxray|v2box|v2rayn|v2raytun|invisibleman|xray|neko)/i;
@@ -22,6 +24,7 @@ function detectClientType(ua) {
     if (!ua) return 'happ';
     const trimmed = String(ua).trim();
     if (!trimmed) return 'happ';
+    if (BLINVPN_RE.test(trimmed)) return 'happ';
     if (HAPP_RE.test(trimmed)) return 'happ';
     if (INCY_RE.test(trimmed)) return 'incy';
     if (PASSTHROUGH_APP_RE.test(trimmed)) return 'passthrough';
@@ -32,4 +35,9 @@ function detectClientType(ua) {
     return 'other';
 }
 
-module.exports = { detectClientType };
+/** фирменное приложение BlinVPN (UA содержит «blinvpn») */
+function isBlinvpnApp(ua) {
+    return BLINVPN_RE.test(String(ua || ''));
+}
+
+module.exports = { detectClientType, isBlinvpnApp };

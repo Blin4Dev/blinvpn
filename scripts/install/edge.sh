@@ -19,6 +19,8 @@ AGENT_UNIT=/etc/systemd/system/blinvpn-agent.service
 
 write_wg_conf() {
     local port="$1" panel_pub="$2" panel_ip="$3" edge_ip="$4" net="$5"
+    local _um
+    _um="$(umask)"
     umask 077
     cat >"$WG_CONF" <<EOF
 # BlinVPN 3.0 — туннель панель → edge. Генерируется установщиком.
@@ -35,6 +37,7 @@ PublicKey = ${panel_pub}
 AllowedIPs = ${panel_ip}/32
 EOF
     chmod 600 "$WG_CONF"
+    umask "$_um"
 }
 
 install_agent_unit() {

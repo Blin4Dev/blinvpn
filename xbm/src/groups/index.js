@@ -9,7 +9,7 @@ const { logger } = require('../logger');
 const { config, API_TOKEN, REMNAWAVE_URL, LTE_PATTERNS, panelHeaders } = require('../config');
 const { fetchUrl, safeAsync } = require('../utils');
 const { buildGroupsFromHosts, bestPatternMatch } = require("./countries");
-const { detectClientType } = require('./clients');
+const { detectClientType, isBlinvpnApp } = require('./clients');
 const { getTier1Tags } = require('./tiers');
 const panel = require('../panel-config');  // [BlinVPN] настройки из панели
 
@@ -69,6 +69,7 @@ module.exports = {
     getGroups,
     matchGroup, isLteOutbound,
     detectClientType,
+    isBlinvpnApp,
     getTier1Tags,
     refreshGroups,
 };

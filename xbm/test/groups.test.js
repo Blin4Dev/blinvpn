@@ -4,7 +4,7 @@ require('./helpers/setup-env');
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { getTier1Tags, detectClientType, isLteOutbound, matchGroup } = require('../src/groups');
+const { getTier1Tags, detectClientType, isBlinvpnApp, isLteOutbound, matchGroup } = require('../src/groups');
 
 const lteTags = [
     '🇪🇺 ЕВРОПА 1 | LTE',
@@ -57,6 +57,14 @@ test('getTier1Tags — empty patterns array → falls through to count if set', 
 
 test('detectClientType — Happ UA', () => {
     assert.strictEqual(detectClientType('Happ/1.0'), 'happ');
+});
+
+test('detectClientType — фирменное приложение BlinVPN = Happ', () => {
+    assert.strictEqual(detectClientType('BlinVPN/1.0.0'), 'happ');
+    assert.strictEqual(detectClientType('blinvpn/2.3 (Android 14; Pixel 8)'), 'happ');
+    assert.strictEqual(isBlinvpnApp('BlinVPN/1.0'), true);
+    assert.strictEqual(isBlinvpnApp('Happ/1.0'), false);
+    assert.strictEqual(isBlinvpnApp(undefined), false);
 });
 
 test('detectClientType — Mihomo variants', () => {

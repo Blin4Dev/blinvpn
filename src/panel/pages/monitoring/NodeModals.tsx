@@ -5,11 +5,12 @@ import {
 import { Modal, Spinner } from '../../components/ui';
 import { apiFetch, copyToClipboard, parseApiErr } from '../../lib/api';
 import type { ToastType } from '../../lib/types';
-import { agentCmd, toLocalInput } from './shared';
+import { agentCmd, toLocalInput, usePanelIps } from './shared';
 import type { MonDetail, MonNodeBrief } from './shared';
 
 export const InstallSteps: React.FC<{ secret: string; port: number; onToast: (t: string, m: string, ty: ToastType) => void }> = ({ secret, port, onToast }) => {
-  const cmd = agentCmd('install');
+  const ips = usePanelIps();
+  const cmd = agentCmd('install', ips);
   const copy = async (v: string, what: string) => { if (await copyToClipboard(v)) onToast('Скопировано', what, 'success'); };
   return (
     <div className="flex flex-col gap-4">

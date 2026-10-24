@@ -33,6 +33,8 @@ write_wg_conf() {
     net="$(envget WG_NET)"
     panel_ip="$(envget WG_PANEL_IP)"
     edge_ip="$(envget WG_EDGE_IP)"
+    local _um
+    _um="$(umask)"
     umask 077
     {
         echo "# BlinVPN 3.0 — туннель панель → edge. Генерируется установщиком (sudo blinvpn pair / edge-endpoint)."
@@ -51,6 +53,7 @@ write_wg_conf() {
         fi
     } >"$WG_CONF"
     chmod 600 "$WG_CONF"
+    umask "$_um"
 }
 
 # ── nginx панели ──────────────────────────────────────────────────
@@ -75,12 +78,15 @@ render_nginx() {
         "DEFAULT_TLS=$(nginx_default_tls)" \
         "API_PORT=$(envget API_PORT)" "PANEL_PORT=$(envget PANEL_PORT)"
     ln -sf "$NGINX_CONF" "$NGINX_LINK"
-    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/blinvpn.conf
+    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/blinvpn.conf /etc/nginx/blinvpn-panel.conf.parked
     if ! nginx -t 2>/dev/null; then
         nginx -t || true
         if [[ -s "$tmp" ]]; then
             cp "$tmp" "$NGINX_CONF"
             log_warn "возвращён прежний конфиг nginx"
+        else
+            # прежнего нет — не оставляем включённым конфиг, который валит nginx целиком
+            rm -f "$NGINX_LINK"
         fi
         rm -f "$tmp"
         die "nginx -t не прошёл"

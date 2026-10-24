@@ -5,7 +5,7 @@
 # VPN-клиенты → XBM, браузеры → страница подписки
 map $http_user_agent $blin_sub_vpn {
     default 0;
-    "~*(?:happ|streisand|v2raytun|v2ray|neko|foxray|v2box|xray|invisibleman|incy|clash|mihomo|flclash|flowvy|koala-clash|murge|nyanpasu|rabbithole|prizrak-box|hiddify|singbox|sing-box|karing|^sfa|^sfi|^sfm|^sft|stash|shadowrocket|quantumult|surge|loon|nekobox|nekoray)" 1;
+    "~*(?:blinvpn|happ|streisand|v2raytun|v2ray|neko|foxray|v2box|xray|invisibleman|incy|clash|mihomo|flclash|flowvy|koala-clash|murge|nyanpasu|rabbithole|prizrak-box|hiddify|singbox|sing-box|karing|^sfa|^sfi|^sfm|^sft|stash|shadowrocket|quantumult|surge|loon|nekobox|nekoray)" 1;
 }
 
 limit_req_zone $binary_remote_addr zone=blin_api:20m rate=30r/s;
@@ -89,7 +89,8 @@ server {
         internal;
         default_type application/json;
         add_header Cache-Control "no-store" always;
-        return 200 '{"detail":{"message":"Сервис временно недоступен, попробуйте через минуту"},"error":"Сервис временно недоступен, попробуйте через минуту"}';
+        # панель не отвечает (туннель/панель выключены): мини-апп покажет страницу техработ
+        return 200 '{"detail":{"message":"Идут технические работы. Попробуйте позже"},"error":"Идут технические работы. Попробуйте позже","maintenance":"down"}';
     }
 
     location = /api/health {
@@ -104,6 +105,24 @@ server {
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
         proxy_connect_timeout 5s;
+        proxy_next_upstream off;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Blin-Client-IP $remote_addr;
+        proxy_set_header X-Edge-Token "{{EDGE_TOKEN}}";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Real-IP "";
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Api-Key "";
+        proxy_hide_header Server;
+        proxy_pass http://blin_ingress;
+    }
+
+    # статус для страницы техработ: короткие таймауты, чтобы недоступная панель определялась быстро
+    location = /api/app/status {
+        limit_req zone=blin_api burst=30 nodelay;
+        proxy_read_timeout 6s;
+        proxy_connect_timeout 3s;
         proxy_next_upstream off;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
